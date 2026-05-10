@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+*.egg-info/
+
+# Backend runtime data
+backend/paperpod.db
+backend/audio_files/
+backend/uploads/
+backend/.env
+
+# Node
+node_modules/
+dist/
+
+# Internal docs (not for repo)
+paperPodDocs/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
