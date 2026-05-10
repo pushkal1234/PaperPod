@@ -14,8 +14,8 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 | **Backend** | FastAPI (Python) |
 | **LLM** | Llama 3.1 via Groq (free tier) |
 | **TTS** | edge-tts (Microsoft, free, no API key) |
-| **STT** | OpenAI Whisper (local, free) |
-| **Vector DB** | ChromaDB (in-memory for demo) |
+| **STT** | Whisper large-v3 via Groq (free tier) |
+| **Retrieval** | Lightweight in-memory keyword search (demo) |
 | **Database** | SQLite (via SQLAlchemy async) |
 
 ## Quick Start
@@ -66,7 +66,7 @@ PaperPod/
 │       │   └── qa.py             # Q&A: voice/text question → audio answer
 │       └── services/
 │           ├── document_service.py   # PDF/DOCX/TXT extraction + chunking
-│           ├── vector_service.py     # ChromaDB embed + query (RAG)
+│           ├── vector_service.py     # In-memory chunk store + keyword retrieval
 │           ├── llm_service.py        # Groq Llama 3 (podcast script + Q&A)
 │           ├── tts_service.py        # edge-tts (Host=male, Guest=female voices)
 │           └── stt_service.py        # Whisper speech-to-text
@@ -95,6 +95,41 @@ PaperPod/
 ## Architecture
 
 See `paperPodDocs/diagrams.md` for full Mermaid diagrams (paste into https://mermaid.live).
+
+## AI Models
+
+```mermaid
+flowchart LR
+    subgraph GROQ["☁️ Groq Cloud (Free Tier)"]
+        LLM["🧠 Llama 3.1 8B Instant\n─────────────────\n• Podcast script generation\n• Q&A answering\n• Context-aware responses"]
+        STT["🎤 Whisper Large-v3\n─────────────────\n• Speech-to-text\n• Voice question transcription\n• Multi-language support"]
+    end
+
+    subgraph LOCAL["💻 Local / Edge (No API Key)"]
+        TTS["🔊 edge-tts (Microsoft)\n─────────────────\n• en-US-GuyNeural (Host)\n• en-US-JennyNeural (Guest)\n• Zero cost, no rate limits"]
+    end
+
+    subgraph PIPELINE["⚙️ How They Connect"]
+        DOC["📄 Document"] --> LLM
+        LLM -->|dialogue script| TTS
+        TTS -->|podcast .mp3| PLAY["🎧 Player"]
+        PLAY -->|user speaks| STT
+        STT -->|question text| LLM
+        LLM -->|answer text| TTS
+        TTS -->|answer .mp3| PLAY
+    end
+
+    style GROQ fill:#E8F8F5,stroke:#1ABC9C,stroke-width:2px
+    style LOCAL fill:#FEF9E7,stroke:#F39C12,stroke-width:2px
+    style PIPELINE fill:#F4ECF7,stroke:#8E44AD,stroke-width:2px
+```
+
+| Model | Provider | Purpose | Cost |
+|-------|----------|---------|------|
+| **Llama 3.1 8B Instant** | Groq | Podcast script generation + Q&A | Free (rate-limited) |
+| **Whisper Large-v3** | Groq | Speech-to-text (voice questions) | Free (rate-limited) |
+| **edge-tts GuyNeural** | Microsoft Edge | TTS — Host voice (male) | Free, no API key |
+| **edge-tts JennyNeural** | Microsoft Edge | TTS — Guest voice (female) | Free, no API key |
 
 ## API Endpoints
 
