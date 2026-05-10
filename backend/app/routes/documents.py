@@ -1,4 +1,6 @@
 import uuid
+import logging
+import traceback
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
@@ -11,41 +13,57 @@ from app.services.vector_service import store_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
 
+logger = logging.getLogger("paperpod")
+
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 
-async def _process_document(doc_id: str, file_path: str, content_type: str, db_url: str):
+async def _process_document(doc_id: str, file_path: str, content_type: str):
     """Background task: extract text → LLM script → TTS audio."""
     from app.database import async_session
 
-    raw_text = extract_text(file_path, content_type)
-    chunks = chunk_text(raw_text)
+    try:
+        logger.info(f"[{doc_id}] Step 1/4: Extracting text...")
+        raw_text = extract_text(file_path, content_type)
+        logger.info(f"[{doc_id}] Extracted {len(raw_text)} chars")
 
-    store_chunks(doc_id, chunks)
+        chunks = chunk_text(raw_text)
+        store_chunks(doc_id, chunks)
+        logger.info(f"[{doc_id}] Step 2/4: Stored {len(chunks)} chunks")
 
-    async with async_session() as session:
-        doc = await session.get(Document, doc_id)
-        if doc:
-            doc.raw_text = raw_text
-            doc.num_chunks = len(chunks)
+        async with async_session() as session:
+            doc = await session.get(Document, doc_id)
+            if doc:
+                doc.raw_text = raw_text
+                doc.num_chunks = len(chunks)
+                await session.commit()
+
+        logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
+        script = generate_podcast_script(raw_text)
+        logger.info(f"[{doc_id}] Script generated ({len(script)} chars)")
+
+        logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
+        audio_path, duration = await generate_podcast_audio(script, doc_id)
+        logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path}")
+
+        audio_id = str(uuid.uuid4())
+        async with async_session() as session:
+            audio = AudioFile(
+                id=audio_id,
+                document_id=doc_id,
+                file_path=audio_path,
+                duration_seconds=duration,
+                dialogue_script=script,
+                created_at=datetime.utcnow(),
+            )
+            session.add(audio)
             await session.commit()
 
-    script = generate_podcast_script(raw_text)
+        logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
 
-    audio_path, duration = await generate_podcast_audio(script, doc_id)
-
-    audio_id = str(uuid.uuid4())
-    async with async_session() as session:
-        audio = AudioFile(
-            id=audio_id,
-            document_id=doc_id,
-            file_path=audio_path,
-            duration_seconds=duration,
-            dialogue_script=script,
-            created_at=datetime.utcnow(),
-        )
-        session.add(audio)
-        await session.commit()
+    except Exception as e:
+        logger.error(f"[{doc_id}] ❌ FAILED: {e}")
+        logger.error(traceback.format_exc())
 
 
 @router.post("/upload")
@@ -55,11 +73,6 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a document and start podcast generation in background."""
-    allowed_types = {
-        "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "text/plain",
-    }
     content_type = file.content_type or "text/plain"
 
     file_bytes = await file.read()
@@ -77,11 +90,37 @@ async def upload_document(
     db.add(doc)
     await db.commit()
 
+    logger.info(f"[{doc_id}] Upload received: {file.filename} ({content_type})")
+
     background_tasks.add_task(
-        _process_document, doc_id, file_path, content_type, ""
+        _process_document, doc_id, file_path, content_type
     )
 
     return {"doc_id": doc_id, "filename": file.filename, "status": "processing"}
+
+
+@router.get("/list")
+async def list_documents(db: AsyncSession = Depends(get_db)):
+    """List all uploaded documents."""
+    result = await db.execute(select(Document).order_by(Document.created_at.desc()))
+    docs = result.scalars().all()
+
+    items = []
+    for doc in docs:
+        audio_result = await db.execute(
+            select(AudioFile).where(AudioFile.document_id == doc.id)
+        )
+        audio = audio_result.scalar_one_or_none()
+        items.append({
+            "doc_id": doc.id,
+            "filename": doc.filename,
+            "num_chunks": doc.num_chunks,
+            "created_at": doc.created_at.isoformat(),
+            "status": "ready" if audio else "processing",
+            "audio_id": audio.id if audio else None,
+        })
+
+    return {"documents": items}
 
 
 @router.get("/{doc_id}")
@@ -111,27 +150,3 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
         if audio
         else None,
     }
-
-
-@router.get("/")
-async def list_documents(db: AsyncSession = Depends(get_db)):
-    """List all uploaded documents."""
-    result = await db.execute(select(Document).order_by(Document.created_at.desc()))
-    docs = result.scalars().all()
-
-    items = []
-    for doc in docs:
-        audio_result = await db.execute(
-            select(AudioFile).where(AudioFile.document_id == doc.id)
-        )
-        audio = audio_result.scalar_one_or_none()
-        items.append({
-            "doc_id": doc.id,
-            "filename": doc.filename,
-            "num_chunks": doc.num_chunks,
-            "created_at": doc.created_at.isoformat(),
-            "status": "ready" if audio else "processing",
-            "audio_id": audio.id if audio else None,
-        })
-
-    return {"documents": items}
