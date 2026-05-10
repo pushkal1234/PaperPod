@@ -8,7 +8,7 @@ pydantic==2.10.3
 pydantic-settings==2.7.0
 PyPDF2==3.0.1
 python-docx==1.1.2
-edge-tts==6.1.19
+edge-tts>=7.0.0
 # STT: using Groq's Whisper API (no local install needed)
 groq==0.13.1
 # Using lightweight in-memory text search (no heavy ML models to download)

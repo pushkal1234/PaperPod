@@ -17,7 +17,7 @@ export async function getDocument(docId) {
 }
 
 export async function listDocuments() {
-  const res = await api.get('/documents/');
+  const res = await api.get('/documents/list');
   return res.data;
 }
 
