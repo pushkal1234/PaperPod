@@ -1,0 +1,137 @@
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from app.database import get_db, Document, AudioFile
+from app.services.document_service import save_upload, extract_text, chunk_text
+from app.services.vector_service import store_chunks
+from app.services.llm_service import generate_podcast_script
+from app.services.tts_service import generate_podcast_audio
+
+router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+
+async def _process_document(doc_id: str, file_path: str, content_type: str, db_url: str):
+    """Background task: extract text → LLM script → TTS audio."""
+    from app.database import async_session
+
+    raw_text = extract_text(file_path, content_type)
+    chunks = chunk_text(raw_text)
+
+    store_chunks(doc_id, chunks)
+
+    async with async_session() as session:
+        doc = await session.get(Document, doc_id)
+        if doc:
+            doc.raw_text = raw_text
+            doc.num_chunks = len(chunks)
+            await session.commit()
+
+    script = generate_podcast_script(raw_text)
+
+    audio_path, duration = await generate_podcast_audio(script, doc_id)
+
+    audio_id = str(uuid.uuid4())
+    async with async_session() as session:
+        audio = AudioFile(
+            id=audio_id,
+            document_id=doc_id,
+            file_path=audio_path,
+            duration_seconds=duration,
+            dialogue_script=script,
+            created_at=datetime.utcnow(),
+        )
+        session.add(audio)
+        await session.commit()
+
+
+@router.post("/upload")
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a document and start podcast generation in background."""
+    allowed_types = {
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain",
+    }
+    content_type = file.content_type or "text/plain"
+
+    file_bytes = await file.read()
+    file_path = save_upload(file_bytes, file.filename)
+
+    doc_id = str(uuid.uuid4())
+    doc = Document(
+        id=doc_id,
+        filename=file.filename,
+        content_type=content_type,
+        raw_text="",
+        num_chunks=0,
+        created_at=datetime.utcnow(),
+    )
+    db.add(doc)
+    await db.commit()
+
+    background_tasks.add_task(
+        _process_document, doc_id, file_path, content_type, ""
+    )
+
+    return {"doc_id": doc_id, "filename": file.filename, "status": "processing"}
+
+
+@router.get("/{doc_id}")
+async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
+    """Get document metadata and processing status."""
+    doc = await db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    result = await db.execute(
+        select(AudioFile).where(AudioFile.document_id == doc_id)
+    )
+    audio = result.scalar_one_or_none()
+
+    return {
+        "doc_id": doc.id,
+        "filename": doc.filename,
+        "num_chunks": doc.num_chunks,
+        "created_at": doc.created_at.isoformat(),
+        "status": "ready" if audio else "processing",
+        "audio": {
+            "audio_id": audio.id,
+            "duration_seconds": audio.duration_seconds,
+            "audio_url": f"/api/audio/{audio.id}",
+            "dialogue_script": audio.dialogue_script,
+        }
+        if audio
+        else None,
+    }
+
+
+@router.get("/")
+async def list_documents(db: AsyncSession = Depends(get_db)):
+    """List all uploaded documents."""
+    result = await db.execute(select(Document).order_by(Document.created_at.desc()))
+    docs = result.scalars().all()
+
+    items = []
+    for doc in docs:
+        audio_result = await db.execute(
+            select(AudioFile).where(AudioFile.document_id == doc.id)
+        )
+        audio = audio_result.scalar_one_or_none()
+        items.append({
+            "doc_id": doc.id,
+            "filename": doc.filename,
+            "num_chunks": doc.num_chunks,
+            "created_at": doc.created_at.isoformat(),
+            "status": "ready" if audio else "processing",
+            "audio_id": audio.id if audio else None,
+        })
+
+    return {"documents": items}
