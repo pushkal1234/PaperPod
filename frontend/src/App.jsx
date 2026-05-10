@@ -138,7 +138,7 @@ function App() {
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-zinc-200 truncate">{doc.filename}</p>
                         <p className="text-xs text-zinc-600">
-                          {doc.num_chunks} chunks · {doc.status === 'ready' ? '✅ Ready' : '⏳ Processing'}
+                          {doc.status === 'ready' ? '✅ Ready to play' : '⏳ Processing...'}
                         </p>
                       </div>
                     </button>
@@ -202,12 +202,12 @@ function App() {
                       </p>
                     </div>
                     <div>
-                      <p className="text-zinc-500">Chunks</p>
-                      <p className="text-zinc-200 font-medium">{currentDoc.num_chunks}</p>
+                      <p className="text-zinc-500">Created</p>
+                      <p className="text-zinc-200 font-medium">{new Date(currentDoc.created_at).toLocaleDateString()}</p>
                     </div>
                     <div>
-                      <p className="text-zinc-500">Doc ID</p>
-                      <p className="text-zinc-200 font-medium font-mono text-xs truncate">{currentDoc.doc_id}</p>
+                      <p className="text-zinc-500">Format</p>
+                      <p className="text-zinc-200 font-medium">Podcast · 2 Hosts</p>
                     </div>
                   </div>
                 </div>
