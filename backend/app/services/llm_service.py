@@ -120,7 +120,25 @@ def generate_podcast_script(document_text: str) -> str:
         ])
         script_parts.append(continuation)
 
-    return "\n\n".join(script_parts)
+    full_script = "\n\n".join(script_parts)
+
+    # Safety: if LLM went wild, truncate to max 30 dialogue lines
+    lines = full_script.strip().split("\n")
+    dialogue_lines = [l for l in lines if l.strip() and (l.strip().lower().startswith("host:") or l.strip().lower().startswith("guest:"))]
+    if len(dialogue_lines) > 30:
+        logger.warning(f"LLM generated {len(dialogue_lines)} lines, truncating to 30")
+        kept = []
+        count = 0
+        for l in lines:
+            if l.strip() and (l.strip().lower().startswith("host:") or l.strip().lower().startswith("guest:")):
+                count += 1
+                if count > 30:
+                    break
+            kept.append(l)
+        full_script = "\n".join(kept)
+
+    logger.info(f"Final script: {len(dialogue_lines)} dialogue lines, {len(full_script)} chars")
+    return full_script
 
 
 def answer_question(question: str, context_chunks: list[str]) -> str:
