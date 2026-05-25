@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
@@ -11,6 +11,7 @@ function App() {
   const [currentDoc, setCurrentDoc] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(null);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -42,6 +43,7 @@ function App() {
 
   const startPolling = (docId) => {
     setIsPolling(true);
+    setErrorMsg(null);
     pollRef.current = setInterval(async () => {
       try {
         const doc = await getDocument(docId);
@@ -50,6 +52,12 @@ function App() {
           setIsPolling(false);
           setCurrentDoc(doc);
           setView('player');
+          loadDocuments();
+        } else if (doc.status === 'failed') {
+          clearInterval(pollRef.current);
+          setIsPolling(false);
+          setErrorMsg(doc.error || 'Podcast generation failed. Please try again.');
+          setView('failed');
           loadDocuments();
         }
       } catch (err) {
@@ -70,6 +78,9 @@ function App() {
       if (doc.status === 'ready') {
         setCurrentDoc(doc);
         setView('player');
+      } else if (doc.status === 'failed') {
+        setErrorMsg(doc.error || 'Podcast generation failed. Please try again.');
+        setView('failed');
       } else {
         setView('processing');
         startPolling(docId);
@@ -138,7 +149,7 @@ function App() {
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-zinc-200 truncate">{doc.filename}</p>
                         <p className="text-xs text-zinc-600">
-                          {doc.status === 'ready' ? '✅ Ready to play' : '⏳ Processing...'}
+                          {doc.status === 'ready' ? '✅ Ready to play' : doc.status === 'failed' ? '❌ Failed' : '⏳ Processing...'}
                         </p>
                       </div>
                     </button>
@@ -167,6 +178,28 @@ function App() {
               <RefreshCw className="w-4 h-4 animate-spin" />
               <span className="text-sm font-medium">Checking status...</span>
             </div>
+          </div>
+        )}
+
+        {/* FAILED VIEW */}
+        {view === 'failed' && (
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mb-8">
+              <AlertCircle className="w-10 h-10 text-red-400" />
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">Generation Failed</h2>
+            <p className="text-zinc-500 max-w-md mb-2">
+              Something went wrong while generating your podcast.
+            </p>
+            {errorMsg && (
+              <p className="text-red-400/70 text-sm max-w-lg mb-6 font-mono">{errorMsg}</p>
+            )}
+            <button
+              onClick={() => { setView('home'); setErrorMsg(null); }}
+              className="px-6 py-2.5 bg-brand-600 hover:bg-brand-500 text-white rounded-lg font-medium transition-colors"
+            >
+              Try Again
+            </button>
           </div>
         )}
 

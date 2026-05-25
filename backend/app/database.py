@@ -20,6 +20,8 @@ class Document(Base):
     content_type = Column(String, nullable=False)
     raw_text = Column(Text, nullable=False)
     num_chunks = Column(Integer, default=0)
+    status = Column(String, default="processing")  # processing | ready | failed
+    error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     audio_file = relationship("AudioFile", back_populates="document", uselist=False)

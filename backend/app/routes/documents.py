@@ -57,6 +57,9 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 created_at=datetime.utcnow(),
             )
             session.add(audio)
+            doc = await session.get(Document, doc_id)
+            if doc:
+                doc.status = "ready"
             await session.commit()
 
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
@@ -64,6 +67,16 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
     except Exception as e:
         logger.error(f"[{doc_id}] ❌ FAILED: {e}")
         logger.error(traceback.format_exc())
+        # Mark as failed so frontend stops polling
+        try:
+            async with async_session() as session:
+                doc = await session.get(Document, doc_id)
+                if doc:
+                    doc.status = "failed"
+                    doc.error_message = str(e)[:500]
+                    await session.commit()
+        except Exception:
+            logger.error(f"[{doc_id}] Could not update status to failed")
 
 
 @router.post("/upload")
@@ -116,7 +129,7 @@ async def list_documents(db: AsyncSession = Depends(get_db)):
             "filename": doc.filename,
             "num_chunks": doc.num_chunks,
             "created_at": doc.created_at.isoformat(),
-            "status": "ready" if audio else "processing",
+            "status": doc.status or ("ready" if audio else "processing"),
             "audio_id": audio.id if audio else None,
         })
 
@@ -135,12 +148,15 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
     )
     audio = result.scalar_one_or_none()
 
+    status = doc.status or ("ready" if audio else "processing")
+
     return {
         "doc_id": doc.id,
         "filename": doc.filename,
         "num_chunks": doc.num_chunks,
         "created_at": doc.created_at.isoformat(),
-        "status": "ready" if audio else "processing",
+        "status": status,
+        "error": doc.error_message if status == "failed" else None,
         "audio": {
             "audio_id": audio.id,
             "duration_seconds": audio.duration_seconds,
