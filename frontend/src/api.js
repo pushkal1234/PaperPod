@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: `${API_BASE}/api`,
 });
 
 export async function uploadDocument(file) {
@@ -40,9 +42,9 @@ export async function getQAHistory(docId) {
 }
 
 export function getAudioUrl(audioId) {
-  return `/api/audio/${audioId}`;
+  return `${API_BASE}/api/audio/${audioId}`;
 }
 
 export function getQAAudioUrl(qaId) {
-  return `/api/qa/audio/${qaId}`;
+  return `${API_BASE}/api/qa/audio/${qaId}`;
 }
