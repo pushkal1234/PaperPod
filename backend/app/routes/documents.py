@@ -22,11 +22,14 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
     """Background task: extract text → LLM script → TTS audio."""
     from app.database import async_session
 
+    current_step = "initializing"
     try:
+        current_step = "extracting text from PDF"
         logger.info(f"[{doc_id}] Step 1/4: Extracting text...")
         raw_text = extract_text(file_path, content_type)
         logger.info(f"[{doc_id}] Extracted {len(raw_text)} chars")
 
+        current_step = "chunking and storing text"
         chunks = chunk_text(raw_text)
         store_chunks(doc_id, chunks)
         logger.info(f"[{doc_id}] Step 2/4: Stored {len(chunks)} chunks")
@@ -38,10 +41,12 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 doc.num_chunks = len(chunks)
                 await session.commit()
 
+        current_step = "generating podcast script (Groq LLM)"
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
         script = generate_podcast_script(raw_text)
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars)")
 
+        current_step = "synthesizing audio (edge-tts)"
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         audio_path, duration = await generate_podcast_audio(script, doc_id)
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path}")
@@ -65,7 +70,8 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
 
     except Exception as e:
-        logger.error(f"[{doc_id}] ❌ FAILED: {e}")
+        error_detail = f"Failed while {current_step}: {e}"
+        logger.error(f"[{doc_id}] ❌ {error_detail}")
         logger.error(traceback.format_exc())
         # Mark as failed so frontend stops polling
         try:
@@ -73,7 +79,7 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 doc = await session.get(Document, doc_id)
                 if doc:
                     doc.status = "failed"
-                    doc.error_message = str(e)[:500]
+                    doc.error_message = error_detail[:500]
                     await session.commit()
         except Exception:
             logger.error(f"[{doc_id}] Could not update status to failed")

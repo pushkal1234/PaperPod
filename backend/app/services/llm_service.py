@@ -67,8 +67,9 @@ Rules:
 
 
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
-    """Call Groq LLM with retry on rate limit."""
-    for attempt in range(3):
+    """Call Groq LLM with retry on rate limit and connection errors."""
+    last_error = None
+    for attempt in range(4):
         try:
             response = _client.chat.completions.create(
                 model=settings.LLM_MODEL,
@@ -78,13 +79,20 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
             )
             return response.choices[0].message.content
         except Exception as e:
-            if "rate_limit" in str(e).lower() or "413" in str(e):
+            last_error = e
+            err_str = str(e).lower()
+            if "rate_limit" in err_str or "413" in str(e):
                 wait = 30 * (attempt + 1)
-                logger.warning(f"Rate limited, waiting {wait}s before retry...")
+                logger.warning(f"[LLM] Rate limited (attempt {attempt+1}), waiting {wait}s...")
+                time.sleep(wait)
+            elif "connection" in err_str or "timeout" in err_str or "unavailable" in err_str:
+                wait = 10 * (attempt + 1)
+                logger.warning(f"[LLM] Connection error (attempt {attempt+1}): {e}, retrying in {wait}s...")
                 time.sleep(wait)
             else:
-                raise
-    raise RuntimeError("LLM call failed after 3 retries")
+                logger.error(f"[LLM] Unrecoverable error: {e}")
+                raise RuntimeError(f"LLM error: {e}")
+    raise RuntimeError(f"LLM failed after 4 retries: {last_error}")
 
 
 def generate_podcast_script(document_text: str) -> str:

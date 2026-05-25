@@ -35,9 +35,20 @@ def parse_dialogue(script: str) -> list[dict]:
 
 
 async def synthesize_speech(text: str, voice: str, output_path: str):
-    """Generate speech audio using edge-tts."""
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
+    """Generate speech audio using edge-tts with retry on connection errors."""
+    for attempt in range(3):
+        try:
+            communicate = edge_tts.Communicate(text, voice)
+            await communicate.save(output_path)
+            return
+        except Exception as e:
+            err_str = str(e).lower()
+            if attempt < 2 and ("connection" in err_str or "timeout" in err_str or "websocket" in err_str or "403" in err_str):
+                wait = 5 * (attempt + 1)
+                logger.warning(f"[TTS] Connection error (attempt {attempt+1}): {e}, retrying in {wait}s...")
+                await asyncio.sleep(wait)
+            else:
+                raise
 
 
 async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_path: str, idx: int):
@@ -46,7 +57,7 @@ async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_pa
         try:
             await synthesize_speech(text, voice, clip_path)
         except Exception as e:
-            logger.warning(f"TTS clip {idx} failed: {e}")
+            logger.warning(f"[TTS] Clip {idx} failed after retries: {e}")
 
 
 async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float]:
