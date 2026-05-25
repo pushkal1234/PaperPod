@@ -14,7 +14,19 @@ _client = Groq(api_key=settings.GROQ_API_KEY)
 # leaving room for system prompt + output tokens
 MAX_INPUT_CHARS = 6000
 
-PODCAST_SYSTEM_PROMPT = """You are a world-class podcast script writer. 
+def _build_podcast_prompt(doc_length: int) -> str:
+    """Build system prompt with length guidance scaled to document size."""
+    # Scale: ~1 min of audio ≈ 150 words of dialogue ≈ 6-8 exchanges
+    if doc_length < 2000:       # ~1 page
+        target = "8-10 exchanges (about 2 minutes of audio)"
+    elif doc_length < 5000:     # 2-4 pages
+        target = "12-16 exchanges (about 3-4 minutes of audio)"
+    elif doc_length < 10000:    # 5-8 pages
+        target = "16-20 exchanges (about 4-5 minutes of audio)"
+    else:                       # 9+ pages
+        target = "20-25 exchanges (about 5-6 minutes of audio)"
+
+    return f"""You are a world-class podcast script writer. 
 Given document content, create an engaging podcast-style conversation between two people:
 - **Host** (curious, asks great questions, keeps the conversation flowing)
 - **Guest** (the expert, explains concepts clearly with analogies and examples)
@@ -24,8 +36,10 @@ Rules:
 2. Use casual language, humor, and "aha!" moments.
 3. Break complex ideas into simple explanations.
 4. Include transitions like "That's fascinating!", "So what you're saying is...", "Let me push back on that..."
-5. Cover ALL key points from the document.
-6. Output ONLY the dialogue in this exact format (no stage directions, no other text):
+5. Focus on the TOP 3-5 most important insights — do NOT try to cover every single detail.
+6. Keep it CONCISE and punchy. Target: {target}.
+7. Each speaker turn should be 1-3 sentences MAX. No long monologues.
+8. Output ONLY the dialogue in this exact format (no stage directions, no other text):
 
 Host: [dialogue]
 Guest: [dialogue]
@@ -33,11 +47,13 @@ Host: [dialogue]
 Guest: [dialogue]
 ...
 
-Start with the Host welcoming listeners and introducing the topic.
-End with a natural wrap-up."""
+Start with the Host giving a brief, energetic intro to the topic (1 sentence).
+End with a quick natural wrap-up (1-2 exchanges)."""
+
 
 CONTINUE_PROMPT = """Continue the podcast conversation covering these additional points from the document.
 Pick up naturally from where you left off — do NOT re-introduce the topic.
+Keep it concise — focus on the most important new insights only (8-10 more exchanges max).
 Output ONLY dialogue in Host:/Guest: format."""
 
 QA_SYSTEM_PROMPT = """You are a helpful assistant that answers questions about a document.
@@ -83,12 +99,15 @@ def generate_podcast_script(document_text: str) -> str:
 
     logger.info(f"Document split into {len(text_parts)} part(s) for LLM")
 
-    # First part: full intro
+    # First part: full intro with length-scaled prompt
+    system_prompt = _build_podcast_prompt(len(document_text))
+    # Scale max output tokens: small docs get shorter scripts
+    max_out = 1024 if len(document_text) < 3000 else 1536 if len(document_text) < 8000 else 2048
     script_parts = []
     script = _call_llm([
-        {"role": "system", "content": PODCAST_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Create a podcast conversation based on this document:\n\n{text_parts[0]}"},
-    ])
+    ], max_tokens=max_out)
     script_parts.append(script)
 
     # Additional parts: continue the conversation
