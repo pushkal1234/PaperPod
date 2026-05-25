@@ -1,12 +1,20 @@
 import os
 import uuid
 import asyncio
+import logging
 import re
 
 import edge_tts
 from pydub import AudioSegment
 
 from app.config import settings
+
+logger = logging.getLogger("paperpod")
+
+# Max concurrent TTS calls — avoid overwhelming edge-tts websocket
+TTS_CONCURRENCY = 3
+# Hard cap on dialogue turns to prevent runaway generation
+MAX_DIALOGUE_TURNS = 30
 
 
 def parse_dialogue(script: str) -> list[dict]:
@@ -32,19 +40,38 @@ async def synthesize_speech(text: str, voice: str, output_path: str):
     await communicate.save(output_path)
 
 
+async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_path: str, idx: int):
+    """Synthesize a single clip with concurrency limit."""
+    async with sem:
+        try:
+            await synthesize_speech(text, voice, clip_path)
+        except Exception as e:
+            logger.warning(f"TTS clip {idx} failed: {e}")
+
+
 async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float]:
     """Convert dialogue script to a single podcast MP3 file.
     
+    TTS calls run in parallel (up to TTS_CONCURRENCY at once) for speed.
     Returns (file_path, duration_seconds).
     """
     dialogue = parse_dialogue(script)
     if not dialogue:
         raise ValueError("Could not parse dialogue from script")
 
+    if len(dialogue) > MAX_DIALOGUE_TURNS:
+        logger.warning(f"[{doc_id}] Capping dialogue from {len(dialogue)} to {MAX_DIALOGUE_TURNS} turns")
+        dialogue = dialogue[:MAX_DIALOGUE_TURNS]
+
+    logger.info(f"[{doc_id}] Generating audio for {len(dialogue)} dialogue turns")
+
     temp_dir = os.path.join(settings.AUDIO_DIR, f"temp_{doc_id}")
     os.makedirs(temp_dir, exist_ok=True)
 
+    sem = asyncio.Semaphore(TTS_CONCURRENCY)
+    tasks = []
     clip_paths = []
+
     for i, entry in enumerate(dialogue):
         voice = (
             settings.TTS_VOICE_HOST
@@ -52,8 +79,11 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float]:
             else settings.TTS_VOICE_GUEST
         )
         clip_path = os.path.join(temp_dir, f"clip_{i:04d}.mp3")
-        await synthesize_speech(entry["text"], voice, clip_path)
         clip_paths.append(clip_path)
+        tasks.append(_synthesize_one(sem, entry["text"], voice, clip_path, i))
+
+    logger.info(f"[{doc_id}] TTS: {len(tasks)} clips, concurrency={TTS_CONCURRENCY}")
+    await asyncio.gather(*tasks)
 
     combined = AudioSegment.empty()
     pause = AudioSegment.silent(duration=400)
