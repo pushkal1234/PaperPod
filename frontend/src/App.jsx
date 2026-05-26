@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle } from 'lucide-react';
+import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Trash2 } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
-import { uploadDocument, getDocument, listDocuments, getAudioUrl } from './api';
+import { uploadDocument, getDocument, listDocuments, deleteDocument, getAudioUrl } from './api';
 
 function App() {
   const [view, setView] = useState('home');
@@ -12,6 +12,7 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [deletingDocIds, setDeletingDocIds] = useState(() => new Set());
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -90,6 +91,33 @@ function App() {
     }
   };
 
+  const handleDelete = async (doc, e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+
+    const ok = window.confirm(`Delete "${doc.filename}"?\n\nThis will remove the podcast and Q&A history from the server.`);
+    if (!ok) return;
+
+    setDeletingDocIds((prev) => new Set([...prev, doc.doc_id]));
+    try {
+      await deleteDocument(doc.doc_id);
+      if (currentDoc?.doc_id === doc.doc_id) {
+        setCurrentDoc(null);
+        setView('home');
+      }
+      await loadDocuments();
+    } catch (err) {
+      console.error('Delete failed:', err);
+      alert('Delete failed. Please try again.');
+    } finally {
+      setDeletingDocIds((prev) => {
+        const next = new Set(prev);
+        next.delete(doc.doc_id);
+        return next;
+      });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0f0f14]">
       {/* Navbar */}
@@ -138,10 +166,15 @@ function App() {
                 <h2 className="text-lg font-semibold text-zinc-200 mb-4">Your Podcasts</h2>
                 <div className="grid gap-3">
                   {documents.map((doc) => (
-                    <button
+                    <div
                       key={doc.doc_id}
                       onClick={() => openDoc(doc.doc_id)}
-                      className="flex items-center gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4 hover:border-brand-500/30 hover:bg-zinc-800/50 transition-all text-left group w-full"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') openDoc(doc.doc_id);
+                      }}
+                      className="flex items-center gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4 hover:border-brand-500/30 hover:bg-zinc-800/50 transition-all text-left group w-full cursor-pointer"
                     >
                       <div className="w-10 h-10 rounded-lg bg-zinc-800 group-hover:bg-brand-500/10 flex items-center justify-center transition-colors">
                         <FileAudio className="w-5 h-5 text-zinc-500 group-hover:text-brand-400 transition-colors" />
@@ -152,7 +185,17 @@ function App() {
                           {doc.status === 'ready' ? '✅ Ready to play' : doc.status === 'failed' ? '❌ Failed' : '⏳ Processing...'}
                         </p>
                       </div>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDelete(doc, e)}
+                        disabled={deletingDocIds.has(doc.doc_id)}
+                        className="ml-2 inline-flex items-center justify-center w-9 h-9 rounded-lg border border-zinc-800 bg-zinc-950/30 text-zinc-500 hover:text-red-300 hover:border-red-500/30 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Delete podcast"
+                        aria-label={`Delete ${doc.filename}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>

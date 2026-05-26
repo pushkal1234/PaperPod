@@ -1,15 +1,16 @@
 import uuid
 import logging
 import traceback
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
-from app.database import get_db, Document, AudioFile
+from app.database import get_db, Document, AudioFile, QASession
 from app.services.document_service import save_upload, extract_text, chunk_text
-from app.services.vector_service import store_chunks
+from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
 
@@ -172,3 +173,53 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
         if audio
         else None,
     }
+
+
+@router.delete("/{doc_id}")
+async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a document and all associated audio + Q&A history."""
+    doc = await db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Collect file paths to delete (best-effort)
+    audio_result = await db.execute(
+        select(AudioFile).where(AudioFile.document_id == doc_id)
+    )
+    audio = audio_result.scalar_one_or_none()
+
+    qa_result = await db.execute(
+        select(QASession).where(QASession.document_id == doc_id)
+    )
+    qa_sessions = qa_result.scalars().all()
+
+    file_paths: list[str] = []
+    if audio and audio.file_path:
+        file_paths.append(audio.file_path)
+    for s in qa_sessions:
+        if s.question_audio_path:
+            file_paths.append(s.question_audio_path)
+        if s.answer_audio_path:
+            file_paths.append(s.answer_audio_path)
+
+    # Delete DB rows
+    await db.execute(delete(QASession).where(QASession.document_id == doc_id))
+    await db.execute(delete(AudioFile).where(AudioFile.document_id == doc_id))
+    await db.execute(delete(Document).where(Document.id == doc_id))
+    await db.commit()
+
+    # Remove in-memory chunks (if present)
+    delete_chunks(doc_id)
+
+    # Delete files after commit (best-effort)
+    deleted_files = 0
+    for p in file_paths:
+        try:
+            if p and os.path.exists(p):
+                os.remove(p)
+                deleted_files += 1
+        except Exception:
+            # best-effort cleanup; DB delete already succeeded
+            pass
+
+    return {"ok": True, "doc_id": doc_id, "deleted_files": deleted_files}

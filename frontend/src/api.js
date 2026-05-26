@@ -23,6 +23,11 @@ export async function listDocuments() {
   return res.data;
 }
 
+export async function deleteDocument(docId) {
+  const res = await api.delete(`/documents/${docId}`);
+  return res.data;
+}
+
 export async function askQuestion(docId, { text, audioBlob }) {
   const formData = new FormData();
   formData.append('doc_id', docId);

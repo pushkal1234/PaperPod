@@ -16,6 +16,11 @@ def store_chunks(doc_id: str, chunks: list[str]):
     _store[doc_id] = chunks
 
 
+def delete_chunks(doc_id: str):
+    """Remove document chunks from memory (best-effort)."""
+    _store.pop(doc_id, None)
+
+
 def _tokenize(text: str) -> list[str]:
     return re.findall(r'\b[a-zA-Z]{2,}\b', text.lower())
 
