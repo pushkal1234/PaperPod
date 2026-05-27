@@ -37,17 +37,22 @@ def search_web(query: str) -> list[dict]:
     if data.get("error"):
         raise RuntimeError(data["error"])
 
+    def _clean_snippet(s: str) -> str:
+        # Prevent prompt-y formatting / multi-line junk from confusing the LLM
+        s = (s or "").replace("\r", " ").replace("\n", " ")
+        s = " ".join(s.split())
+        return s[:400]
+
     results = []
     for item in data.get("organic_results", [])[:MAX_WEB_RESULTS]:
         link = item.get("link")
         if not link:
             continue
+        snippet = item.get("snippet") or item.get("snippet_highlighted", [""])[0] if isinstance(item.get("snippet_highlighted"), list) else (item.get("snippet") or "")
         results.append({
             "title": item.get("title") or link,
             "link": link,
-            "snippet": item.get("snippet") or item.get("snippet_highlighted", [""])[0]
-            if isinstance(item.get("snippet_highlighted"), list)
-            else (item.get("snippet") or ""),
+            "snippet": _clean_snippet(snippet),
         })
 
     # Knowledge graph / answer box as extra context when present
@@ -56,7 +61,7 @@ def search_web(query: str) -> list[dict]:
         results.insert(0, {
             "title": answer_box.get("title") or "Featured answer",
             "link": answer_box.get("link") or answer_box.get("displayed_link") or "",
-            "snippet": answer_box.get("answer") or answer_box.get("snippet", ""),
+            "snippet": _clean_snippet(answer_box.get("answer") or answer_box.get("snippet", "")),
         })
 
     logger.info(f"[SerpAPI] {len(results)} results for query: {query[:80]}")
