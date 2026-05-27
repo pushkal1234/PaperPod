@@ -2,6 +2,7 @@ import uuid
 import logging
 import traceback
 import os
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
@@ -17,6 +18,15 @@ from app.services.tts_service import generate_podcast_audio
 logger = logging.getLogger("paperpod")
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+
+def _parse_transcript_segments(audio: AudioFile | None) -> list[dict] | None:
+    if not audio or not audio.transcript_segments:
+        return None
+    try:
+        return json.loads(audio.transcript_segments)
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 async def _process_document(doc_id: str, file_path: str, content_type: str):
@@ -49,7 +59,7 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
 
         current_step = "synthesizing audio (edge-tts)"
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
-        audio_path, duration = await generate_podcast_audio(script, doc_id)
+        audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path}")
 
         audio_id = str(uuid.uuid4())
@@ -60,6 +70,7 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 file_path=audio_path,
                 duration_seconds=duration,
                 dialogue_script=script,
+                transcript_segments=json.dumps(transcript_segments),
                 created_at=datetime.utcnow(),
             )
             session.add(audio)
@@ -169,6 +180,7 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
             "duration_seconds": audio.duration_seconds,
             "audio_url": f"/api/audio/{audio.id}",
             "dialogue_script": audio.dialogue_script,
+            "transcript_segments": _parse_transcript_segments(audio),
         }
         if audio
         else None,

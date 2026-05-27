@@ -60,11 +60,12 @@ async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_pa
             logger.warning(f"[TTS] Clip {idx} failed after retries: {e}")
 
 
-async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float]:
+async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, list[dict]]:
     """Convert dialogue script to a single podcast MP3 file.
-    
+
     TTS calls run in parallel (up to TTS_CONCURRENCY at once) for speed.
-    Returns (file_path, duration_seconds).
+    Returns (file_path, duration_seconds, transcript_segments).
+    Each segment: {speaker, text, start_seconds, end_seconds}.
     """
     dialogue = parse_dialogue(script)
     if not dialogue:
@@ -98,11 +99,22 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float]:
 
     combined = AudioSegment.empty()
     pause = AudioSegment.silent(duration=400)
+    transcript_segments: list[dict] = []
 
-    for clip_path in clip_paths:
+    for i, clip_path in enumerate(clip_paths):
         try:
             segment = AudioSegment.from_mp3(clip_path)
+            start_seconds = len(combined) / 1000.0
             combined += segment + pause
+            end_seconds = start_seconds + len(segment) / 1000.0
+            entry = dialogue[i]
+            transcript_segments.append({
+                "speaker": entry["speaker"],
+                "text": entry["text"],
+                "line": f"{entry['speaker']}: {entry['text']}",
+                "start_seconds": round(start_seconds, 2),
+                "end_seconds": round(end_seconds, 2),
+            })
         except Exception:
             continue
 
@@ -122,7 +134,7 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float]:
     except OSError:
         pass
 
-    return output_path, duration
+    return output_path, duration, transcript_segments
 
 
 async def synthesize_answer(text: str, doc_id: str, qa_id: str) -> str:

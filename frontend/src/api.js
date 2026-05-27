@@ -28,9 +28,10 @@ export async function deleteDocument(docId) {
   return res.data;
 }
 
-export async function askQuestion(docId, { text, audioBlob }) {
+export async function askQuestion(docId, { text, audioBlob, searchMode = 'document' }) {
   const formData = new FormData();
   formData.append('doc_id', docId);
+  formData.append('search_mode', searchMode);
   if (audioBlob) {
     formData.append('audio', audioBlob, 'question.wav');
   }
@@ -38,6 +39,11 @@ export async function askQuestion(docId, { text, audioBlob }) {
     formData.append('question_text', text);
   }
   const res = await api.post('/qa/ask', formData);
+  return res.data;
+}
+
+export async function getHealth() {
+  const res = await api.get('/health');
   return res.data;
 }
 

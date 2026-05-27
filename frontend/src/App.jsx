@@ -264,6 +264,7 @@ function App() {
                   audioUrl={getAudioUrl(currentDoc.audio.audio_id)}
                   title={currentDoc.filename}
                   dialogueScript={currentDoc.audio.dialogue_script}
+                  transcriptSegments={currentDoc.audio.transcript_segments}
                 />
                 <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800/50">
                   <div className="grid grid-cols-2 gap-4 text-sm">

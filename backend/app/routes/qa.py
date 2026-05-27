@@ -10,6 +10,7 @@ from app.services.stt_service import transcribe_audio
 from app.services.vector_service import query_chunks
 from app.services.llm_service import answer_question
 from app.services.tts_service import synthesize_answer
+from app.services import serpapi_service
 
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 
@@ -18,6 +19,7 @@ router = APIRouter(prefix="/api/qa", tags=["qa"])
 async def ask_question(
     doc_id: str = Form(...),
     question_text: str = Form(None),
+    search_mode: str = Form("document"),
     audio: UploadFile = File(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -37,8 +39,30 @@ async def ask_question(
         raise HTTPException(status_code=400, detail="No question provided (text or audio)")
 
     context_chunks = query_chunks(question_text, doc_id, top_k=5)
+    citations: list = []
+    mode = (search_mode or "document").lower().strip()
+    if mode not in ("document", "hybrid"):
+        mode = "document"
 
-    answer_text = answer_question(question_text, context_chunks)
+    if mode == "hybrid" and serpapi_service.is_configured():
+        doc_context_parts = []
+        if doc.raw_text:
+            doc_context_parts.append(doc.raw_text[:8000])
+        if context_chunks:
+            doc_context_parts.append("\n\n---\n\n".join(context_chunks))
+        document_context = "\n\n---\n\n".join(doc_context_parts) or "No document text available."
+        try:
+            result = serpapi_service.answer_with_web_search(question_text, document_context)
+            answer_text = result["answer"]
+            citations = result.get("citations") or []
+        except Exception as e:
+            answer_text = answer_question(question_text, context_chunks)
+            mode = "document"
+            citations = [{"note": f"Web search unavailable, answered from document only: {e}"}]
+    else:
+        if mode == "hybrid" and not serpapi_service.is_configured():
+            mode = "document"
+        answer_text = answer_question(question_text, context_chunks)
 
     qa_id = str(uuid.uuid4())
     answer_audio_path = await synthesize_answer(answer_text, doc_id, qa_id)
@@ -59,6 +83,9 @@ async def ask_question(
         "question": question_text,
         "answer": answer_text,
         "answer_audio_url": f"/api/qa/audio/{qa_id}",
+        "search_mode": mode,
+        "citations": citations,
+        "web_search_available": serpapi_service.is_configured(),
     }
 
 

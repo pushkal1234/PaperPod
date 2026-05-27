@@ -1,12 +1,60 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2 } from 'lucide-react';
 
-export default function PodcastPlayer({ audioUrl, title, dialogueScript }) {
+function buildProportionalSegments(dialogueScript, duration) {
+  const lines = dialogueScript
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && (l.toLowerCase().startsWith('host:') || l.toLowerCase().startsWith('guest:')));
+
+  if (!lines.length || !duration) return [];
+
+  const weights = lines.map((l) => Math.max(l.length, 1));
+  const total = weights.reduce((a, b) => a + b, 0);
+  let acc = 0;
+
+  return lines.map((line, i) => {
+    const start = (acc / total) * duration;
+    acc += weights[i];
+    const end = (acc / total) * duration;
+    const isHost = line.toLowerCase().startsWith('host:');
+    const text = line.replace(/^(host|guest):\s*/i, '').trim();
+    return {
+      speaker: isHost ? 'Host' : 'Guest',
+      text,
+      line,
+      start_seconds: start,
+      end_seconds: end,
+    };
+  });
+}
+
+export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcriptSegments }) {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showTranscript, setShowTranscript] = useState(false);
+
+  const segments = useMemo(() => {
+    if (transcriptSegments?.length) return transcriptSegments;
+    if (dialogueScript && duration > 0) {
+      return buildProportionalSegments(dialogueScript, duration);
+    }
+    return [];
+  }, [transcriptSegments, dialogueScript, duration]);
+
+  const activeIndex = useMemo(() => {
+    if (!segments.length) return -1;
+    const idx = segments.findIndex(
+      (s) => currentTime >= s.start_seconds && currentTime < s.end_seconds
+    );
+    if (idx >= 0) return idx;
+    if (currentTime >= segments[segments.length - 1]?.end_seconds) {
+      return segments.length - 1;
+    }
+    return -1;
+  }, [segments, currentTime]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -43,6 +91,16 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript }) {
     );
   };
 
+  const seekTo = (seconds) => {
+    if (!audioRef.current || !Number.isFinite(seconds)) return;
+    audioRef.current.currentTime = Math.max(0, Math.min(seconds, duration || seconds));
+    setCurrentTime(audioRef.current.currentTime);
+    if (!isPlaying) {
+      audioRef.current.play().catch(() => {});
+      setIsPlaying(true);
+    }
+  };
+
   const handleSeekBar = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
@@ -69,7 +127,6 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript }) {
         </div>
       </div>
 
-      {/* Seek bar */}
       <div
         className="w-full h-2 bg-zinc-700 rounded-full cursor-pointer mb-2 group"
         onClick={handleSeekBar}
@@ -87,7 +144,6 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript }) {
         <span>{fmt(duration)}</span>
       </div>
 
-      {/* Controls */}
       <div className="flex items-center justify-center gap-6">
         <button
           onClick={() => seek(-15)}
@@ -111,7 +167,6 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript }) {
         </button>
       </div>
 
-      {/* Transcript toggle */}
       {dialogueScript && (
         <div className="mt-6">
           <button
@@ -121,15 +176,48 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript }) {
             {showTranscript ? 'Hide' : 'Show'} Transcript
           </button>
           {showTranscript && (
-            <div className="mt-3 max-h-64 overflow-y-auto bg-zinc-800/50 rounded-xl p-4 text-sm text-zinc-300 space-y-2 border border-zinc-700/50">
-              {dialogueScript.split('\n').filter(l => l.trim()).map((line, i) => {
-                const isHost = line.toLowerCase().startsWith('host:');
-                return (
-                  <p key={i} className={isHost ? 'text-brand-300' : 'text-emerald-300'}>
-                    {line}
-                  </p>
-                );
-              })}
+            <div className="mt-3 max-h-64 overflow-y-auto bg-zinc-800/50 rounded-xl p-4 text-sm border border-zinc-700/50">
+              {segments.length > 0 ? (
+                <p className="text-xs text-zinc-500 mb-3">Click any line to jump in the audio</p>
+              ) : null}
+              <div className="space-y-2">
+                {segments.length > 0
+                  ? segments.map((seg, i) => {
+                      const isHost = seg.speaker === 'Host';
+                      const isActive = i === activeIndex;
+                      return (
+                        <button
+                          key={`${seg.start_seconds}-${i}`}
+                          type="button"
+                          onClick={() => seekTo(seg.start_seconds)}
+                          className={`w-full text-left rounded-lg px-3 py-2 transition-all border ${
+                            isActive
+                              ? 'bg-brand-500/15 border-brand-500/40 ring-1 ring-brand-500/30'
+                              : 'border-transparent hover:bg-zinc-700/50 hover:border-zinc-600'
+                          }`}
+                        >
+                          <span className="text-[10px] text-zinc-500 font-mono mr-2">
+                            {fmt(seg.start_seconds)}
+                          </span>
+                          <span className={isHost ? 'text-brand-300 font-medium' : 'text-emerald-300 font-medium'}>
+                            {seg.speaker}:
+                          </span>{' '}
+                          <span className="text-zinc-300">{seg.text}</span>
+                        </button>
+                      );
+                    })
+                  : dialogueScript
+                      .split('\n')
+                      .filter((l) => l.trim())
+                      .map((line, i) => {
+                        const isHost = line.toLowerCase().startsWith('host:');
+                        return (
+                          <p key={i} className={isHost ? 'text-brand-300' : 'text-emerald-300'}>
+                            {line}
+                          </p>
+                        );
+                      })}
+              </div>
             </div>
           )}
         </div>

@@ -65,6 +65,19 @@ Rules:
 3. Be concise but thorough.
 4. Speak naturally as if explaining to a friend."""
 
+HYBRID_QA_SYSTEM_PROMPT = """You are PaperPod's research assistant. The user uploaded a document and asked a question.
+
+You receive:
+1. DOCUMENT CONTEXT from their upload
+2. WEB SEARCH RESULTS (titles, snippets, URLs from Google via SerpAPI)
+
+Rules:
+1. Ground your answer primarily in the DOCUMENT CONTEXT.
+2. Use web results for current facts, definitions, news, or gaps the document doesn't cover.
+3. Briefly distinguish what comes from the document vs the web when both are used.
+4. Only cite URLs that appear in the web results section — do not invent links.
+5. Be concise and conversational — suitable for spoken audio."""
+
 
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
     """Call Groq LLM with retry on rate limit and connection errors."""
@@ -159,6 +172,38 @@ def answer_question(question: str, context_chunks: list[str]) -> str:
         messages=[
             {"role": "system", "content": QA_SYSTEM_PROMPT},
             {"role": "user", "content": f"Context from the document:\n\n{context}\n\n---\n\nQuestion: {question}"},
+        ],
+        temperature=0.5,
+        max_tokens=1024,
+    )
+
+
+def answer_question_hybrid(
+    question: str, document_context: str, web_results: list[dict]
+) -> str:
+    """Answer using document context + SerpAPI web snippets via Groq."""
+    doc = document_context[:8000]
+    if web_results:
+        web_block = "\n\n".join(
+            f"[{i + 1}] {r.get('title', 'Result')}\n"
+            f"URL: {r.get('link', '')}\n"
+            f"{r.get('snippet', '')}"
+            for i, r in enumerate(web_results)
+        )
+    else:
+        web_block = "(No web results returned for this query.)"
+
+    return _call_llm(
+        messages=[
+            {"role": "system", "content": HYBRID_QA_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"DOCUMENT CONTEXT:\n\n{doc}\n\n---\n\n"
+                    f"WEB SEARCH RESULTS:\n\n{web_block}\n\n---\n\n"
+                    f"QUESTION: {question}"
+                ),
+            },
         ],
         temperature=0.5,
         max_tokens=1024,

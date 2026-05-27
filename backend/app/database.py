@@ -36,6 +36,7 @@ class AudioFile(Base):
     file_path = Column(String, nullable=False)
     duration_seconds = Column(Float, default=0.0)
     dialogue_script = Column(Text, nullable=True)
+    transcript_segments = Column(Text, nullable=True)  # JSON: [{speaker, text, start_seconds, end_seconds}]
     created_at = Column(DateTime, default=datetime.utcnow)
 
     document = relationship("Document", back_populates="audio_file")
@@ -59,9 +60,25 @@ engine = create_async_engine(settings.DATABASE_URL, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+async def _migrate_schema(conn):
+    """Add columns introduced after initial deploy (SQLite create_all won't alter tables)."""
+    from sqlalchemy import text
+
+    def _migrate(sync_conn):
+        rows = sync_conn.execute(text("PRAGMA table_info(audio_files)")).fetchall()
+        cols = {row[1] for row in rows}
+        if "transcript_segments" not in cols:
+            sync_conn.execute(
+                text("ALTER TABLE audio_files ADD COLUMN transcript_segments TEXT")
+            )
+
+    await conn.run_sync(_migrate)
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _migrate_schema(conn)
 
 
 async def get_db():

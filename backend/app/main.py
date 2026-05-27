@@ -48,4 +48,8 @@ app.include_router(qa.router)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "PaperPod"}
+    return {
+        "status": "ok",
+        "service": "PaperPod",
+        "web_search_available": bool(settings.SERPAPI_API_KEY.strip()),
+    }
