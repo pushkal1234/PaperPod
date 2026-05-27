@@ -49,12 +49,17 @@ Guest: [dialogue]
 ...
 
 Start with the Host giving a brief, energetic intro to the topic (1 sentence).
-End with a quick natural wrap-up (1-2 exchanges)."""
+End with a warm sign-off. The final two lines MUST be:
+Guest: (a short closing / takeaway, no questions)
+Host: (a thank you + goodbye, no questions)"""
 
 
 CONTINUE_PROMPT = """Continue the podcast conversation covering these additional points from the document.
 Pick up naturally from where you left off — do NOT re-introduce the topic.
 Keep it concise — focus on the most important new insights only (8-10 more exchanges max).
+End with a warm sign-off. The final two lines MUST be:
+Guest: (a short closing / takeaway, no questions)
+Host: (a thank you + goodbye, no questions)
 Output ONLY dialogue in Host:/Guest: format."""
 
 QA_SYSTEM_PROMPT = """You are a helpful assistant that answers questions about a document.
@@ -210,16 +215,30 @@ def generate_podcast_script(document_text: str) -> str:
         full_script = "\n".join(kept)
 
     logger.info(f"Final script: {len(dialogue_lines)} dialogue lines, {len(full_script)} chars")
-    # Ensure we don't end abruptly with an unanswered question.
-    # If the last line is a Host question, append a short wrap-up.
-    if dialogue_lines:
-        last = dialogue_lines[-1].strip().lower()
-        if last.startswith("host:"):
-            closing = [
-                "Guest: Thanks for the great questions — that about wraps it up.",
-                "Host: And thanks for listening. Until next time!",
-            ]
-            full_script = full_script.rstrip() + "\n\n" + "\n".join(closing)
+
+    # Deterministic ending: always finish with a consistent outro.
+    # If the final line is a question (often after truncation), add a generic wrap-up line first.
+    outro = [
+        "Guest: To wrap up, the big takeaway is to focus on the key ideas and how you can apply them.",
+        "Host: Thanks for listening — see you in the next one!",
+    ]
+
+    trimmed = full_script.rstrip()
+    last_dialogue = ""
+    for l in reversed(trimmed.split("\n")):
+        s = l.strip()
+        if s.lower().startswith("host:") or s.lower().startswith("guest:"):
+            last_dialogue = s
+            break
+
+    if last_dialogue.endswith("?"):
+        trimmed += "\n\nGuest: Great question — in short, it comes down to the main ideas we just covered."
+
+    # Always append outro, but avoid duplicating if already present
+    if not (trimmed.lower().endswith(outro[1].lower()) or "thanks for listening" in trimmed.lower()[-200:]):
+        trimmed += "\n\n" + "\n".join(outro)
+
+    full_script = trimmed
 
     return full_script
 
