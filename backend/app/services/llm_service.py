@@ -79,6 +79,25 @@ Rules:
 5. Be concise and conversational — suitable for spoken audio."""
 
 
+def normalize_answer_text(text: str) -> str:
+    """Collapse excessive newlines/whitespace while keeping paragraph breaks.
+
+    Some LLM responses can contain one word per line when fed raw PDF text.
+    This keeps double-newline paragraph breaks but flattens intra-paragraph
+    whitespace to normal sentences.
+    """
+    if not text:
+        return text
+
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs = []
+    for raw in text.split("\n\n"):
+        cleaned = " ".join(raw.split())
+        if cleaned:
+            paragraphs.append(cleaned)
+    return "\n\n".join(paragraphs)
+
+
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
     """Call Groq LLM with retry on rate limit and connection errors."""
     last_error = None
@@ -159,6 +178,17 @@ def generate_podcast_script(document_text: str) -> str:
         full_script = "\n".join(kept)
 
     logger.info(f"Final script: {len(dialogue_lines)} dialogue lines, {len(full_script)} chars")
+    # Ensure we don't end abruptly with an unanswered question.
+    # If the last line is a Host question, append a short wrap-up.
+    if dialogue_lines:
+        last = dialogue_lines[-1].strip().lower()
+        if last.startswith("host:"):
+            closing = [
+                "Guest: Thanks for the great questions — that about wraps it up.",
+                "Host: And thanks for listening. Until next time!",
+            ]
+            full_script = full_script.rstrip() + "\n\n" + "\n".join(closing)
+
     return full_script
 
 
@@ -168,7 +198,7 @@ def answer_question(question: str, context_chunks: list[str]) -> str:
     # Keep context within limits
     context = context[:MAX_INPUT_CHARS]
 
-    return _call_llm(
+    raw = _call_llm(
         messages=[
             {"role": "system", "content": QA_SYSTEM_PROMPT},
             {"role": "user", "content": f"Context from the document:\n\n{context}\n\n---\n\nQuestion: {question}"},
@@ -176,6 +206,7 @@ def answer_question(question: str, context_chunks: list[str]) -> str:
         temperature=0.5,
         max_tokens=1024,
     )
+    return normalize_answer_text(raw)
 
 
 def answer_question_hybrid(
@@ -193,7 +224,7 @@ def answer_question_hybrid(
     else:
         web_block = "(No web results returned for this query.)"
 
-    return _call_llm(
+    raw = _call_llm(
         messages=[
             {"role": "system", "content": HYBRID_QA_SYSTEM_PROMPT},
             {
@@ -208,3 +239,4 @@ def answer_question_hybrid(
         temperature=0.5,
         max_tokens=1024,
     )
+    return normalize_answer_text(raw)
