@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Send, MessageCircle, Volume2, Loader2, FileText, Globe } from 'lucide-react';
+import { Mic, MicOff, Send, MessageCircle, Volume2, Loader2, FileText, Globe, Square } from 'lucide-react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { askQuestion, getQAAudioUrl, getHealth } from '../api';
 
@@ -9,6 +9,7 @@ export default function QAPanel({ docId }) {
   const [isLoading, setIsLoading] = useState(false);
   const [searchMode, setSearchMode] = useState('document');
   const [webSearchAvailable, setWebSearchAvailable] = useState(false);
+  const [playingAudioUrl, setPlayingAudioUrl] = useState(null);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
   const messagesEndRef = useRef(null);
   const answerAudioRef = useRef(null);
@@ -22,6 +23,14 @@ export default function QAPanel({ docId }) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    const audio = answerAudioRef.current;
+    if (!audio) return;
+    const onEnded = () => setPlayingAudioUrl(null);
+    audio.addEventListener('ended', onEnded);
+    return () => audio.removeEventListener('ended', onEnded);
+  }, []);
 
   const handleSendText = async () => {
     if (!textInput.trim() || isLoading) return;
@@ -86,8 +95,25 @@ export default function QAPanel({ docId }) {
 
   const playAnswerAudio = (url) => {
     if (answerAudioRef.current) {
-      answerAudioRef.current.src = url;
-      answerAudioRef.current.play();
+      if (playingAudioUrl === url) {
+        if (answerAudioRef.current.paused) {
+          answerAudioRef.current.play();
+        } else {
+          answerAudioRef.current.pause();
+        }
+      } else {
+        answerAudioRef.current.src = url;
+        answerAudioRef.current.play();
+        setPlayingAudioUrl(url);
+      }
+    }
+  };
+
+  const stopAnswerAudio = () => {
+    if (answerAudioRef.current) {
+      answerAudioRef.current.pause();
+      answerAudioRef.current.currentTime = 0;
+      setPlayingAudioUrl(null);
     }
   };
 
@@ -217,13 +243,24 @@ export default function QAPanel({ docId }) {
               )}
               <p className="whitespace-pre-wrap">{msg.text}</p>
               {msg.audioUrl && (
-                <button
-                  onClick={() => playAnswerAudio(msg.audioUrl)}
-                  className="mt-2 flex items-center gap-1.5 text-xs text-brand-300 hover:text-brand-200 transition-colors"
-                >
-                  <Volume2 className="w-3.5 h-3.5" />
-                  Play audio answer
-                </button>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    onClick={() => playAnswerAudio(msg.audioUrl)}
+                    className="flex items-center gap-1.5 text-xs text-brand-300 hover:text-brand-200 transition-colors"
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                    {playingAudioUrl === msg.audioUrl ? 'Pause' : 'Play audio answer'}
+                  </button>
+                  {playingAudioUrl === msg.audioUrl && (
+                    <button
+                      onClick={stopAnswerAudio}
+                      className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors"
+                      title="Stop"
+                    >
+                      <Square className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               )}
               {msg.type === 'answer' && renderCitations(msg.citations)}
             </div>
