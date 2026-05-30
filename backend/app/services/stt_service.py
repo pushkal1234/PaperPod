@@ -1,26 +1,45 @@
-import os
-import uuid
+import base64
 
-from groq import Groq
+import google.generativeai as genai
 
 from app.config import settings
 
-_client = Groq(api_key=settings.GROQ_API_KEY)
+if settings.GOOGLE_API_KEY:
+    genai.configure(api_key=settings.GOOGLE_API_KEY)
 
 
 def transcribe_audio(audio_bytes: bytes, filename: str = "question.webm") -> str:
-    """Transcribe audio bytes to text using Groq's Whisper API (free, no local model)."""
-    temp_path = os.path.join(settings.AUDIO_DIR, f"temp_stt_{uuid.uuid4()}.webm")
-    try:
-        with open(temp_path, "wb") as f:
-            f.write(audio_bytes)
-        with open(temp_path, "rb") as audio_file:
-            transcription = _client.audio.transcriptions.create(
-                model="whisper-large-v3",
-                file=audio_file,
-                response_format="text",
-            )
-        return transcription.strip()
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    """Transcribe audio bytes to text using Gemini STT."""
+    if not settings.GOOGLE_API_KEY:
+        raise RuntimeError("GOOGLE_API_KEY is not set.")
+    model = genai.GenerativeModel(settings.STT_MODEL)
+
+    # Convert audio bytes to base64
+    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+    # Determine mime type from filename
+    mime_type = "audio/webm"
+    if filename.endswith(".mp3"):
+        mime_type = "audio/mp3"
+    elif filename.endswith(".wav"):
+        mime_type = "audio/wav"
+    elif filename.endswith(".m4a"):
+        mime_type = "audio/mp4"
+
+    response = model.generate_content(
+        {
+            "parts": [
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": audio_b64
+                    }
+                },
+                {
+                    "text": "Transcribe this audio to text. Return only the transcription, nothing else."
+                }
+            ]
+        }
+    )
+
+    return response.text.strip()

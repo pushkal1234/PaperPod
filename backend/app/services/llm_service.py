@@ -2,18 +2,20 @@ import logging
 import time
 import re
 
-from groq import Groq
+import google.generativeai as genai
 
 from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
-_client = Groq(api_key=settings.GROQ_API_KEY)
+# Configure Gemini
+if not settings.GOOGLE_API_KEY:
+    logger.error("❌ GOOGLE_API_KEY is not set! LLM calls will fail.")
+else:
+    genai.configure(api_key=settings.GOOGLE_API_KEY)
 
-# Groq free tier limit: 6000 TPM for llama-3.1-8b-instant
-# ~4 chars ≈ 1 token, so we keep input text under ~3500 tokens (~14000 chars)
-# leaving room for system prompt + output tokens
-MAX_INPUT_CHARS = 6000
+# Gemini has much higher limits, but we still keep reasonable chunk sizes
+MAX_INPUT_CHARS = 10000
 
 def _build_podcast_prompt(doc_length: int) -> str:
     """Build system prompt with length guidance scaled to document size."""
@@ -136,21 +138,43 @@ def _is_context_relevant(question: str, context: str) -> bool:
 
 
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
-    """Call Groq LLM with retry on rate limit and connection errors."""
+    """Call Gemini LLM with retry on rate limit and connection errors."""
+    if not settings.GOOGLE_API_KEY:
+        raise RuntimeError("GOOGLE_API_KEY is not set. Add it to your environment variables.")
+
     last_error = None
+    model = genai.GenerativeModel(settings.LLM_MODEL)
+
+    # Convert messages to Gemini format
+    # Gemini uses 'parts' with 'text' instead of 'content'
+    gemini_messages = []
+    for msg in messages:
+        if msg["role"] == "system":
+            # Gemini doesn't have system messages, prepend to first user message
+            continue
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+    # If there was a system message, prepend it to the first user message
+    system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)
+    if system_msg and gemini_messages:
+        gemini_messages[0]["parts"][0]["text"] = f"{system_msg}\n\n{gemini_messages[0]['parts'][0]['text']}"
+
     for attempt in range(4):
         try:
-            response = _client.chat.completions.create(
-                model=settings.LLM_MODEL,
-                messages=messages,
+            config = genai.GenerationConfig(
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_output_tokens=max_tokens,
             )
-            return response.choices[0].message.content
+            response = model.generate_content(
+                gemini_messages,
+                generation_config=config,
+            )
+            return response.text
         except Exception as e:
             last_error = e
             err_str = str(e).lower()
-            if "rate_limit" in err_str or "413" in str(e):
+            if "quota" in err_str or "429" in str(e) or "rate" in err_str:
                 wait = 30 * (attempt + 1)
                 logger.warning(f"[LLM] Rate limited (attempt {attempt+1}), waiting {wait}s...")
                 time.sleep(wait)
@@ -165,10 +189,9 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
 
 
 def generate_podcast_script(document_text: str) -> str:
-    """Generate a podcast-style dialogue from document text using Groq LLM.
-    
-    For large documents, splits into chunks and generates script in parts
-    with waits between calls to respect Groq free-tier rate limits.
+    """Generate a podcast-style dialogue from document text using Gemini LLM.
+
+    For large documents, splits into chunks and generates script in parts.
     """
     text_parts = []
     for i in range(0, len(document_text), MAX_INPUT_CHARS):
@@ -189,8 +212,6 @@ def generate_podcast_script(document_text: str) -> str:
 
     # Additional parts: continue the conversation
     for idx, part in enumerate(text_parts[1:], start=2):
-        logger.info(f"Waiting 60s for rate limit before part {idx}/{len(text_parts)}...")
-        time.sleep(60)
         continuation = _call_llm([
             {"role": "system", "content": CONTINUE_PROMPT},
             {"role": "user", "content": f"Additional document content:\n\n{part}"},
@@ -244,7 +265,7 @@ def generate_podcast_script(document_text: str) -> str:
 
 
 def answer_question(question: str, context_chunks: list[str]) -> str:
-    """Answer a question using document context via Groq LLM."""
+    """Answer a question using document context via Gemini LLM."""
     context = "\n\n---\n\n".join(context_chunks)
     # Keep context within limits
     context = context[:MAX_INPUT_CHARS]
@@ -270,7 +291,7 @@ def answer_question(question: str, context_chunks: list[str]) -> str:
 def answer_question_hybrid(
     question: str, document_context: str, web_results: list[dict]
 ) -> str:
-    """Answer using document context + SerpAPI web snippets via Groq."""
+    """Answer using document context + SerpAPI web snippets via Gemini."""
     doc = (document_context or "")[:8000]
     if doc and not _is_context_relevant(question, doc):
         doc = ""

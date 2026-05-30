@@ -1,4 +1,4 @@
-"""SerpAPI Google Search — web results combined with document context via Groq."""
+"""SerpAPI Google Search — web results combined with document context via Gemini."""
 
 import logging
 
@@ -69,7 +69,7 @@ def search_web(query: str) -> list[dict]:
 
 
 def answer_with_web_search(question: str, document_context: str) -> dict:
-    """Search the web (SerpAPI) and answer with Groq using doc + web context."""
+    """Search the web (SerpAPI) and answer with Gemini using doc + web context."""
     web_results = search_web(question)
     answer = answer_question_hybrid(question, document_context, web_results)
 

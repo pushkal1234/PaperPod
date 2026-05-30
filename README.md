@@ -25,9 +25,9 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 |-------|-----------|
 | **Frontend** | React 18 + Vite + Tailwind CSS |
 | **Backend** | FastAPI (Python 3.10+) |
-| **LLM** | Llama 3.1 8B via Groq (free tier) |
-| **TTS** | edge-tts (Microsoft, free, no API key) |
-| **STT** | Whisper Large-v3 via Groq (free tier) |
+| **LLM** | Gemini 3.5 Flash via Google AI Studio (free tier) |
+| **TTS** | Gemini 3.1 Flash TTS via Google AI Studio (free tier) |
+| **STT** | Gemini 3.5 Flash via Google AI Studio (free tier) |
 | **Retrieval** | In-memory keyword search (demo) |
 | **Database** | SQLite (via SQLAlchemy async) |
 
@@ -44,10 +44,10 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 | **ffmpeg** | any | `brew install ffmpeg` (macOS) / `sudo apt install ffmpeg` (Ubuntu) / [ffmpeg.org](https://ffmpeg.org/download.html) (Windows) |
 | **Git** | any | `brew install git` or [git-scm.com](https://git-scm.com/) |
 
-### Step 1: Get a free Groq API key
+### Step 1: Get a free Google AI Studio API key
 
-1. Go to [console.groq.com](https://console.groq.com)
-2. Sign up (free — no credit card needed)
+1. Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+2. Sign in with your Google account (free — no credit card needed)
 3. Create an API key and copy it
 
 ### Step 2: Clone the repo
@@ -62,10 +62,10 @@ cd PaperPod
 ```bash
 cd backend
 
-# Copy the example env file and add your Groq API key
+# Copy the example env file and add your Google API key
 cp .env.example .env
-# Open .env in any editor and replace 'gsk_your_key_here' with your actual key
-# Example: GROQ_API_KEY=gsk_abc123...
+# Open .env in any editor and replace 'your_google_api_key_here' with your actual key
+# Example: GOOGLE_API_KEY=AIza...
 
 # Create a Python virtual environment
 python3 -m venv venv
@@ -119,8 +119,7 @@ You should see: `Local: http://localhost:5173/`
 | `pip install` fails with `pkg_resources` error | Run `pip install --upgrade pip setuptools wheel` first |
 | Backend: `No module named 'greenlet'` | Run `pip install greenlet` |
 | Backend: `Address already in use` on port 8000 | Run `lsof -ti:8000 \| xargs kill -9` then restart |
-| edge-tts gives 403 error | Run `pip install --upgrade edge-tts` |
-| Groq API returns 413 (too large) | Normal for large docs — the app auto-chunks and retries |
+| Gemini API quota error | Wait a few seconds and retry — free tier has generous but finite limits |
 | Frontend: blank page | Make sure backend is running on port 8000 first |
 | `ffmpeg not found` | Install ffmpeg: `brew install ffmpeg` (macOS) |
 
@@ -142,9 +141,9 @@ PaperPod/
 │       └── services/
 │           ├── document_service.py   # PDF/DOCX/TXT extraction + chunking
 │           ├── vector_service.py     # In-memory chunk store + keyword retrieval
-│           ├── llm_service.py        # Groq Llama 3 (podcast script + Q&A)
-│           ├── tts_service.py        # edge-tts (Host=male, Guest=female voices)
-│           └── stt_service.py        # Whisper speech-to-text
+│           ├── llm_service.py        # Gemini (podcast script + Q&A)
+│           ├── tts_service.py        # Gemini TTS (Host + Guest voices)
+│           └── stt_service.py        # Gemini speech-to-text
 ├── frontend/
 │   ├── src/
 │   │   ├── App.jsx               # Main app (upload → processing → player)
@@ -168,13 +167,10 @@ PaperPod/
 
 ```mermaid
 flowchart LR
-    subgraph GROQ["☁️ Groq Cloud (Free Tier)"]
-        LLM["🧠 Llama 3.1 8B Instant\n─────────────────\n• Podcast script generation\n• Q&A answering\n• Context-aware responses"]
-        STT["🎤 Whisper Large-v3\n─────────────────\n• Speech-to-text\n• Voice question transcription\n• Multi-language support"]
-    end
-
-    subgraph LOCAL["💻 Local / Edge (No API Key)"]
-        TTS["🔊 edge-tts (Microsoft)\n─────────────────\n• en-US-GuyNeural (Host)\n• en-US-JennyNeural (Guest)\n• Zero cost, no rate limits"]
+    subgraph GEMINI["☁️ Google AI Studio (Free Tier)"]
+        LLM["🧠 Gemini 3.5 Flash\n─────────────────\n• Podcast script generation\n• Q&A answering\n• Context-aware responses"]
+        STT["🎤 Gemini 3.5 Flash\n─────────────────\n• Speech-to-text\n• Voice question transcription\n• Multi-language support"]
+        TTS["🔊 Gemini 3.1 Flash TTS\n─────────────────\n• Kore voice (Host)\n• Aoede voice (Guest)\n• High quality synthesis"]
     end
 
     subgraph PIPELINE["⚙️ How They Connect"]
@@ -187,17 +183,16 @@ flowchart LR
         TTS -->|answer .mp3| PLAY
     end
 
-    style GROQ fill:#E8F8F5,stroke:#1ABC9C,stroke-width:2px
-    style LOCAL fill:#FEF9E7,stroke:#F39C12,stroke-width:2px
+    style GEMINI fill:#E8F8F5,stroke:#1ABC9C,stroke-width:2px
     style PIPELINE fill:#F4ECF7,stroke:#8E44AD,stroke-width:2px
 ```
 
 | Model | Provider | Purpose | Cost |
 |-------|----------|---------|------|
-| **Llama 3.1 8B Instant** | Groq | Podcast script generation + Q&A | Free (rate-limited) |
-| **Whisper Large-v3** | Groq | Speech-to-text (voice questions) | Free (rate-limited) |
-| **edge-tts GuyNeural** | Microsoft Edge | TTS — Host voice (male) | Free, no API key |
-| **edge-tts JennyNeural** | Microsoft Edge | TTS — Guest voice (female) | Free, no API key |
+| **Gemini 3.5 Flash** | Google AI Studio | Podcast script generation + Q&A | Free |
+| **Gemini 3.5 Flash** | Google AI Studio | Speech-to-text (voice questions) | Free |
+| **Gemini 3.1 Flash TTS** | Google AI Studio | TTS — Host voice (Kore) | Free |
+| **Gemini 3.1 Flash TTS** | Google AI Studio | TTS — Guest voice (Aoede) | Free |
 
 ## API Endpoints
 

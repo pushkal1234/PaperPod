@@ -4,14 +4,17 @@ import asyncio
 import logging
 import re
 
-import edge_tts
+import google.generativeai as genai
 from pydub import AudioSegment
 
 from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
-# Max concurrent TTS calls — avoid overwhelming edge-tts websocket
+if settings.GOOGLE_API_KEY:
+    genai.configure(api_key=settings.GOOGLE_API_KEY)
+
+# Max concurrent TTS calls
 TTS_CONCURRENCY = 3
 # Hard cap on dialogue turns to prevent runaway generation
 MAX_DIALOGUE_TURNS = 30
@@ -35,17 +38,41 @@ def parse_dialogue(script: str) -> list[dict]:
 
 
 async def synthesize_speech(text: str, voice: str, output_path: str):
-    """Generate speech audio using edge-tts with retry on connection errors."""
+    """Generate speech audio using Gemini TTS with retry on connection errors."""
     for attempt in range(3):
         try:
-            communicate = edge_tts.Communicate(text, voice)
-            await communicate.save(output_path)
-            return
+            model = genai.GenerativeModel(settings.TTS_MODEL)
+            response = model.generate_content(
+                {
+                    "parts": [{"text": text}],
+                },
+                generation_config=genai.GenerationConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=genai.SpeechConfig(
+                        voice_config=genai.VoiceConfig(
+                            prebuilt_voice_config=genai.PrebuiltVoiceConfig(
+                                voice_name=voice
+                            )
+                        )
+                    )
+                )
+            )
+
+            # The Python SDK returns audio bytes directly in inline_data.data
+            for candidate in response.candidates:
+                for part in candidate.content.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data and part.inline_data.data:
+                        with open(output_path, "wb") as f:
+                            f.write(part.inline_data.data)
+                        return
+
+            raise RuntimeError("No audio data in TTS response")
+
         except Exception as e:
             err_str = str(e).lower()
-            if attempt < 2 and ("connection" in err_str or "timeout" in err_str or "websocket" in err_str or "403" in err_str):
+            if attempt < 2 and ("connection" in err_str or "timeout" in err_str or "quota" in err_str or "429" in str(e)):
                 wait = 5 * (attempt + 1)
-                logger.warning(f"[TTS] Connection error (attempt {attempt+1}): {e}, retrying in {wait}s...")
+                logger.warning(f"[TTS] Error (attempt {attempt+1}): {e}, retrying in {wait}s...")
                 await asyncio.sleep(wait)
             else:
                 raise

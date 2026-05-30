@@ -52,12 +52,12 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 doc.num_chunks = len(chunks)
                 await session.commit()
 
-        current_step = "generating podcast script (Groq LLM)"
+        current_step = "generating podcast script (Gemini LLM)"
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
         script = generate_podcast_script(raw_text)
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars)")
 
-        current_step = "synthesizing audio (edge-tts)"
+        current_step = "synthesizing audio (Gemini TTS)"
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path}")
