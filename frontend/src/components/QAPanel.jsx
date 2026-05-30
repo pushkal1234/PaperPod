@@ -8,6 +8,8 @@ export default function QAPanel({ docId }) {
   const [textInput, setTextInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [playingAudioUrl, setPlayingAudioUrl] = useState(null);
+  const [searchMode, setSearchMode] = useState('document');
+  const [webSearchAvailable, setWebSearchAvailable] = useState(false);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
   const messagesEndRef = useRef(null);
   const answerAudioRef = useRef(null);
@@ -33,21 +35,21 @@ export default function QAPanel({ docId }) {
     if (!textInput.trim() || isLoading) return;
     const question = textInput.trim();
     setTextInput('');
-    await submitQuestion({ text: question });
+    await submitQuestion({ text: question, searchMode: searchMode });
   };
 
   const handleVoiceToggle = async () => {
     if (isRecording) {
       const audioBlob = await stopRecording();
       if (audioBlob) {
-        await submitQuestion({ audioBlob });
+        await submitQuestion({ audioBlob, searchMode: searchMode });
       }
     } else {
       await startRecording();
     }
   };
 
-  const submitQuestion = async ({ text, audioBlob }) => {
+  const submitQuestion = async ({ text, audioBlob, searchMode = 'document' }) => {
     setIsLoading(true);
     setMessages(prev => [...prev, {
       type: 'question',
@@ -56,7 +58,10 @@ export default function QAPanel({ docId }) {
     }]);
 
     try {
-      const res = await askQuestion(docId, { text, audioBlob });
+      const res = await askQuestion(docId, { text, audioBlob, searchMode });
+      if (res.web_search_available !== undefined) {
+        setWebSearchAvailable(res.web_search_available);
+      }
       setMessages(prev => {
         const updated = [...prev];
         if (audioBlob && updated.length > 0) {
@@ -66,6 +71,8 @@ export default function QAPanel({ docId }) {
           type: 'answer',
           text: res.answer,
           audioUrl: getQAAudioUrl(res.qa_id),
+          citations: res.citations || [],
+          mode: res.search_mode || 'document',
         }];
       });
     } catch (err) {
@@ -109,9 +116,37 @@ export default function QAPanel({ docId }) {
       <audio ref={answerAudioRef} className="hidden" />
 
       {/* Header */}
-      <div className="p-4 border-b border-zinc-800 flex items-center gap-2">
-        <MessageCircle className="w-5 h-5 text-brand-400" />
-        <h3 className="font-semibold text-zinc-100">Ask About This Document</h3>
+      <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MessageCircle className="w-5 h-5 text-brand-400" />
+          <h3 className="font-semibold text-zinc-100">Ask About This Document</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-zinc-500">Mode:</span>
+          <button
+            onClick={() => setSearchMode('document')}
+            disabled={!webSearchAvailable && searchMode !== 'document'}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+              searchMode === 'document'
+                ? 'bg-brand-600 text-white'
+                : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+            } ${!webSearchAvailable ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Doc only
+          </button>
+          <button
+            onClick={() => setSearchMode('hybrid')}
+            disabled={!webSearchAvailable}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+              searchMode === 'hybrid'
+                ? 'bg-brand-600 text-white'
+                : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+            } ${!webSearchAvailable ? 'opacity-50 cursor-not-allowed' : ''}`}
+            title={!webSearchAvailable ? 'Web search not configured' : 'Use document + web search'}
+          >
+            Doc + Web
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -134,6 +169,21 @@ export default function QAPanel({ docId }) {
               }
             `}>
               <p className="whitespace-pre-wrap">{msg.text}</p>
+              {msg.citations && msg.citations.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-zinc-700/50">
+                  <p className="text-[10px] text-zinc-500 mb-1">Sources:</p>
+                  <div className="flex flex-wrap gap-1">
+                    {msg.citations.map((cit, idx) => (
+                      <span
+                        key={idx}
+                        className="text-[10px] bg-zinc-700/50 text-zinc-400 px-2 py-0.5 rounded"
+                      >
+                        {cit.title || cit.url || cit.note || `Source ${idx + 1}`}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {msg.audioUrl && (
                 <div className="mt-2 flex items-center gap-2">
                   <button
