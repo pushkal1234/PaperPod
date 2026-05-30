@@ -10,9 +10,9 @@ PyPDF2==3.0.1
 python-docx==1.1.2
 # LLM: Google Gemini AI Studio
 google-genai>=1.0.0
-# STT: Groq Whisper, TTS: gTTS (free, works from any server)
+# STT: Groq Whisper, TTS: edge-tts (free, conversational voices)
 groq==0.13.0
-gtts==2.5.1
+edge-tts>=7.2.7
 # Using lightweight in-memory text search (no heavy ML models to download)
 pydub==0.25.1
 httpx==0.28.1
