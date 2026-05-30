@@ -2,17 +2,17 @@ import logging
 import time
 import re
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
-# Configure Gemini
+# Create client once
 if not settings.GOOGLE_API_KEY:
     logger.error("❌ GOOGLE_API_KEY is not set! LLM calls will fail.")
-else:
-    genai.configure(api_key=settings.GOOGLE_API_KEY)
+_client = genai.Client(api_key=settings.GOOGLE_API_KEY) if settings.GOOGLE_API_KEY else None
 
 # Gemini has much higher limits, but we still keep reasonable chunk sizes
 MAX_INPUT_CHARS = 10000
@@ -139,41 +139,44 @@ def _is_context_relevant(question: str, context: str) -> bool:
 
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
     """Call Gemini LLM with retry on rate limit and connection errors."""
-    if not settings.GOOGLE_API_KEY:
+    if not _client:
         raise RuntimeError("GOOGLE_API_KEY is not set. Add it to your environment variables.")
 
     last_error = None
-    model = genai.GenerativeModel(settings.LLM_MODEL)
 
-    # Convert messages to Gemini format
-    # Gemini uses 'parts' with 'text' instead of 'content'
-    gemini_messages = []
+    # Extract system prompt
+    system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)
+
+    # Build contents list (skip system messages)
+    contents = []
     for msg in messages:
         if msg["role"] == "system":
-            # Gemini doesn't have system messages, prepend to first user message
             continue
-        role = "user" if msg["role"] == "user" else "model"
-        gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
-
-    # If there was a system message, prepend it to the first user message
-    system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)
-    if system_msg and gemini_messages:
-        gemini_messages[0]["parts"][0]["text"] = f"{system_msg}\n\n{gemini_messages[0]['parts'][0]['text']}"
+        contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
 
     for attempt in range(4):
         try:
-            config = genai.GenerationConfig(
+            config = types.GenerateContentConfig(
                 temperature=temperature,
                 max_output_tokens=max_tokens,
             )
-            response = model.generate_content(
-                gemini_messages,
-                generation_config=config,
+            if system_msg:
+                config.system_instruction = system_msg
+
+            response = _client.models.generate_content(
+                model=settings.LLM_MODEL,
+                contents=contents,
+                config=config,
             )
-            return response.text
+            text = response.text
+            if not text or not text.strip():
+                logger.error(f"[LLM] Empty text in response")
+                raise RuntimeError("LLM returned empty text")
+            return text
         except Exception as e:
             last_error = e
             err_str = str(e).lower()
+            logger.error(f"[LLM] Error on attempt {attempt+1}: {e}", exc_info=True)
             if "quota" in err_str or "429" in str(e) or "rate" in err_str:
                 wait = 30 * (attempt + 1)
                 logger.warning(f"[LLM] Rate limited (attempt {attempt+1}), waiting {wait}s...")
@@ -183,7 +186,6 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
                 logger.warning(f"[LLM] Connection error (attempt {attempt+1}): {e}, retrying in {wait}s...")
                 time.sleep(wait)
             else:
-                logger.error(f"[LLM] Unrecoverable error: {e}")
                 raise RuntimeError(f"LLM error: {e}")
     raise RuntimeError(f"LLM failed after 4 retries: {last_error}")
 

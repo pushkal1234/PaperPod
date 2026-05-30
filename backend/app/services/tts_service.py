@@ -3,16 +3,14 @@ import uuid
 import asyncio
 import logging
 import re
+import base64
 
-import google.generativeai as genai
+import httpx
 from pydub import AudioSegment
 
 from app.config import settings
 
 logger = logging.getLogger("paperpod")
-
-if settings.GOOGLE_API_KEY:
-    genai.configure(api_key=settings.GOOGLE_API_KEY)
 
 # Max concurrent TTS calls
 TTS_CONCURRENCY = 3
@@ -38,32 +36,44 @@ def parse_dialogue(script: str) -> list[dict]:
 
 
 async def synthesize_speech(text: str, voice: str, output_path: str):
-    """Generate speech audio using Gemini TTS with retry on connection errors."""
+    """Generate speech audio using Gemini TTS REST API (matches confirmed working curl)."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.TTS_MODEL}:generateContent"
+    headers = {
+        "x-goog-api-key": settings.GOOGLE_API_KEY,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "contents": [{
+            "parts": [{"text": text}]
+        }],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {
+                        "voiceName": voice
+                    }
+                }
+            }
+        }
+    }
+
     for attempt in range(3):
         try:
-            model = genai.GenerativeModel(settings.TTS_MODEL)
-            response = model.generate_content(
-                {
-                    "parts": [{"text": text}],
-                },
-                generation_config=genai.GenerationConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=genai.SpeechConfig(
-                        voice_config=genai.VoiceConfig(
-                            prebuilt_voice_config=genai.PrebuiltVoiceConfig(
-                                voice_name=voice
-                            )
-                        )
-                    )
-                )
-            )
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
 
-            # The Python SDK returns audio bytes directly in inline_data.data
-            for candidate in response.candidates:
-                for part in candidate.content.parts:
-                    if hasattr(part, 'inline_data') and part.inline_data and part.inline_data.data:
+            candidates = data.get("candidates", [])
+            for candidate in candidates:
+                parts = candidate.get("content", {}).get("parts", [])
+                for part in parts:
+                    inline_data = part.get("inlineData")
+                    if inline_data:
+                        audio_b64 = inline_data.get("data", "")
                         with open(output_path, "wb") as f:
-                            f.write(part.inline_data.data)
+                            f.write(base64.b64decode(audio_b64))
                         return
 
             raise RuntimeError("No audio data in TTS response")

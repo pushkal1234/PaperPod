@@ -3,7 +3,7 @@ import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Tra
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
-import { uploadDocument, getDocument, listDocuments, deleteDocument, getAudioUrl } from './api';
+import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl } from './api';
 
 function App() {
   const [view, setView] = useState('home');
@@ -37,6 +37,34 @@ function App() {
     } catch (err) {
       console.error('Upload failed:', err);
       alert('Upload failed. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleUploadText = async (text, title) => {
+    setIsUploading(true);
+    try {
+      const res = await uploadText(text, title);
+      setView('processing');
+      startPolling(res.doc_id);
+    } catch (err) {
+      console.error('Text upload failed:', err);
+      alert('Upload failed. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleUploadImage = async (file) => {
+    setIsUploading(true);
+    try {
+      const res = await uploadImage(file);
+      setView('processing');
+      startPolling(res.doc_id);
+    } catch (err) {
+      console.error('Image upload failed:', err);
+      alert('Image upload failed. Please try again.');
     } finally {
       setIsUploading(false);
     }
@@ -152,13 +180,13 @@ function App() {
                 </span>
               </h1>
               <p className="text-zinc-500 mt-4 max-w-xl mx-auto text-lg">
-                Upload a PDF, DOCX, or TXT — get a natural-sounding podcast with two AI hosts.
+                Upload a PDF/DOCX/TXT, paste text, or snap a photo — get a natural-sounding podcast with two AI hosts.
                 Then ask questions and get instant audio answers.
               </p>
             </div>
 
             {/* Upload */}
-            <UploadZone onUpload={handleUpload} isUploading={isUploading} />
+            <UploadZone onUpload={handleUpload} onUploadText={handleUploadText} onUploadImage={handleUploadImage} isUploading={isUploading} />
 
             {/* Previous Documents */}
             {documents.length > 0 && (

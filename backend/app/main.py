@@ -12,6 +12,16 @@ from app.database import init_db
 from app.routes import documents, audio, qa
 from app.config import settings
 
+# Startup configuration check
+logger.info("=" * 50)
+logger.info("PaperPod starting up...")
+logger.info(f"GOOGLE_API_KEY set: {bool(settings.GOOGLE_API_KEY)}")
+logger.info(f"LLM_MODEL: {settings.LLM_MODEL}")
+logger.info(f"STT_MODEL: {settings.STT_MODEL}")
+logger.info(f"TTS_MODEL: {settings.TTS_MODEL}")
+logger.info(f"SERPAPI_API_KEY set: {bool(settings.SERPAPI_API_KEY)}")
+logger.info("=" * 50)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -3,6 +3,7 @@ import logging
 import traceback
 import os
 import json
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
@@ -33,17 +34,23 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
     """Background task: extract text → LLM script → TTS audio."""
     from app.database import async_session
 
+    overall_start = time.perf_counter()
+    step_times = {}
     current_step = "initializing"
     try:
         current_step = "extracting text from PDF"
+        t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 1/4: Extracting text...")
         raw_text = extract_text(file_path, content_type)
-        logger.info(f"[{doc_id}] Extracted {len(raw_text)} chars")
+        step_times['extract'] = time.perf_counter() - t0
+        logger.info(f"[{doc_id}] Extracted {len(raw_text)} chars in {step_times['extract']:.2f}s")
 
         current_step = "chunking and storing text"
+        t0 = time.perf_counter()
         chunks = chunk_text(raw_text)
         store_chunks(doc_id, chunks)
-        logger.info(f"[{doc_id}] Step 2/4: Stored {len(chunks)} chunks")
+        step_times['chunk'] = time.perf_counter() - t0
+        logger.info(f"[{doc_id}] Step 2/4: Stored {len(chunks)} chunks in {step_times['chunk']:.2f}s")
 
         async with async_session() as session:
             doc = await session.get(Document, doc_id)
@@ -53,14 +60,18 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 await session.commit()
 
         current_step = "generating podcast script (Gemini LLM)"
+        t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
         script = generate_podcast_script(raw_text)
-        logger.info(f"[{doc_id}] Script generated ({len(script)} chars)")
+        step_times['llm'] = time.perf_counter() - t0
+        logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 
         current_step = "synthesizing audio (Gemini TTS)"
+        t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
-        logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path}")
+        step_times['tts'] = time.perf_counter() - t0
+        logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path} in {step_times['tts']:.2f}s")
 
         audio_id = str(uuid.uuid4())
         async with async_session() as session:
@@ -79,11 +90,19 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 doc.status = "ready"
             await session.commit()
 
+        total = time.perf_counter() - overall_start
+        logger.info(
+            f"[{doc_id}] ⏱️ TIMING — extract={step_times['extract']:.2f}s, "
+            f"chunk={step_times['chunk']:.2f}s, llm={step_times['llm']:.2f}s, "
+            f"tts={step_times['tts']:.2f}s, total={total:.2f}s, "
+            f"chars={len(raw_text)}, chunks={len(chunks)}, turns={len([l for l in script.split(chr(10)) if l.strip()])}"
+        )
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
 
     except Exception as e:
+        total = time.perf_counter() - overall_start
         error_detail = f"Failed while {current_step}: {e}"
-        logger.error(f"[{doc_id}] ❌ {error_detail}")
+        logger.error(f"[{doc_id}] ❌ {error_detail} (total elapsed: {total:.2f}s)")
         logger.error(traceback.format_exc())
         # Mark as failed so frontend stops polling
         try:
@@ -128,6 +147,142 @@ async def upload_document(
     )
 
     return {"doc_id": doc_id, "filename": file.filename, "status": "processing"}
+
+
+@router.post("/text")
+async def upload_text(
+    background_tasks: BackgroundTasks,
+    text: str = Form(...),
+    title: str = Form("Pasted text"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload raw text directly (copy-paste)."""
+    doc_id = str(uuid.uuid4())
+    doc = Document(
+        id=doc_id,
+        filename=f"{title}.txt",
+        content_type="text/plain",
+        raw_text=text,
+        num_chunks=0,
+        created_at=datetime.utcnow(),
+    )
+    db.add(doc)
+    await db.commit()
+
+    logger.info(f"[{doc_id}] Text upload received: {len(text)} chars")
+    background_tasks.add_task(_process_text_document, doc_id, text)
+    return {"doc_id": doc_id, "filename": f"{title}.txt", "status": "processing"}
+
+
+@router.post("/image")
+async def upload_image(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload an image — OCR extracts text, then generates podcast."""
+    from app.services.image_service import extract_text_from_image
+
+    image_bytes = await file.read()
+    mime_type = file.content_type or "image/jpeg"
+
+    # OCR with Gemini Vision
+    t0 = time.perf_counter()
+    extracted_text = extract_text_from_image(image_bytes, mime_type)
+    ocr_time = time.perf_counter() - t0
+    logger.info(f"[image] OCR extracted {len(extracted_text)} chars in {ocr_time:.2f}s")
+
+    doc_id = str(uuid.uuid4())
+    doc = Document(
+        id=doc_id,
+        filename=file.filename,
+        content_type="text/plain",
+        raw_text=extracted_text,
+        num_chunks=0,
+        created_at=datetime.utcnow(),
+    )
+    db.add(doc)
+    await db.commit()
+
+    logger.info(f"[{doc_id}] Image upload received: {file.filename} -> {len(extracted_text)} chars")
+    background_tasks.add_task(_process_text_document, doc_id, extracted_text)
+    return {"doc_id": doc_id, "filename": file.filename, "status": "processing"}
+
+
+async def _process_text_document(doc_id: str, raw_text: str):
+    """Background task for text/image uploads (skip file extraction, go straight to chunks → LLM → TTS)."""
+    from app.database import async_session
+
+    overall_start = time.perf_counter()
+    step_times = {}
+    current_step = "initializing"
+    try:
+        current_step = "chunking and storing text"
+        t0 = time.perf_counter()
+        chunks = chunk_text(raw_text)
+        store_chunks(doc_id, chunks)
+        step_times['chunk'] = time.perf_counter() - t0
+        logger.info(f"[{doc_id}] Step 2/4: Stored {len(chunks)} chunks in {step_times['chunk']:.2f}s")
+
+        async with async_session() as session:
+            doc = await session.get(Document, doc_id)
+            if doc:
+                doc.num_chunks = len(chunks)
+                await session.commit()
+
+        current_step = "generating podcast script (Gemini LLM)"
+        t0 = time.perf_counter()
+        logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
+        script = generate_podcast_script(raw_text)
+        step_times['llm'] = time.perf_counter() - t0
+        logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
+
+        current_step = "synthesizing audio (Gemini TTS)"
+        t0 = time.perf_counter()
+        logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
+        audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
+        step_times['tts'] = time.perf_counter() - t0
+        logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s in {step_times['tts']:.2f}s")
+
+        audio_id = str(uuid.uuid4())
+        async with async_session() as session:
+            audio = AudioFile(
+                id=audio_id,
+                document_id=doc_id,
+                file_path=audio_path,
+                duration_seconds=duration,
+                dialogue_script=script,
+                transcript_segments=json.dumps(transcript_segments),
+                created_at=datetime.utcnow(),
+            )
+            session.add(audio)
+            doc = await session.get(Document, doc_id)
+            if doc:
+                doc.status = "ready"
+            await session.commit()
+
+        total = time.perf_counter() - overall_start
+        logger.info(
+            f"[{doc_id}] ⏱️ TIMING — chunk={step_times['chunk']:.2f}s, llm={step_times['llm']:.2f}s, "
+            f"tts={step_times['tts']:.2f}s, total={total:.2f}s, "
+            f"chars={len(raw_text)}, chunks={len(chunks)}"
+        )
+        logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
+
+    except Exception as e:
+        total = time.perf_counter() - overall_start
+        error_detail = f"Failed while {current_step}: {e}"
+        logger.error(f"[{doc_id}] ❌ {error_detail} (total elapsed: {total:.2f}s)")
+        logger.error(traceback.format_exc())
+        try:
+            async with async_session() as session:
+                doc = await session.get(Document, doc_id)
+                if doc:
+                    doc.status = "failed"
+                    doc.error_message = error_detail[:500]
+                    await session.commit()
+        except Exception:
+            logger.error(f"[{doc_id}] Could not update status to failed")
 
 
 @router.get("/list")

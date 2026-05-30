@@ -13,6 +13,21 @@ export async function uploadDocument(file) {
   return res.data;
 }
 
+export async function uploadText(text, title = 'Pasted text') {
+  const formData = new FormData();
+  formData.append('text', text);
+  formData.append('title', title);
+  const res = await api.post('/documents/text', formData);
+  return res.data;
+}
+
+export async function uploadImage(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await api.post('/documents/image', formData);
+  return res.data;
+}
+
 export async function getDocument(docId) {
   const res = await api.get(`/documents/${docId}`);
   return res.data;
