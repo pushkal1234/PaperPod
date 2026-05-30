@@ -66,7 +66,7 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 
-        current_step = "synthesizing audio (edge-tts)"
+        current_step = "synthesizing audio (gTTS)"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
@@ -237,7 +237,7 @@ async def _process_text_document(doc_id: str, raw_text: str):
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 
-        current_step = "synthesizing audio (edge-tts)"
+        current_step = "synthesizing audio (gTTS)"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)

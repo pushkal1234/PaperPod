@@ -19,7 +19,7 @@ logger.info(f"GOOGLE_API_KEY set: {bool(settings.GOOGLE_API_KEY)}")
 logger.info(f"GROQ_API_KEY set: {bool(settings.GROQ_API_KEY)}")
 logger.info(f"LLM_MODEL: {settings.LLM_MODEL}")
 logger.info(f"WHISPER_MODEL: {settings.WHISPER_MODEL}")
-logger.info(f"TTS_VOICES: Host={settings.TTS_VOICE_HOST}, Guest={settings.TTS_VOICE_GUEST}")
+logger.info(f"TTS: gTTS (free, no key)")
 logger.info(f"SERPAPI_API_KEY set: {bool(settings.SERPAPI_API_KEY)}")
 logger.info("=" * 50)
 

@@ -16,8 +16,6 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
     LLM_MODEL: str = "llama-3.1-8b-instant"
     WHISPER_MODEL: str = "whisper-large-v3"
-    TTS_VOICE_HOST: str = "en-US-AriaNeural"
-    TTS_VOICE_GUEST: str = "en-US-GuyNeural"
 
 
 settings = Settings()

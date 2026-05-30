@@ -27,7 +27,7 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 | **Backend** | FastAPI (Python 3.10+) |
 | **LLM** | Groq Llama 3.1 8B (free tier — generous limits) |
 | **STT** | Groq Whisper (free tier) |
-| **TTS** | edge-tts (free, no key needed) |
+| **TTS** | gTTS (free, no key needed, works from any server) |
 | **Image OCR** | Google Gemini Vision (free tier) |
 | **Retrieval** | In-memory keyword search (demo) |
 | **Database** | SQLite (via SQLAlchemy async) |
@@ -129,6 +129,7 @@ You should see: `Local: http://localhost:5173/`
 | Backend: `No module named 'greenlet'` | Run `pip install greenlet` |
 | Backend: `Address already in use` on port 8000 | Run `lsof -ti:8000 \| xargs kill -9` then restart |
 | Groq rate limit error | Wait a few seconds and retry — free tier has generous but finite limits |
+| gTTS fails / no audio | Google sometimes rate-limits from cloud IPs; wait a few seconds and retry |
 | Gemini API quota error | Only used for image OCR; if hitting limits, wait and retry |
 | Frontend: blank page | Make sure backend is running on port 8000 first |
 | `ffmpeg not found` | Install ffmpeg: `brew install ffmpeg` (macOS) |
@@ -152,7 +153,7 @@ PaperPod/
 │           ├── document_service.py   # PDF/DOCX/TXT extraction + chunking
 │           ├── vector_service.py     # In-memory chunk store + keyword retrieval
 │           ├── llm_service.py        # Groq LLM (podcast script + Q&A)
-│           ├── tts_service.py        # edge-tts (Host + Guest voices)
+│           ├── tts_service.py        # gTTS (free TTS, works from any server)
 │           ├── stt_service.py        # Groq Whisper speech-to-text
 │           └── image_service.py      # Google Gemini Vision OCR (camera upload)
 ├── frontend/
@@ -183,9 +184,9 @@ flowchart LR
         STT["🎤 Whisper\n─────────────────\n• Speech-to-text\n• Voice question transcription\n• Multi-language support"]
     end
 
-    subgraph TTS["🔊 edge-tts (Free, No Key)"]
-        HOST["Host: AriaNeural"]
-        GUEST["Guest: GuyNeural"]
+    subgraph TTS["🔊 gTTS (Free, No Key)"]
+        HOST["Host voice"]
+        GUEST["Guest voice"]
     end
 
     subgraph OCR["📷 Google AI Studio (Free)"]
@@ -215,7 +216,7 @@ flowchart LR
 |-------|----------|---------|------|
 | **Llama 3.1 8B** | Groq | Podcast script generation + Q&A | Free |
 | **Whisper** | Groq | Speech-to-text (voice questions) | Free |
-| **edge-tts** | Microsoft Azure (via edge-tts) | TTS — Host (Aria) + Guest (Guy) | Free |
+| **gTTS** | Google Translate | TTS — free, works from any server | Free |
 | **Gemini Vision** | Google AI Studio | Image OCR (camera upload) | Free |
 
 ## API Endpoints
