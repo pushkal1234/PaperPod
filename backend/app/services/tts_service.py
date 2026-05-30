@@ -1,11 +1,9 @@
 import os
-import uuid
 import asyncio
 import logging
 import re
-import base64
 
-import httpx
+import edge_tts
 from pydub import AudioSegment
 
 from app.config import settings
@@ -13,7 +11,7 @@ from app.config import settings
 logger = logging.getLogger("paperpod")
 
 # Max concurrent TTS calls
-TTS_CONCURRENCY = 3
+TTS_CONCURRENCY = 6
 # Hard cap on dialogue turns to prevent runaway generation
 MAX_DIALOGUE_TURNS = 30
 
@@ -36,56 +34,9 @@ def parse_dialogue(script: str) -> list[dict]:
 
 
 async def synthesize_speech(text: str, voice: str, output_path: str):
-    """Generate speech audio using Gemini TTS REST API (matches confirmed working curl)."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.TTS_MODEL}:generateContent"
-    headers = {
-        "x-goog-api-key": settings.GOOGLE_API_KEY,
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "contents": [{
-            "parts": [{"text": text}]
-        }],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {
-                "voiceConfig": {
-                    "prebuiltVoiceConfig": {
-                        "voiceName": voice
-                    }
-                }
-            }
-        }
-    }
-
-    for attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-
-            candidates = data.get("candidates", [])
-            for candidate in candidates:
-                parts = candidate.get("content", {}).get("parts", [])
-                for part in parts:
-                    inline_data = part.get("inlineData")
-                    if inline_data:
-                        audio_b64 = inline_data.get("data", "")
-                        with open(output_path, "wb") as f:
-                            f.write(base64.b64decode(audio_b64))
-                        return
-
-            raise RuntimeError("No audio data in TTS response")
-
-        except Exception as e:
-            err_str = str(e).lower()
-            if attempt < 2 and ("connection" in err_str or "timeout" in err_str or "quota" in err_str or "429" in str(e)):
-                wait = 5 * (attempt + 1)
-                logger.warning(f"[TTS] Error (attempt {attempt+1}): {e}, retrying in {wait}s...")
-                await asyncio.sleep(wait)
-            else:
-                raise
+    """Generate speech audio using edge-tts (free, no API key)."""
+    communicator = edge_tts.Communicate(text, voice)
+    await communicator.save(output_path)
 
 
 async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_path: str, idx: int):
@@ -94,7 +45,7 @@ async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_pa
         try:
             await synthesize_speech(text, voice, clip_path)
         except Exception as e:
-            logger.warning(f"[TTS] Clip {idx} failed after retries: {e}")
+            logger.warning(f"[TTS] Clip {idx} failed: {e}")
 
 
 async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, list[dict]]:

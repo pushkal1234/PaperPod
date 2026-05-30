@@ -1,4 +1,4 @@
-"""SerpAPI Google Search — web results combined with document context via Gemini."""
+"""SerpAPI Google Search — web results combined with document context via Groq."""
 
 import logging
 

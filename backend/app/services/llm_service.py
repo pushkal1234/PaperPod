@@ -2,19 +2,18 @@ import logging
 import time
 import re
 
-from google import genai
-from google.genai import types
+from groq import Groq
 
 from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
 # Create client once
-if not settings.GOOGLE_API_KEY:
-    logger.error("❌ GOOGLE_API_KEY is not set! LLM calls will fail.")
-_client = genai.Client(api_key=settings.GOOGLE_API_KEY) if settings.GOOGLE_API_KEY else None
+if not settings.GROQ_API_KEY:
+    logger.error("❌ GROQ_API_KEY is not set! LLM calls will fail.")
+_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
 
-# Gemini has much higher limits, but we still keep reasonable chunk sizes
+# Groq has rate limits, keep reasonable chunk sizes
 MAX_INPUT_CHARS = 10000
 
 def _build_podcast_prompt(doc_length: int) -> str:
@@ -138,46 +137,24 @@ def _is_context_relevant(question: str, context: str) -> bool:
 
 
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
-    """Call Gemini LLM with retry on rate limit and connection errors."""
+    """Call Groq LLM with retry on rate limit and connection errors."""
     if not _client:
-        raise RuntimeError("GOOGLE_API_KEY is not set. Add it to your environment variables.")
+        raise RuntimeError("GROQ_API_KEY is not set. Add it to your environment variables.")
 
     last_error = None
-
-    # Extract system prompt
-    system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)
-
-    # Build contents list (skip system messages)
-    contents = []
-    for msg in messages:
-        if msg["role"] == "system":
-            continue
-        contents.append({"role": msg["role"], "parts": [{"text": msg["content"]}]})
-
     for attempt in range(4):
         try:
-            config = types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
-            if system_msg:
-                config.system_instruction = system_msg
-
-            response = _client.models.generate_content(
+            response = _client.chat.completions.create(
                 model=settings.LLM_MODEL,
-                contents=contents,
-                config=config,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
-            text = response.text
-            if not text or not text.strip():
-                logger.error(f"[LLM] Empty text in response")
-                raise RuntimeError("LLM returned empty text")
-            return text
+            return response.choices[0].message.content
         except Exception as e:
             last_error = e
             err_str = str(e).lower()
-            logger.error(f"[LLM] Error on attempt {attempt+1}: {e}", exc_info=True)
-            if "quota" in err_str or "429" in str(e) or "rate" in err_str:
+            if "rate_limit" in err_str or "413" in str(e):
                 wait = 30 * (attempt + 1)
                 logger.warning(f"[LLM] Rate limited (attempt {attempt+1}), waiting {wait}s...")
                 time.sleep(wait)
@@ -186,12 +163,13 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
                 logger.warning(f"[LLM] Connection error (attempt {attempt+1}): {e}, retrying in {wait}s...")
                 time.sleep(wait)
             else:
+                logger.error(f"[LLM] Unrecoverable error: {e}")
                 raise RuntimeError(f"LLM error: {e}")
     raise RuntimeError(f"LLM failed after 4 retries: {last_error}")
 
 
 def generate_podcast_script(document_text: str) -> str:
-    """Generate a podcast-style dialogue from document text using Gemini LLM.
+    """Generate a podcast-style dialogue from document text using Groq LLM.
 
     For large documents, splits into chunks and generates script in parts.
     """
@@ -267,7 +245,7 @@ def generate_podcast_script(document_text: str) -> str:
 
 
 def answer_question(question: str, context_chunks: list[str]) -> str:
-    """Answer a question using document context via Gemini LLM."""
+    """Answer a question using document context via Groq LLM."""
     context = "\n\n---\n\n".join(context_chunks)
     # Keep context within limits
     context = context[:MAX_INPUT_CHARS]
@@ -293,7 +271,7 @@ def answer_question(question: str, context_chunks: list[str]) -> str:
 def answer_question_hybrid(
     question: str, document_context: str, web_results: list[dict]
 ) -> str:
-    """Answer using document context + SerpAPI web snippets via Gemini."""
+    """Answer using document context + SerpAPI web snippets via Groq."""
     doc = (document_context or "")[:8000]
     if doc and not _is_context_relevant(question, doc):
         doc = ""

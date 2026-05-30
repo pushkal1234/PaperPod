@@ -11,9 +11,9 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 
 ## ✨ Features
 
-- **Document to Podcast** — Upload a PDF/DOCX/TXT and get an engaging two-host podcast conversation
-- **Dual AI Voices** — Male host + female guest with natural speech synthesis
-- **Real-time Q&A** — Ask questions about the document via voice or text, get audio answers
+- **Document to Podcast** — Upload a PDF/DOCX/TXT, paste text, or snap a photo and get an engaging two-host podcast conversation
+- **Dual AI Voices** — Host + Guest with natural speech synthesis
+- **Real-time Q&A** — Ask questions via voice or text, get audio answers
 - **No GPU Required** — Runs entirely on CPU using cloud AI APIs (free tier)
 - **Privacy First** — Documents stay on your machine; only text is sent to LLM API
 
@@ -25,9 +25,10 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 |-------|-----------|
 | **Frontend** | React 18 + Vite + Tailwind CSS |
 | **Backend** | FastAPI (Python 3.10+) |
-| **LLM** | Gemini 3.5 Flash via Google AI Studio (free tier) |
-| **TTS** | Gemini 3.1 Flash TTS via Google AI Studio (free tier) |
-| **STT** | Gemini 3.5 Flash via Google AI Studio (free tier) |
+| **LLM** | Groq Llama 3.1 8B (free tier — generous limits) |
+| **STT** | Groq Whisper (free tier) |
+| **TTS** | edge-tts (free, no key needed) |
+| **Image OCR** | Google Gemini Vision (free tier) |
 | **Retrieval** | In-memory keyword search (demo) |
 | **Database** | SQLite (via SQLAlchemy async) |
 
@@ -44,8 +45,14 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 | **ffmpeg** | any | `brew install ffmpeg` (macOS) / `sudo apt install ffmpeg` (Ubuntu) / [ffmpeg.org](https://ffmpeg.org/download.html) (Windows) |
 | **Git** | any | `brew install git` or [git-scm.com](https://git-scm.com/) |
 
-### Step 1: Get a free Google AI Studio API key
+### Step 1: Get free API keys
 
+**Groq** (for LLM + STT):
+1. Go to [console.groq.com/keys](https://console.groq.com/keys)
+2. Sign up (free — no credit card needed)
+3. Create an API key and copy it
+
+**Google AI Studio** (for Image OCR only):
 1. Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
 2. Sign in with your Google account (free — no credit card needed)
 3. Create an API key and copy it
@@ -62,10 +69,12 @@ cd PaperPod
 ```bash
 cd backend
 
-# Copy the example env file and add your Google API key
+# Copy the example env file and add your API keys
 cp .env.example .env
-# Open .env in any editor and replace 'your_google_api_key_here' with your actual key
-# Example: GOOGLE_API_KEY=AIza...
+# Open .env in any editor and replace the placeholders with your actual keys
+# Example:
+#   GROQ_API_KEY=gsk_...
+#   GOOGLE_API_KEY=AIza...
 
 # Create a Python virtual environment
 python3 -m venv venv
@@ -119,7 +128,8 @@ You should see: `Local: http://localhost:5173/`
 | `pip install` fails with `pkg_resources` error | Run `pip install --upgrade pip setuptools wheel` first |
 | Backend: `No module named 'greenlet'` | Run `pip install greenlet` |
 | Backend: `Address already in use` on port 8000 | Run `lsof -ti:8000 \| xargs kill -9` then restart |
-| Gemini API quota error | Wait a few seconds and retry — free tier has generous but finite limits |
+| Groq rate limit error | Wait a few seconds and retry — free tier has generous but finite limits |
+| Gemini API quota error | Only used for image OCR; if hitting limits, wait and retry |
 | Frontend: blank page | Make sure backend is running on port 8000 first |
 | `ffmpeg not found` | Install ffmpeg: `brew install ffmpeg` (macOS) |
 
@@ -141,15 +151,16 @@ PaperPod/
 │       └── services/
 │           ├── document_service.py   # PDF/DOCX/TXT extraction + chunking
 │           ├── vector_service.py     # In-memory chunk store + keyword retrieval
-│           ├── llm_service.py        # Gemini (podcast script + Q&A)
-│           ├── tts_service.py        # Gemini TTS (Host + Guest voices)
-│           └── stt_service.py        # Gemini speech-to-text
+│           ├── llm_service.py        # Groq LLM (podcast script + Q&A)
+│           ├── tts_service.py        # edge-tts (Host + Guest voices)
+│           ├── stt_service.py        # Groq Whisper speech-to-text
+│           └── image_service.py      # Google Gemini Vision OCR (camera upload)
 ├── frontend/
 │   ├── src/
 │   │   ├── App.jsx               # Main app (upload → processing → player)
 │   │   ├── api.js                # API client (axios)
 │   │   ├── components/
-│   │   │   ├── UploadZone.jsx    # Drag-n-drop file upload
+│   │   │   ├── UploadZone.jsx    # File upload + text paste + camera capture
 │   │   │   ├── PodcastPlayer.jsx # Audio player + transcript view
 │   │   │   └── QAPanel.jsx       # Voice/text Q&A chat interface
 │   │   └── hooks/
@@ -167,38 +178,53 @@ PaperPod/
 
 ```mermaid
 flowchart LR
-    subgraph GEMINI["☁️ Google AI Studio (Free Tier)"]
-        LLM["🧠 Gemini 3.5 Flash\n─────────────────\n• Podcast script generation\n• Q&A answering\n• Context-aware responses"]
-        STT["🎤 Gemini 3.5 Flash\n─────────────────\n• Speech-to-text\n• Voice question transcription\n• Multi-language support"]
-        TTS["🔊 Gemini 3.1 Flash TTS\n─────────────────\n• Kore voice (Host)\n• Aoede voice (Guest)\n• High quality synthesis"]
+    subgraph GROQ["☁️ Groq (Free Tier)"]
+        LLM["🧠 Llama 3.1 8B\n─────────────────\n• Podcast script generation\n• Q&A answering\n• Fast & reliable"]
+        STT["🎤 Whisper\n─────────────────\n• Speech-to-text\n• Voice question transcription\n• Multi-language support"]
+    end
+
+    subgraph TTS["🔊 edge-tts (Free, No Key)"]
+        HOST["Host: AriaNeural"]
+        GUEST["Guest: GuyNeural"]
+    end
+
+    subgraph OCR["📷 Google AI Studio (Free)"]
+        VISION["Gemini Vision\n─────────────────\n• Image OCR\n• Camera upload"]
     end
 
     subgraph PIPELINE["⚙️ How They Connect"]
         DOC["📄 Document"] --> LLM
-        LLM -->|dialogue script| TTS
-        TTS -->|podcast .mp3| PLAY["🎧 Player"]
+        CAM["📷 Camera"] --> VISION --> LLM
+        LLM -->|dialogue script| HOST
+        LLM -->|dialogue script| GUEST
+        HOST -->|podcast .mp3| PLAY["🎧 Player"]
+        GUEST -->|podcast .mp3| PLAY
         PLAY -->|user speaks| STT
         STT -->|question text| LLM
-        LLM -->|answer text| TTS
-        TTS -->|answer .mp3| PLAY
+        LLM -->|answer text| GUEST
+        GUEST -->|answer .mp3| PLAY
     end
 
-    style GEMINI fill:#E8F8F5,stroke:#1ABC9C,stroke-width:2px
+    style GROQ fill:#E8F8F5,stroke:#1ABC9C,stroke-width:2px
+    style TTS fill:#FFF3E0,stroke:#FF9800,stroke-width:2px
+    style OCR fill:#E3F2FD,stroke:#2196F3,stroke-width:2px
     style PIPELINE fill:#F4ECF7,stroke:#8E44AD,stroke-width:2px
 ```
 
 | Model | Provider | Purpose | Cost |
 |-------|----------|---------|------|
-| **Gemini 3.5 Flash** | Google AI Studio | Podcast script generation + Q&A | Free |
-| **Gemini 3.5 Flash** | Google AI Studio | Speech-to-text (voice questions) | Free |
-| **Gemini 3.1 Flash TTS** | Google AI Studio | TTS — Host voice (Kore) | Free |
-| **Gemini 3.1 Flash TTS** | Google AI Studio | TTS — Guest voice (Aoede) | Free |
+| **Llama 3.1 8B** | Groq | Podcast script generation + Q&A | Free |
+| **Whisper** | Groq | Speech-to-text (voice questions) | Free |
+| **edge-tts** | Microsoft Azure (via edge-tts) | TTS — Host (Aria) + Guest (Guy) | Free |
+| **Gemini Vision** | Google AI Studio | Image OCR (camera upload) | Free |
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/documents/upload` | Upload document, starts podcast generation |
+| `POST` | `/api/documents/upload` | Upload file (PDF/DOCX/TXT), starts podcast generation |
+| `POST` | `/api/documents/text` | Paste text, starts podcast generation |
+| `POST` | `/api/documents/image` | Upload image (camera), OCR + podcast generation |
 | `GET` | `/api/documents/{doc_id}` | Get document + audio status |
 | `GET` | `/api/documents/list` | List all documents |
 | `GET` | `/api/audio/{audio_id}` | Stream podcast audio |

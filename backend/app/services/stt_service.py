@@ -1,46 +1,43 @@
-import base64
+import os
+import tempfile
 import logging
 
-from google import genai
+from groq import Groq
 
 from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
-_stt_client = genai.Client(api_key=settings.GOOGLE_API_KEY) if settings.GOOGLE_API_KEY else None
+_stt_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
 
 
 def transcribe_audio(audio_bytes: bytes, filename: str = "question.webm") -> str:
-    """Transcribe audio bytes to text using Gemini STT."""
+    """Transcribe audio bytes to text using Groq Whisper."""
     if not _stt_client:
-        raise RuntimeError("GOOGLE_API_KEY is not set.")
+        raise RuntimeError("GROQ_API_KEY is not set.")
 
-    # Convert audio bytes to base64
-    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+    # Determine file extension
+    ext = os.path.splitext(filename)[1] or ".webm"
 
-    # Determine mime type from filename
-    mime_type = "audio/webm"
-    if filename.endswith(".mp3"):
-        mime_type = "audio/mp3"
-    elif filename.endswith(".wav"):
-        mime_type = "audio/wav"
-    elif filename.endswith(".m4a"):
-        mime_type = "audio/mp4"
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
 
     try:
-        response = _stt_client.models.generate_content(
-            model=settings.STT_MODEL,
-            contents=[{
-                "role": "user",
-                "parts": [
-                    {"inline_data": {"mime_type": mime_type, "data": audio_b64}},
-                    {"text": "Transcribe this audio to text. Return only the transcription, nothing else."}
-                ]
-            }],
-        )
-        text = response.text.strip()
+        with open(tmp_path, "rb") as audio_file:
+            response = _stt_client.audio.transcriptions.create(
+                file=audio_file,
+                model=settings.WHISPER_MODEL,
+                response_format="text",
+            )
+        text = response.text if hasattr(response, "text") else str(response)
         logger.info(f"[STT] Transcribed {len(audio_bytes)} bytes -> '{text[:80]}...'")
-        return text
+        return text.strip()
     except Exception as e:
         logger.error(f"[STT] Failed to transcribe audio: {e}", exc_info=True)
         raise RuntimeError(f"STT error: {e}")
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass

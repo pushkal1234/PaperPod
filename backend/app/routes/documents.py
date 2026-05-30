@@ -59,14 +59,14 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 doc.num_chunks = len(chunks)
                 await session.commit()
 
-        current_step = "generating podcast script (Gemini LLM)"
+        current_step = "generating podcast script (Groq LLM)"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
         script = generate_podcast_script(raw_text)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 
-        current_step = "synthesizing audio (Gemini TTS)"
+        current_step = "synthesizing audio (edge-tts)"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
@@ -230,14 +230,14 @@ async def _process_text_document(doc_id: str, raw_text: str):
                 doc.num_chunks = len(chunks)
                 await session.commit()
 
-        current_step = "generating podcast script (Gemini LLM)"
+        current_step = "generating podcast script (Groq LLM)"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
         script = generate_podcast_script(raw_text)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 
-        current_step = "synthesizing audio (Gemini TTS)"
+        current_step = "synthesizing audio (edge-tts)"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
