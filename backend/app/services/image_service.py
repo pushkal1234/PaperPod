@@ -67,7 +67,7 @@ def extract_text_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -
     for attempt in range(3):
         try:
             response = _vision_client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=[{
                     "role": "user",
                     "parts": [
