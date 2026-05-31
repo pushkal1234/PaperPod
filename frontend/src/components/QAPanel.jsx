@@ -209,7 +209,7 @@ export default function QAPanel({ docId }) {
         </div>
         {searchMode === 'hybrid' && (
           <p className="text-[10px] text-purple-400/80 mt-2">
-            Searches Google via SerpAPI, then answers using your document + web results.
+            Searches the web, then answers using your document + web results.
           </p>
         )}
       </div>
