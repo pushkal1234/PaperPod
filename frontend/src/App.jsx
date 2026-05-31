@@ -3,7 +3,7 @@ import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Tra
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
-import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl } from './api';
+import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast } from './api';
 
 function App() {
   const [view, setView] = useState('home');
@@ -13,10 +13,30 @@ function App() {
   const [isPolling, setIsPolling] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
   const [deletingDocIds, setDeletingDocIds] = useState(() => new Set());
+  const [sharedPodcast, setSharedPodcast] = useState(null);
+  const [sharedLoading, setSharedLoading] = useState(false);
   const pollRef = useRef(null);
 
   useEffect(() => {
     loadDocuments();
+
+    // Handle shared podcast via ?share=TOKEN
+    const params = new URLSearchParams(window.location.search);
+    const shareToken = params.get('share');
+    if (shareToken) {
+      setSharedLoading(true);
+      getSharedPodcast(shareToken)
+        .then((data) => {
+          setSharedPodcast(data);
+          setView('shared');
+        })
+        .catch((err) => {
+          console.error('Failed to load shared podcast:', err);
+          setErrorMsg('This shared podcast link is invalid or has expired.');
+          setView('failed');
+        })
+        .finally(() => setSharedLoading(false));
+    }
   }, []);
 
   const loadDocuments = async () => {
@@ -144,6 +164,17 @@ function App() {
         next.delete(doc.doc_id);
         return next;
       });
+    }
+  };
+
+  const handleShare = async (docId) => {
+    try {
+      const res = await createShare(docId);
+      return `${window.location.origin}/?share=${res.share_token}`;
+    } catch (err) {
+      console.error('Share failed:', err);
+      alert('Failed to create share link. Please try again.');
+      return null;
     }
   };
 
@@ -275,6 +306,32 @@ function App() {
           </div>
         )}
 
+        {/* SHARED VIEW */}
+        {view === 'shared' && sharedPodcast && (
+          <div className="space-y-6 max-w-2xl mx-auto py-8">
+            <div className="text-center">
+              <div className="inline-flex items-center gap-2 bg-brand-500/10 text-brand-400 text-xs font-medium px-3 py-1.5 rounded-full mb-4 border border-brand-500/20">
+                <Sparkles className="w-3.5 h-3.5" />
+                Shared Podcast
+              </div>
+            </div>
+            <PodcastPlayer
+              audioUrl={getAudioUrl(sharedPodcast.audio_id)}
+              title={sharedPodcast.title}
+              dialogueScript={sharedPodcast.dialogue_script}
+              transcriptSegments={sharedPodcast.transcript_segments}
+            />
+            <div className="text-center">
+              <button
+                onClick={() => { setView('home'); setSharedPodcast(null); }}
+                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              >
+                Back to home
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* PLAYER VIEW */}
         {view === 'player' && currentDoc && (
           <div className="space-y-6">
@@ -294,6 +351,7 @@ function App() {
                   title={currentDoc.filename}
                   dialogueScript={currentDoc.audio.dialogue_script}
                   transcriptSegments={currentDoc.audio.transcript_segments}
+                  onShare={() => handleShare(currentDoc.doc_id)}
                 />
                 <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800/50">
                   <div className="grid grid-cols-2 gap-4 text-sm">

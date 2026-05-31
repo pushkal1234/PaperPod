@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2 } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Share2, Check } from 'lucide-react';
 
 function buildProportionalSegments(dialogueScript, duration) {
   const lines = dialogueScript
@@ -29,12 +29,13 @@ function buildProportionalSegments(dialogueScript, duration) {
   });
 }
 
-export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcriptSegments }) {
+export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcriptSegments, onShare }) {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const segments = useMemo(() => {
     if (transcriptSegments?.length) return transcriptSegments;
@@ -121,10 +122,41 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center animate-float">
           <Volume2 className="w-6 h-6 text-white" />
         </div>
-        <div>
-          <h3 className="font-semibold text-zinc-100 text-lg">{title}</h3>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-zinc-100 text-lg truncate">{title}</h3>
           <p className="text-sm text-zinc-500">AI-generated podcast</p>
         </div>
+        {onShare && (
+          <button
+            onClick={async () => {
+              const link = await onShare();
+              if (link) {
+                try {
+                  await navigator.clipboard.writeText(link);
+                  setShareCopied(true);
+                  setTimeout(() => setShareCopied(false), 2000);
+                } catch {
+                  // fallback: show link in alert
+                  alert(`Share link:\n${link}`);
+                }
+              }
+            }}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all border border-zinc-700"
+            title="Copy share link"
+          >
+            {shareCopied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-emerald-400">Copied</span>
+              </>
+            ) : (
+              <>
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Share</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       <div

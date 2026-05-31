@@ -37,6 +37,7 @@ class AudioFile(Base):
     duration_seconds = Column(Float, default=0.0)
     dialogue_script = Column(Text, nullable=True)
     transcript_segments = Column(Text, nullable=True)  # JSON: [{speaker, text, start_seconds, end_seconds}]
+    share_token = Column(String, nullable=True, unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     document = relationship("Document", back_populates="audio_file")
@@ -70,6 +71,10 @@ async def _migrate_schema(conn):
         if "transcript_segments" not in cols:
             sync_conn.execute(
                 text("ALTER TABLE audio_files ADD COLUMN transcript_segments TEXT")
+            )
+        if "share_token" not in cols:
+            sync_conn.execute(
+                text("ALTER TABLE audio_files ADD COLUMN share_token TEXT UNIQUE")
             )
 
     await conn.run_sync(_migrate)

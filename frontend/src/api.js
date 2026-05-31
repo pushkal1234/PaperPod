@@ -74,3 +74,13 @@ export function getAudioUrl(audioId) {
 export function getQAAudioUrl(qaId) {
   return `${API_BASE}/api/qa/audio/${qaId}`;
 }
+
+export async function createShare(docId) {
+  const res = await api.post(`/share/create/${docId}`);
+  return res.data;
+}
+
+export async function getSharedPodcast(token) {
+  const res = await api.get(`/share/${token}`);
+  return res.data;
+}

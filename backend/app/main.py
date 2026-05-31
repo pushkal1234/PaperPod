@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db
-from app.routes import documents, audio, qa
+from app.routes import documents, audio, qa, share
 from app.config import settings
 
 # Startup configuration check
@@ -55,6 +55,7 @@ app.add_middleware(
 app.include_router(documents.router)
 app.include_router(audio.router)
 app.include_router(qa.router)
+app.include_router(share.router)
 
 
 @app.get("/api/health")
