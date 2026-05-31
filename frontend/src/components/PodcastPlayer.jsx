@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Share2, Check } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Share2, Check, Download } from 'lucide-react';
 
 function buildProportionalSegments(dialogueScript, duration) {
   const lines = dialogueScript
@@ -136,7 +136,6 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
                   setShareCopied(true);
                   setTimeout(() => setShareCopied(false), 2000);
                 } catch {
-                  // fallback: show link in alert
                   alert(`Share link:\n${link}`);
                 }
               }
@@ -155,6 +154,35 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
                 <span>Share</span>
               </>
             )}
+          </button>
+        )}
+        {audioUrl && (
+          <a
+            href={audioUrl}
+            download={`${title.replace(/[^a-z0-9]/gi, '_')}_podcast.mp3`}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all border border-zinc-700"
+            title="Download podcast audio"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Audio</span>
+          </a>
+        )}
+        {dialogueScript && (
+          <button
+            onClick={() => {
+              const blob = new Blob([dialogueScript], { type: 'text/plain' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${title.replace(/[^a-z0-9]/gi, '_')}_transcript.txt`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all border border-zinc-700"
+            title="Download transcript"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Transcript</span>
           </button>
         )}
       </div>

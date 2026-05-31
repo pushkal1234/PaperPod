@@ -20,6 +20,24 @@ logger = logging.getLogger("paperpod")
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
+# Provider keywords that must never leak to the user
+_PROVIDER_KEYWORDS = ["groq", "whisper", "edge-tts", "edge_tts", "google", "gemini", "gtts", "g_tts", "serpapi", "azure"]
+
+
+def _sanitize_error(msg: str) -> str:
+    """Strip provider names from error messages before sending to frontend."""
+    if not msg:
+        return msg
+    clean = msg
+    for kw in _PROVIDER_KEYWORDS:
+        clean = clean.replace(kw, "the service")
+        clean = clean.replace(kw.upper(), "the service")
+        clean = clean.replace(kw.title(), "the service")
+    # Also catch API-key style references
+    clean = clean.replace("api_key", "configuration")
+    clean = clean.replace("API_KEY", "configuration")
+    return clean
+
 
 def _parse_transcript_segments(audio: AudioFile | None) -> list[dict] | None:
     if not audio or not audio.transcript_segments:
@@ -101,7 +119,7 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
 
     except Exception as e:
         total = time.perf_counter() - overall_start
-        error_detail = f"Failed while {current_step}: {e}"
+        error_detail = _sanitize_error(f"Failed while {current_step}: {e}")
         logger.error(f"[{doc_id}] ❌ {error_detail} (total elapsed: {total:.2f}s)")
         logger.error(traceback.format_exc())
         # Mark as failed so frontend stops polling
@@ -271,7 +289,7 @@ async def _process_text_document(doc_id: str, raw_text: str):
 
     except Exception as e:
         total = time.perf_counter() - overall_start
-        error_detail = f"Failed while {current_step}: {e}"
+        error_detail = _sanitize_error(f"Failed while {current_step}: {e}")
         logger.error(f"[{doc_id}] ❌ {error_detail} (total elapsed: {total:.2f}s)")
         logger.error(traceback.format_exc())
         try:

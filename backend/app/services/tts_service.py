@@ -10,10 +10,20 @@ from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
-# Max concurrent TTS calls — keep low to avoid edge-tts rate limits
+# Branded error messages — never mention provider names to the user
+TTS_RATE_LIMIT_MSG = "You've reached PaperPod's free-tier rate limit. Please try again in a few moments."
+TTS_SERVICE_ERROR_MSG = "PaperPod's voice engine is temporarily busy. Please try again shortly."
+TTS_CONFIG_MSG = "Text-to-speech is not configured on this server. Please contact support."
+
+# Max concurrent TTS calls — keep low to avoid rate limits
 TTS_CONCURRENCY = 3
 # Hard cap on dialogue turns to prevent runaway generation
 MAX_DIALOGUE_TURNS = 30
+
+
+def _is_tts_rate_limit(err_msg: str) -> bool:
+    low = err_msg.lower()
+    return any(k in low for k in ["no audio", "429", "rate", "quota", "too many requests", "limit exceeded"])
 
 
 def parse_dialogue(script: str) -> list[dict]:
@@ -34,7 +44,7 @@ def parse_dialogue(script: str) -> list[dict]:
 
 
 async def synthesize_speech(text: str, voice: str, output_path: str, max_retries: int = 3):
-    """Generate speech audio using edge-tts (free, no API key) with retry."""
+    """Generate speech audio with retry and brand-safe error wrapping."""
     last_error = None
     for attempt in range(max_retries):
         try:
@@ -44,23 +54,23 @@ async def synthesize_speech(text: str, voice: str, output_path: str, max_retries
         except Exception as e:
             last_error = e
             err_msg = str(e)
-            # Retry on rate-limit / empty-audio errors
-            if "No audio" in err_msg or "429" in err_msg or "rate" in err_msg.lower():
+            if _is_tts_rate_limit(err_msg):
                 wait = 1.5 * (attempt + 1)
                 logger.warning(f"[TTS] Retry {attempt + 1}/{max_retries} for clip after {wait:.1f}s: {err_msg[:80]}")
                 await asyncio.sleep(wait)
             else:
-                raise
-    raise last_error
+                logger.error(f"[TTS] Unrecoverable error: {err_msg[:120]}")
+                raise RuntimeError(TTS_SERVICE_ERROR_MSG)
+    # All retries exhausted
+    if last_error and _is_tts_rate_limit(str(last_error)):
+        raise RuntimeError(TTS_RATE_LIMIT_MSG)
+    raise RuntimeError(TTS_SERVICE_ERROR_MSG)
 
 
 async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_path: str, idx: int):
-    """Synthesize a single clip with concurrency limit."""
+    """Synthesize a single clip with concurrency limit. Propagates errors."""
     async with sem:
-        try:
-            await synthesize_speech(text, voice, clip_path)
-        except Exception as e:
-            logger.warning(f"[TTS] Clip {idx} failed after retries: {e}")
+        await synthesize_speech(text, voice, clip_path)
 
 
 async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, list[dict]]:
@@ -105,21 +115,18 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
     transcript_segments: list[dict] = []
 
     for i, clip_path in enumerate(clip_paths):
-        try:
-            segment = AudioSegment.from_mp3(clip_path)
-            start_seconds = len(combined) / 1000.0
-            combined += segment + pause
-            end_seconds = start_seconds + len(segment) / 1000.0
-            entry = dialogue[i]
-            transcript_segments.append({
-                "speaker": entry["speaker"],
-                "text": entry["text"],
-                "line": f"{entry['speaker']}: {entry['text']}",
-                "start_seconds": round(start_seconds, 2),
-                "end_seconds": round(end_seconds, 2),
-            })
-        except Exception:
-            continue
+        segment = AudioSegment.from_mp3(clip_path)
+        start_seconds = len(combined) / 1000.0
+        combined += segment + pause
+        end_seconds = start_seconds + len(segment) / 1000.0
+        entry = dialogue[i]
+        transcript_segments.append({
+            "speaker": entry["speaker"],
+            "text": entry["text"],
+            "line": f"{entry['speaker']}: {entry['text']}",
+            "start_seconds": round(start_seconds, 2),
+            "end_seconds": round(end_seconds, 2),
+        })
 
     output_filename = f"{doc_id}_podcast.mp3"
     output_path = os.path.join(settings.AUDIO_DIR, output_filename)

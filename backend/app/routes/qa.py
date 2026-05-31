@@ -17,6 +17,23 @@ from app.services import serpapi_service
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 logger = logging.getLogger("paperpod")
 
+# Provider keywords that must never leak to the user
+_PROVIDER_KEYWORDS = ["groq", "whisper", "edge-tts", "edge_tts", "google", "gemini", "gtts", "g_tts", "serpapi", "azure"]
+
+
+def _sanitize_error(msg: str) -> str:
+    """Strip provider names from error messages before sending to frontend."""
+    if not msg:
+        return msg
+    clean = msg
+    for kw in _PROVIDER_KEYWORDS:
+        clean = clean.replace(kw, "the service")
+        clean = clean.replace(kw.upper(), "the service")
+        clean = clean.replace(kw.title(), "the service")
+    clean = clean.replace("api_key", "configuration")
+    clean = clean.replace("API_KEY", "configuration")
+    return clean
+
 
 @router.post("/ask")
 async def ask_question(
@@ -41,7 +58,13 @@ async def ask_question(
     if audio and audio.size and audio.size > 0:
         t0 = time.perf_counter()
         audio_bytes = await audio.read()
-        question_text = transcribe_audio(audio_bytes)
+        try:
+            question_text = transcribe_audio(audio_bytes)
+        except RuntimeError as e:
+            raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
+        except Exception as e:
+            logger.error(f"[QA][{doc_id}] STT failed: {e}", exc_info=True)
+            raise HTTPException(status_code=503, detail=_sanitize_error("PaperPod's speech service is temporarily busy. Please try again shortly."))
         step_times['stt'] = time.perf_counter() - t0
         logger.info(f"[QA][{doc_id}] STT: {step_times['stt']:.2f}s -> '{question_text[:60]}...'")
 
@@ -60,31 +83,44 @@ async def ask_question(
 
     # Generate answer
     t0 = time.perf_counter()
-    if mode == "hybrid" and serpapi_service.is_configured():
-        doc_context_parts = []
-        if doc.raw_text:
-            doc_context_parts.append(doc.raw_text[:8000])
-        if context_chunks:
-            doc_context_parts.append("\n\n---\n\n".join(context_chunks))
-        document_context = "\n\n---\n\n".join(doc_context_parts) or "No document text available."
-        try:
-            result = serpapi_service.answer_with_web_search(question_text, document_context)
-            answer_text = result["answer"]
-            citations = result.get("citations") or []
-        except Exception as e:
+    try:
+        if mode == "hybrid" and serpapi_service.is_configured():
+            doc_context_parts = []
+            if doc.raw_text:
+                doc_context_parts.append(doc.raw_text[:8000])
+            if context_chunks:
+                doc_context_parts.append("\n\n---\n\n".join(context_chunks))
+            document_context = "\n\n---\n\n".join(doc_context_parts) or "No document text available."
+            try:
+                result = serpapi_service.answer_with_web_search(question_text, document_context)
+                answer_text = result["answer"]
+                citations = result.get("citations") or []
+            except Exception as e:
+                logger.warning(f"[QA][{doc_id}] Web search failed, falling back to document-only: {e}")
+                answer_text = answer_question(question_text, context_chunks)
+                mode = "document"
+                citations = [{"note": "Web search unavailable, answered from document only."}]
+        else:
+            if mode == "hybrid" and not serpapi_service.is_configured():
+                mode = "document"
             answer_text = answer_question(question_text, context_chunks)
-            mode = "document"
-            citations = [{"note": f"Web search unavailable, answered from document only: {e}"}]
-    else:
-        if mode == "hybrid" and not serpapi_service.is_configured():
-            mode = "document"
-        answer_text = answer_question(question_text, context_chunks)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
+    except Exception as e:
+        logger.error(f"[QA][{doc_id}] LLM failed: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=_sanitize_error("PaperPod's AI engine is temporarily busy. Please try again shortly."))
     step_times['llm'] = time.perf_counter() - t0
 
     # TTS answer
     t0 = time.perf_counter()
     qa_id = str(uuid.uuid4())
-    answer_audio_path = await synthesize_answer(answer_text, doc_id, qa_id)
+    try:
+        answer_audio_path = await synthesize_answer(answer_text, doc_id, qa_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
+    except Exception as e:
+        logger.error(f"[QA][{doc_id}] TTS failed: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=_sanitize_error("PaperPod's voice engine is temporarily busy. Please try again shortly."))
     step_times['tts'] = time.perf_counter() - t0
 
     total = time.perf_counter() - overall_start

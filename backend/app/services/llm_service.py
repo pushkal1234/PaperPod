@@ -8,12 +8,16 @@ from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
+LLM_RATE_LIMIT_MSG = "You've reached PaperPod's free-tier rate limit. Please try again in a few moments."
+LLM_SERVICE_ERROR_MSG = "PaperPod's AI engine is temporarily busy. Please try again shortly."
+LLM_CONFIG_MSG = "The AI service is not configured on this server. Please contact support."
+
 # Create client once
 if not settings.GROQ_API_KEY:
-    logger.error("❌ GROQ_API_KEY is not set! LLM calls will fail.")
+    logger.error("LLM API key is not set! LLM calls will fail.")
 _client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
 
-# Groq has rate limits, keep reasonable chunk sizes
+# Rate limits: keep reasonable chunk sizes
 MAX_INPUT_CHARS = 10000
 
 def _build_podcast_prompt(doc_length: int) -> str:
@@ -138,10 +142,15 @@ def _is_context_relevant(question: str, context: str) -> bool:
     return False
 
 
+def _is_llm_rate_limit(err_str: str) -> bool:
+    low = err_str.lower()
+    return any(k in low for k in ["rate_limit", "429", "quota", "too many requests", "limit exceeded", "413"])
+
+
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
-    """Call Groq LLM with retry on rate limit and connection errors."""
+    """Call LLM with retry on rate limit and connection errors."""
     if not _client:
-        raise RuntimeError("GROQ_API_KEY is not set. Add it to your environment variables.")
+        raise RuntimeError(LLM_CONFIG_MSG)
 
     last_error = None
     for attempt in range(4):
@@ -156,18 +165,21 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
         except Exception as e:
             last_error = e
             err_str = str(e).lower()
-            if "rate_limit" in err_str or "413" in str(e):
+            if _is_llm_rate_limit(err_str):
                 wait = 30 * (attempt + 1)
                 logger.warning(f"[LLM] Rate limited (attempt {attempt+1}), waiting {wait}s...")
                 time.sleep(wait)
             elif "connection" in err_str or "timeout" in err_str or "unavailable" in err_str:
                 wait = 10 * (attempt + 1)
-                logger.warning(f"[LLM] Connection error (attempt {attempt+1}): {e}, retrying in {wait}s...")
+                logger.warning(f"[LLM] Connection error (attempt {attempt+1}), retrying in {wait}s...")
                 time.sleep(wait)
             else:
                 logger.error(f"[LLM] Unrecoverable error: {e}")
-                raise RuntimeError(f"LLM error: {e}")
-    raise RuntimeError(f"LLM failed after 4 retries: {last_error}")
+                raise RuntimeError(LLM_SERVICE_ERROR_MSG)
+    # All retries exhausted
+    if last_error and _is_llm_rate_limit(str(last_error)):
+        raise RuntimeError(LLM_RATE_LIMIT_MSG)
+    raise RuntimeError(LLM_SERVICE_ERROR_MSG)
 
 
 def generate_podcast_script(document_text: str) -> str:

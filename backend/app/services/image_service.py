@@ -11,9 +11,9 @@ _vision_client = genai.Client(api_key=settings.GOOGLE_API_KEY) if settings.GOOGL
 
 
 def extract_text_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
-    """Extract text from an image using Gemini Vision (OCR)."""
+    """Extract text from an image using vision OCR."""
     if not _vision_client:
-        raise RuntimeError("GOOGLE_API_KEY is not set.")
+        raise RuntimeError("Image text extraction is not configured on this server. Please contact support.")
 
     image_b64 = base64.b64encode(image_bytes).decode('utf-8')
 
