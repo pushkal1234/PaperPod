@@ -10,7 +10,6 @@ from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
-# Branded error messages — never mention provider names to the user
 TTS_RATE_LIMIT_MSG = "You've reached PaperPod's free-tier rate limit. Please try again in a few moments."
 TTS_SERVICE_ERROR_MSG = "PaperPod's voice engine is temporarily busy. Please try again shortly."
 TTS_CONFIG_MSG = "Text-to-speech is not configured on this server. Please contact support."
