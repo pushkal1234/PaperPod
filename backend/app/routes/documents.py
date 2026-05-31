@@ -198,33 +198,64 @@ async def upload_image(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload an image — OCR extracts text, then generates podcast."""
-    from app.services.image_service import extract_text_from_image
-
+    """Upload an image — OCR extracts text in background, then generates podcast."""
     image_bytes = await file.read()
     mime_type = file.content_type or "image/jpeg"
-
-    # OCR with Gemini Vision
-    t0 = time.perf_counter()
-    extracted_text = extract_text_from_image(image_bytes, mime_type)
-    ocr_time = time.perf_counter() - t0
-    logger.info(f"[image] OCR extracted {len(extracted_text)} chars in {ocr_time:.2f}s")
 
     doc_id = str(uuid.uuid4())
     doc = Document(
         id=doc_id,
         filename=file.filename,
         content_type="text/plain",
-        raw_text=extracted_text,
+        raw_text="",
         num_chunks=0,
         created_at=datetime.utcnow(),
     )
     db.add(doc)
     await db.commit()
 
-    logger.info(f"[{doc_id}] Image upload received: {file.filename} -> {len(extracted_text)} chars")
-    background_tasks.add_task(_process_text_document, doc_id, extracted_text)
+    logger.info(f"[{doc_id}] Image upload received: {file.filename} ({len(image_bytes)} bytes)")
+    background_tasks.add_task(_process_image_document, doc_id, image_bytes, mime_type)
     return {"doc_id": doc_id, "filename": file.filename, "status": "processing"}
+
+
+async def _process_image_document(doc_id: str, image_bytes: bytes, mime_type: str):
+    """Background task: OCR image, then chunks → LLM → TTS."""
+    from app.services.image_service import extract_text_from_image
+    from app.database import async_session
+
+    # Step 1: OCR (can take 10-60s for large camera photos)
+    try:
+        t0 = time.perf_counter()
+        raw_text = extract_text_from_image(image_bytes, mime_type)
+        ocr_time = time.perf_counter() - t0
+        logger.info(f"[{doc_id}] OCR extracted {len(raw_text)} chars in {ocr_time:.2f}s")
+    except Exception as e:
+        error_detail = _sanitize_error(f"OCR failed: {e}")
+        logger.error(f"[{doc_id}] ❌ {error_detail}")
+        try:
+            async with async_session() as session:
+                doc = await session.get(Document, doc_id)
+                if doc:
+                    doc.status = "failed"
+                    doc.error_message = error_detail[:500]
+                    await session.commit()
+        except Exception:
+            pass
+        return
+
+    # Save extracted text to DB
+    try:
+        async with async_session() as session:
+            doc = await session.get(Document, doc_id)
+            if doc:
+                doc.raw_text = raw_text
+                await session.commit()
+    except Exception:
+        pass
+
+    # Step 2: Use the shared text pipeline
+    await _process_text_document(doc_id, raw_text)
 
 
 async def _process_text_document(doc_id: str, raw_text: str):
