@@ -18,7 +18,7 @@ def extract_text_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -
     image_b64 = base64.b64encode(image_bytes).decode('utf-8')
 
     response = _vision_client.models.generate_content(
-        model=settings.LLM_MODEL,
+        model="gemini-3.5-flash",
         contents=[{
             "role": "user",
             "parts": [

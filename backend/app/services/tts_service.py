@@ -10,8 +10,8 @@ from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
-# Max concurrent TTS calls
-TTS_CONCURRENCY = 6
+# Max concurrent TTS calls — keep low to avoid edge-tts rate limits
+TTS_CONCURRENCY = 3
 # Hard cap on dialogue turns to prevent runaway generation
 MAX_DIALOGUE_TURNS = 30
 
@@ -33,10 +33,25 @@ def parse_dialogue(script: str) -> list[dict]:
     return dialogue
 
 
-async def synthesize_speech(text: str, voice: str, output_path: str):
-    """Generate speech audio using edge-tts (free, no API key)."""
-    communicator = edge_tts.Communicate(text, voice)
-    await communicator.save(output_path)
+async def synthesize_speech(text: str, voice: str, output_path: str, max_retries: int = 3):
+    """Generate speech audio using edge-tts (free, no API key) with retry."""
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            communicator = edge_tts.Communicate(text, voice)
+            await communicator.save(output_path)
+            return
+        except Exception as e:
+            last_error = e
+            err_msg = str(e)
+            # Retry on rate-limit / empty-audio errors
+            if "No audio" in err_msg or "429" in err_msg or "rate" in err_msg.lower():
+                wait = 1.5 * (attempt + 1)
+                logger.warning(f"[TTS] Retry {attempt + 1}/{max_retries} for clip after {wait:.1f}s: {err_msg[:80]}")
+                await asyncio.sleep(wait)
+            else:
+                raise
+    raise last_error
 
 
 async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_path: str, idx: int):
@@ -45,7 +60,7 @@ async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_pa
         try:
             await synthesize_speech(text, voice, clip_path)
         except Exception as e:
-            logger.warning(f"[TTS] Clip {idx} failed: {e}")
+            logger.warning(f"[TTS] Clip {idx} failed after retries: {e}")
 
 
 async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, list[dict]]:

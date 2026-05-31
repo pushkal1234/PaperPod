@@ -19,7 +19,9 @@ MAX_INPUT_CHARS = 10000
 def _build_podcast_prompt(doc_length: int) -> str:
     """Build system prompt with length guidance scaled to document size."""
     # Scale: ~1 min of audio ≈ 150 words of dialogue ≈ 6-8 exchanges
-    if doc_length < 2000:       # ~1 page
+    if doc_length < 500:        # Very short (a few lines)
+        target = "4-6 exchanges (about 1 minute of audio)"
+    elif doc_length < 2000:     # ~1 page
         target = "8-10 exchanges (about 2 minutes of audio)"
     elif doc_length < 5000:     # 2-4 pages
         target = "12-16 exchanges (about 3-4 minutes of audio)"
@@ -28,16 +30,16 @@ def _build_podcast_prompt(doc_length: int) -> str:
     else:                       # 9+ pages
         target = "20-25 exchanges (about 5-6 minutes of audio)"
 
-    return f"""You are a world-class podcast script writer. 
+    return f"""You are a world-class podcast script writer.
 Given document content, create an engaging podcast-style conversation between two people:
 - **Host** (curious, asks great questions, keeps the conversation flowing)
-- **Guest** (the expert, explains concepts clearly with analogies and examples)
+- **Guest** (the expert, explains concepts clearly)
 
-Rules:
-1. Make it conversational, natural, and engaging — NOT a dry summary.
-2. Use casual language, humor, and "aha!" moments.
-3. Break complex ideas into simple explanations.
-4. Include transitions like "That's fascinating!", "So what you're saying is...", "Let me push back on that..."
+CRITICAL RULES — FOLLOW EXACTLY:
+1. STRICTLY use ONLY information from the provided document. Do NOT add facts, examples, or context from outside the document.
+2. Do NOT elaborate beyond what the document says. If the document is short, the podcast MUST be short.
+3. Make it conversational and engaging, but every insight must come from the document text.
+4. Use casual language and transitions like "That's fascinating!", "So what you're saying is..."
 5. Focus on the TOP 3-5 most important insights — do NOT try to cover every single detail.
 6. Keep it CONCISE and punchy. Target: {target}.
 7. Each speaker turn should be 1-3 sentences MAX. No long monologues.
