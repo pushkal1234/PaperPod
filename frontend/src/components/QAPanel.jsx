@@ -194,8 +194,8 @@ export default function QAPanel({ docId }) {
             disabled={!webSearchAvailable}
             title={
               webSearchAvailable
-                ? 'Search your document + the web (SerpAPI)'
-                : 'Add SERPAPI_API_KEY on the server to enable'
+                ? 'Search your document + the web'
+                : 'Web search is not configured on the server'
             }
             className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-medium py-2 px-3 rounded-lg border transition-all ${
               searchMode === 'hybrid'

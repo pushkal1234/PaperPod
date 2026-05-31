@@ -31,7 +31,8 @@ function App() {
   const handleUpload = async (file) => {
     setIsUploading(true);
     try {
-      const res = await uploadDocument(file);
+      const isImage = file.type?.startsWith('image/');
+      const res = isImage ? await uploadImage(file) : await uploadDocument(file);
       setView('processing');
       startPolling(res.doc_id);
     } catch (err) {
@@ -180,7 +181,7 @@ function App() {
                 </span>
               </h1>
               <p className="text-zinc-500 mt-4 max-w-xl mx-auto text-lg">
-                Upload a PDF/DOCX/TXT, paste text, or snap a photo — get a natural-sounding podcast with two AI hosts.
+                Upload a PDF/DOCX/TXT, paste text, upload an image, or snap a photo — get a natural-sounding podcast with two AI hosts.
                 Then ask questions and get instant audio answers.
               </p>
             </div>

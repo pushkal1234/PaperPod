@@ -26,6 +26,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
       'application/pdf': ['.pdf'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
       'text/plain': ['.txt'],
+      'image/*': ['.png', '.jpg', '.jpeg', '.webp'],
     },
     maxFiles: 1,
     disabled: isUploading,
@@ -102,7 +103,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
                   {isDragActive ? 'Drop your document here' : 'Upload a Document'}
                 </p>
                 <p className="text-sm text-zinc-500 mt-1">
-                  PDF, DOCX, or TXT
+                  PDF, DOCX, TXT, or Image (PNG, JPG)
                 </p>
               </div>
             </div>
