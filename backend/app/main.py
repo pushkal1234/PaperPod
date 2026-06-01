@@ -45,8 +45,10 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "https://paper-d672ucect-pushkal1234s-projects.vercel.app",
         "https://paperpod.vercel.app",
+        # Allow all chrome-extension origins for browser extension
+        "chrome-extension://*",
     ],
-    allow_origin_regex=r"https://paper.*\.vercel\.app",
+    allow_origin_regex=r"https://paper.*\.vercel\.app|chrome-extension://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
