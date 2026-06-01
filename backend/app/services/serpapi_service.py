@@ -40,12 +40,17 @@ def search_web(query: str) -> list[dict]:
     }
 
     last_error = None
+    _httpx_logger = logging.getLogger("httpx")
+    _orig_level = _httpx_logger.level
     for attempt in range(3):
         try:
+            # Temporarily suppress httpx logging — it logs full URL including API key
+            _httpx_logger.setLevel(logging.WARNING)
             with httpx.Client(timeout=15.0) as client:
                 response = client.get(SERPAPI_URL, params=params)
                 response.raise_for_status()
                 data = response.json()
+            _httpx_logger.setLevel(_orig_level)
 
             if data.get("error"):
                 err_msg = data["error"]
@@ -82,6 +87,7 @@ def search_web(query: str) -> list[dict]:
             return results
 
         except RuntimeError as e:
+            _httpx_logger.setLevel(_orig_level)
             if _is_rate_limit(str(e)) or WEB_RATE_LIMIT_MSG in str(e):
                 raise
             last_error = e
@@ -89,11 +95,13 @@ def search_web(query: str) -> list[dict]:
             logger.warning(f"[WebSearch] Retry {attempt + 1}/3 after {wait}s: {e}")
             time.sleep(wait)
         except httpx.TimeoutException as e:
+            _httpx_logger.setLevel(_orig_level)
             last_error = e
             wait = 10 * (attempt + 1)
             logger.warning(f"[WebSearch] Timeout (attempt {attempt + 1}/3), retrying in {wait}s...")
             time.sleep(wait)
         except Exception as e:
+            _httpx_logger.setLevel(_orig_level)
             last_error = e
             err_str = str(e)
             if _is_rate_limit(err_str):

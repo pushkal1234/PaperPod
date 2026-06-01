@@ -94,31 +94,38 @@ function App() {
   const startPolling = (docId) => {
     setIsPolling(true);
     setErrorMsg(null);
-    pollRef.current = setInterval(async () => {
+    let elapsed = 0;
+    const poll = async () => {
       try {
         const doc = await getDocument(docId);
         if (doc.status === 'ready') {
-          clearInterval(pollRef.current);
           setIsPolling(false);
           setCurrentDoc(doc);
           setView('player');
           loadDocuments();
+          return;
         } else if (doc.status === 'failed') {
-          clearInterval(pollRef.current);
           setIsPolling(false);
           setErrorMsg(doc.error || 'Podcast generation failed. Please try again.');
           setView('failed');
           loadDocuments();
+          return;
         }
       } catch (err) {
         console.error('Polling error:', err);
       }
-    }, 3000);
+      // Progressive polling: fast at first, then slow down to reduce server load
+      const interval = elapsed < 30000 ? 3000 : elapsed < 90000 ? 6000 : 10000;
+      elapsed += interval;
+      pollRef.current = setTimeout(poll, interval);
+    };
+    pollRef.current = setTimeout(poll, 3000);
+    elapsed += 3000;
   };
 
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, []);
 

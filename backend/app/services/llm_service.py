@@ -15,7 +15,8 @@ LLM_CONFIG_MSG = "The AI service is not configured on this server. Please contac
 # Create client once
 if not settings.GROQ_API_KEY:
     logger.error("LLM API key is not set! LLM calls will fail.")
-_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
+# Disable Groq's built-in retry — we handle retries ourselves to avoid double backoff
+_client = Groq(api_key=settings.GROQ_API_KEY, max_retries=0) if settings.GROQ_API_KEY else None
 
 # Rate limits: keep reasonable chunk sizes
 MAX_INPUT_CHARS = 6000
@@ -218,6 +219,9 @@ def _summarize_large_document(document_text: str) -> str:
         logger.info(f"[LLM] Summarizing chunk {i+1}/{len(chunks)}...")
         summary = _summarize_chunk(chunk)
         summaries.append(summary)
+        # Small delay between chunks to avoid hitting rate limits
+        if i < len(chunks) - 1:
+            time.sleep(2)
 
     merged = "\n\n".join(summaries)
 
@@ -243,6 +247,10 @@ def generate_podcast_script(document_text: str) -> str:
     - Small docs (<15K chars): direct podcast generation
     - Large docs (>=15K chars): summarize first, then podcast from summary
     """
+    # Guard: empty document
+    if not document_text or not document_text.strip():
+        raise RuntimeError("The uploaded document appears to be empty or contains no readable text. Please try a different file.")
+
     # Large document strategy: summarize → podcast
     if len(document_text) > LARGE_DOC_THRESHOLD:
         logger.info(f"[LLM] Large document detected ({len(document_text)} chars), using summarize-then-podcast strategy")
