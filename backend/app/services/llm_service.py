@@ -18,7 +18,10 @@ if not settings.GROQ_API_KEY:
 _client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
 
 # Rate limits: keep reasonable chunk sizes
-MAX_INPUT_CHARS = 10000
+MAX_INPUT_CHARS = 6000
+# Large docs: summarize first, then podcast from summary
+LARGE_DOC_THRESHOLD = 15000
+MAX_SUMMARY_CHARS = 8000
 
 def _build_podcast_prompt(doc_length: int) -> str:
     """Build system prompt with length guidance scaled to document size."""
@@ -144,7 +147,11 @@ def _is_context_relevant(question: str, context: str) -> bool:
 
 def _is_llm_rate_limit(err_str: str) -> bool:
     low = err_str.lower()
-    return any(k in low for k in ["rate_limit", "429", "quota", "too many requests", "limit exceeded", "413"])
+    return any(k in low for k in ["rate_limit", "429", "quota", "too many requests", "limit exceeded"])
+
+
+def _is_payload_too_large(err_str: str) -> bool:
+    return "413" in err_str or "payload too large" in err_str.lower()
 
 
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
@@ -153,7 +160,7 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
         raise RuntimeError(LLM_CONFIG_MSG)
 
     last_error = None
-    for attempt in range(4):
+    for attempt in range(3):
         try:
             response = _client.chat.completions.create(
                 model=settings.LLM_MODEL,
@@ -164,17 +171,22 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
             return response.choices[0].message.content
         except Exception as e:
             last_error = e
-            err_str = str(e).lower()
-            if _is_llm_rate_limit(err_str):
-                wait = 30 * (attempt + 1)
-                logger.warning(f"[LLM] Rate limited (attempt {attempt+1}), waiting {wait}s...")
-                time.sleep(wait)
-            elif "connection" in err_str or "timeout" in err_str or "unavailable" in err_str:
+            err_str = str(e)
+            # 413 = permanent, fail immediately — retrying won't help
+            if _is_payload_too_large(err_str):
+                logger.error(f"[LLM] Payload too large — failing fast")
+                raise RuntimeError("Input too large for processing. Please try a shorter document.")
+            elif _is_llm_rate_limit(err_str.lower()):
                 wait = 10 * (attempt + 1)
-                logger.warning(f"[LLM] Connection error (attempt {attempt+1}), retrying in {wait}s...")
+                logger.warning(f"[LLM] Rate limited (attempt {attempt+1}/3), waiting {wait}s...")
+                time.sleep(wait)
+            elif any(k in err_str.lower() for k in ["connection", "timeout", "unavailable"]):
+                wait = 5 * (attempt + 1)
+                logger.warning(f"[LLM] Connection error (attempt {attempt+1}/3), retrying in {wait}s...")
                 time.sleep(wait)
             else:
-                logger.error(f"[LLM] Unrecoverable error: {e}")
+                # Unknown error — fail fast, don't waste user's time
+                logger.error(f"[LLM] Unrecoverable error — failing fast: {e}")
                 raise RuntimeError(LLM_SERVICE_ERROR_MSG)
     # All retries exhausted
     if last_error and _is_llm_rate_limit(str(last_error)):
@@ -182,11 +194,60 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
     raise RuntimeError(LLM_SERVICE_ERROR_MSG)
 
 
-def generate_podcast_script(document_text: str) -> str:
-    """Generate a podcast-style dialogue from document text using Groq LLM.
+def _summarize_chunk(chunk: str) -> str:
+    """Summarize a single chunk — preserve all important information."""
+    return _call_llm([
+        {"role": "system", "content": """You are an expert academic summarizer. Extract ALL key points, arguments, findings, data, names, and conclusions from the text below.
+Do NOT skip any important fact, finding, or argument.
+Do NOT add any information not present in the text.
+Output a detailed bullet-point summary. Be thorough — nothing important should be lost."""},
+        {"role": "user", "content": chunk},
+    ], temperature=0.3, max_tokens=1024)
 
-    For large documents, splits into chunks and generates script in parts.
+
+def _summarize_large_document(document_text: str) -> str:
+    """For large documents: summarize chunks, then consolidate into a master summary."""
+    chunks = []
+    for i in range(0, len(document_text), MAX_INPUT_CHARS):
+        chunks.append(document_text[i:i + MAX_INPUT_CHARS])
+
+    logger.info(f"[LLM] Large doc ({len(document_text)} chars, {len(chunks)} chunks) — summarizing first")
+
+    summaries = []
+    for i, chunk in enumerate(chunks):
+        logger.info(f"[LLM] Summarizing chunk {i+1}/{len(chunks)}...")
+        summary = _summarize_chunk(chunk)
+        summaries.append(summary)
+
+    merged = "\n\n".join(summaries)
+
+    # If merged summaries are still too large, consolidate
+    if len(merged) > MAX_SUMMARY_CHARS:
+        logger.info(f"[LLM] Merged summaries ({len(merged)} chars) too large, consolidating...")
+        merged = _call_llm([
+            {"role": "system", "content": """Consolidate these summaries into a single comprehensive summary.
+Preserve ALL important findings, arguments, data points, and conclusions.
+Remove only true redundancies (same fact stated twice). Do NOT drop important details.
+Target ~2500 words."""},
+            {"role": "user", "content": merged[:MAX_SUMMARY_CHARS]},
+        ], temperature=0.3, max_tokens=2048)
+
+    logger.info(f"[LLM] Final summary: {len(merged)} chars (from {len(document_text)} original)")
+    return merged
+
+
+def generate_podcast_script(document_text: str) -> str:
+    """Generate a podcast-style dialogue from document text.
+
+    Strategy:
+    - Small docs (<15K chars): direct podcast generation
+    - Large docs (>=15K chars): summarize first, then podcast from summary
     """
+    # Large document strategy: summarize → podcast
+    if len(document_text) > LARGE_DOC_THRESHOLD:
+        logger.info(f"[LLM] Large document detected ({len(document_text)} chars), using summarize-then-podcast strategy")
+        document_text = _summarize_large_document(document_text)
+
     text_parts = []
     for i in range(0, len(document_text), MAX_INPUT_CHARS):
         text_parts.append(document_text[i:i + MAX_INPUT_CHARS])

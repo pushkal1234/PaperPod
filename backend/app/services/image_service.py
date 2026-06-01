@@ -58,9 +58,10 @@ def extract_text_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -
         raise RuntimeError(OCR_CONFIG_MSG)
 
     # Compress/resize before sending to OCR
-    if len(image_bytes) > MAX_FILE_SIZE_MB * 1024 * 1024:
-        logger.info(f"[OCR] Image is {len(image_bytes)/1024/1024:.1f}MB, resizing...")
+    original_size = len(image_bytes) / 1024
     processed = _resize_image(image_bytes, mime_type)
+    processed_size = len(processed) / 1024
+    logger.info(f"[OCR] Image payload: {original_size:.0f}KB -> {processed_size:.0f}KB")
     image_b64 = base64.b64encode(processed).decode('utf-8')
 
     last_error = None
