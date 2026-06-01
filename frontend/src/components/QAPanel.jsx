@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Send, MessageCircle, Volume2, Loader2, FileText, Globe, Square } from 'lucide-react';
+import { Mic, MicOff, Send, MessageCircle, Volume2, Loader2, FileText, Globe, Square, Maximize2, Minimize2, Copy, Check } from 'lucide-react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { askQuestion, getQAAudioUrl, getHealth } from '../api';
 
@@ -10,6 +10,8 @@ export default function QAPanel({ docId }) {
   const [searchMode, setSearchMode] = useState('document');
   const [webSearchAvailable, setWebSearchAvailable] = useState(false);
   const [playingAudioUrl, setPlayingAudioUrl] = useState(null);
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState(null);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
   const messagesEndRef = useRef(null);
   const answerAudioRef = useRef(null);
@@ -117,6 +119,24 @@ export default function QAPanel({ docId }) {
     }
   };
 
+  const handleCopy = async (text, index) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 2000);
+    }
+  };
+
   const renderCitations = (citations) => {
     if (!citations?.length) return null;
     return (
@@ -167,13 +187,22 @@ export default function QAPanel({ docId }) {
   };
 
   return (
-    <div className="bg-zinc-900 rounded-2xl border border-zinc-700/50 flex flex-col h-[500px]">
+    <div className={`bg-zinc-900 rounded-2xl border border-zinc-700/50 flex flex-col transition-all duration-300 ${isMaximized ? 'fixed inset-4 z-50 h-auto' : 'h-[500px]'}`}>
       <audio ref={answerAudioRef} className="hidden" />
 
       <div className="p-4 border-b border-zinc-800">
-        <div className="flex items-center gap-2 mb-3">
-          <MessageCircle className="w-5 h-5 text-brand-400" />
-          <h3 className="font-semibold text-zinc-100">Ask About This Document</h3>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <MessageCircle className="w-5 h-5 text-brand-400" />
+            <h3 className="font-semibold text-zinc-100">Ask About This Document</h3>
+          </div>
+          <button
+            onClick={() => setIsMaximized(!isMaximized)}
+            className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+            title={isMaximized ? 'Minimize' : 'Maximize'}
+          >
+            {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
         </div>
         <div className="flex gap-2">
           <button
@@ -241,7 +270,18 @@ export default function QAPanel({ docId }) {
                   Document + Web
                 </span>
               )}
-              <p className="whitespace-pre-wrap">{msg.text}</p>
+              <div className="relative">
+                <p className="whitespace-pre-wrap pr-7">{msg.text}</p>
+                {msg.type === 'answer' && (
+                  <button
+                    onClick={() => handleCopy(msg.text, i)}
+                    className="absolute top-0 right-0 p-1 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors"
+                    title={copiedIndex === i ? 'Copied!' : 'Copy'}
+                  >
+                    {copiedIndex === i ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
               {msg.audioUrl && (
                 <div className="mt-2 flex items-center gap-2">
                   <button
