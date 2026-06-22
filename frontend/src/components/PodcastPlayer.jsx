@@ -61,17 +61,34 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     const audio = audioRef.current;
     if (!audio) return;
 
-    const onTimeUpdate = () => setCurrentTime(audio.currentTime);
-    const onLoadedMetadata = () => setDuration(audio.duration);
+    const onTimeUpdate = () => {
+      if (Number.isFinite(audio.currentTime)) setCurrentTime(audio.currentTime);
+    };
+    const onDuration = () => {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+      }
+    };
     const onEnded = () => setIsPlaying(false);
 
+    // Mobile browsers may not have duration at loadedmetadata (returns Infinity
+    // for streamed audio). Listen on multiple events to catch it reliably.
     audio.addEventListener('timeupdate', onTimeUpdate);
-    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+    audio.addEventListener('loadedmetadata', onDuration);
+    audio.addEventListener('durationchange', onDuration);
+    audio.addEventListener('canplaythrough', onDuration);
     audio.addEventListener('ended', onEnded);
+
+    // If audio is already loaded (cached), grab duration immediately
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      setDuration(audio.duration);
+    }
 
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate);
-      audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.removeEventListener('loadedmetadata', onDuration);
+      audio.removeEventListener('durationchange', onDuration);
+      audio.removeEventListener('canplaythrough', onDuration);
       audio.removeEventListener('ended', onEnded);
     };
   }, [audioUrl]);
@@ -103,12 +120,15 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
   };
 
   const handleSeekBar = (e) => {
+    if (!duration || !Number.isFinite(duration)) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     audioRef.current.currentTime = pct * duration;
   };
 
   const fmt = (s) => {
+    if (!Number.isFinite(s) || s < 0) return '0:00';
     const m = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
     return `${m}:${sec.toString().padStart(2, '0')}`;
@@ -190,6 +210,8 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
       <div
         className="w-full h-2 bg-zinc-700 rounded-full cursor-pointer mb-2 group"
         onClick={handleSeekBar}
+        onTouchStart={handleSeekBar}
+        onTouchMove={handleSeekBar}
       >
         <div
           className="h-full bg-gradient-to-r from-brand-500 to-purple-500 rounded-full relative transition-all"
