@@ -24,7 +24,29 @@ MAX_INPUT_CHARS = 6000
 LARGE_DOC_THRESHOLD = 15000
 MAX_SUMMARY_CHARS = 8000
 
-def _build_podcast_prompt(doc_length: int) -> str:
+def _is_procedural(document_text: str) -> bool:
+    """Detect documents whose core value is a sequence of steps/procedures.
+
+    SOPs, manuals, recipes, and how-to guides should have their steps walked
+    through rather than reduced to 3-5 high-level insights.
+    """
+    if not document_text:
+        return False
+    low = document_text.lower()
+    keyword_hits = sum(
+        1 for kw in (
+            "procedure", "sop", "standard operating", "step ", "steps",
+            "checklist", "pre-check", "precheck", "instructions", "sl. no",
+            "sl no", "responsibility", "activity",
+        )
+        if kw in low
+    )
+    # Count lines that begin with a number (e.g. "1 | ..." or "1. ...")
+    numbered_lines = len(re.findall(r"(?m)^\s*\d{1,3}\s*[\.\)\|]", document_text))
+    return numbered_lines >= 4 or keyword_hits >= 3
+
+
+def _build_podcast_prompt(doc_length: int, procedural: bool = False) -> str:
     """Build system prompt with length guidance scaled to document size."""
     # Scale: ~1 min of audio ≈ 150 words of dialogue ≈ 6-8 exchanges
     if doc_length < 500:        # Very short (a few lines)
@@ -38,6 +60,26 @@ def _build_podcast_prompt(doc_length: int) -> str:
     else:                       # 9+ pages
         target = "20-25 exchanges (about 5-6 minutes of audio)"
 
+    if procedural:
+        coverage_rule = (
+            "5. This document describes a PROCEDURE or set of STEPS. Walk the "
+            "listener through the actual steps IN ORDER. Do NOT skip steps and "
+            "do NOT collapse them into '3-5 insights' — the steps ARE the value. "
+            "Group several related steps into one natural exchange so it stays "
+            "conversational (e.g. the Guest explains steps 1-3, then 4-6), but "
+            "ensure EVERY step is mentioned with its key action and who is "
+            "responsible."
+        )
+        length_rule = (
+            f"6. Be thorough enough to cover all steps, but stay conversational. "
+            f"It's fine to exceed {target} if needed to include every step."
+        )
+        turn_rule = "7. Each speaker turn should be 1-4 sentences. Keep it lively, no long monologues."
+    else:
+        coverage_rule = "5. Focus on the TOP 3-5 most important insights — do NOT try to cover every single detail."
+        length_rule = f"6. Keep it CONCISE and punchy. Target: {target}."
+        turn_rule = "7. Each speaker turn should be 1-3 sentences MAX. No long monologues."
+
     return f"""You are a world-class podcast script writer.
 Given document content, create an engaging podcast-style conversation between two people:
 - **Host** (curious, asks great questions, keeps the conversation flowing)
@@ -48,9 +90,9 @@ CRITICAL RULES — FOLLOW EXACTLY:
 2. Do NOT elaborate beyond what the document says. If the document is short, the podcast MUST be short.
 3. Make it conversational and engaging, but every insight must come from the document text.
 4. Use casual language and transitions like "That's fascinating!", "So what you're saying is..."
-5. Focus on the TOP 3-5 most important insights — do NOT try to cover every single detail.
-6. Keep it CONCISE and punchy. Target: {target}.
-7. Each speaker turn should be 1-3 sentences MAX. No long monologues.
+{coverage_rule}
+{length_rule}
+{turn_rule}
 8. Output ONLY the dialogue in this exact format (no stage directions, no other text):
 
 Host: [dialogue]
@@ -68,6 +110,16 @@ Host: (a thank you + goodbye, no questions)"""
 CONTINUE_PROMPT = """Continue the podcast conversation covering these additional points from the document.
 Pick up naturally from where you left off — do NOT re-introduce the topic.
 Keep it concise — focus on the most important new insights only (8-10 more exchanges max).
+End with a warm sign-off. The final two lines MUST be:
+Guest: (a short closing / takeaway, no questions)
+Host: (a thank you + goodbye, no questions)
+Output ONLY dialogue in Host:/Guest: format."""
+
+PROCEDURAL_CONTINUE_PROMPT = """Continue the podcast conversation covering these additional steps from the document.
+Pick up naturally from where you left off — do NOT re-introduce the topic.
+This content is part of a PROCEDURE. Walk through EVERY step IN ORDER with its key
+action and who is responsible. Group related steps into natural exchanges, but do not
+skip any step.
 End with a warm sign-off. The final two lines MUST be:
 Guest: (a short closing / takeaway, no questions)
 Host: (a thank you + goodbye, no questions)
@@ -251,6 +303,11 @@ def generate_podcast_script(document_text: str) -> str:
     if not document_text or not document_text.strip():
         raise RuntimeError("The uploaded document appears to be empty or contains no readable text. Please try a different file.")
 
+    # Detect procedural content on the ORIGINAL text (summarization may strip step structure)
+    procedural = _is_procedural(document_text)
+    if procedural:
+        logger.info("[LLM] Procedural/step document detected — using step-by-step coverage")
+
     # Large document strategy: summarize → podcast
     if len(document_text) > LARGE_DOC_THRESHOLD:
         logger.info(f"[LLM] Large document detected ({len(document_text)} chars), using summarize-then-podcast strategy")
@@ -263,9 +320,11 @@ def generate_podcast_script(document_text: str) -> str:
     logger.info(f"Document split into {len(text_parts)} part(s) for LLM")
 
     # First part: full intro with length-scaled prompt
-    system_prompt = _build_podcast_prompt(len(document_text))
+    system_prompt = _build_podcast_prompt(len(document_text), procedural=procedural)
     # Scale max output tokens: small docs get shorter scripts
     max_out = 1024 if len(document_text) < 3000 else 1536 if len(document_text) < 8000 else 2048
+    if procedural:
+        max_out = max(max_out, 2048)
     script_parts = []
     script = _call_llm([
         {"role": "system", "content": system_prompt},
@@ -274,26 +333,29 @@ def generate_podcast_script(document_text: str) -> str:
     script_parts.append(script)
 
     # Additional parts: continue the conversation
+    continue_prompt = PROCEDURAL_CONTINUE_PROMPT if procedural else CONTINUE_PROMPT
     for idx, part in enumerate(text_parts[1:], start=2):
         continuation = _call_llm([
-            {"role": "system", "content": CONTINUE_PROMPT},
+            {"role": "system", "content": continue_prompt},
             {"role": "user", "content": f"Additional document content:\n\n{part}"},
-        ])
+        ], max_tokens=max_out)
         script_parts.append(continuation)
 
     full_script = "\n\n".join(script_parts)
 
-    # Safety: if LLM went wild, truncate to max 30 dialogue lines
+    # Safety: if LLM went wild, cap dialogue lines. Procedural docs need more
+    # room to cover every step, so use a higher cap for them.
+    max_lines = 60 if procedural else 30
     lines = full_script.strip().split("\n")
     dialogue_lines = [l for l in lines if l.strip() and (l.strip().lower().startswith("host:") or l.strip().lower().startswith("guest:"))]
-    if len(dialogue_lines) > 30:
-        logger.warning(f"LLM generated {len(dialogue_lines)} lines, truncating to 30")
+    if len(dialogue_lines) > max_lines:
+        logger.warning(f"LLM generated {len(dialogue_lines)} lines, truncating to {max_lines}")
         kept = []
         count = 0
         for l in lines:
             if l.strip() and (l.strip().lower().startswith("host:") or l.strip().lower().startswith("guest:")):
                 count += 1
-                if count > 30:
+                if count > max_lines:
                     break
             kept.append(l)
         full_script = "\n".join(kept)
