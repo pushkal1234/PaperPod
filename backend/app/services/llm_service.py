@@ -46,19 +46,26 @@ def _is_procedural(document_text: str) -> bool:
     return numbered_lines >= 4 or keyword_hits >= 3
 
 
+# ~1 min of audio ≈ 150 words ≈ 6-8 exchanges
+# Each tier: (target_description, min_dialogue_lines)
+LENGTH_TIERS = [
+    (500,   "6 exchanges, ~150 words total",                       6),
+    (2000,  "10 exchanges, ~300 words total (~2 minutes)",        10),
+    (5000,  "14 exchanges, ~500 words total (~3 minutes)",        14),
+    (10000, "18 exchanges, ~650 words total (~4-5 minutes)",      18),
+    (99999, "22 exchanges, ~800 words total (~5-6 minutes)",      22),
+]
+
+def _get_length_tier(doc_length: int) -> tuple[str, int]:
+    for threshold, target, min_lines in LENGTH_TIERS:
+        if doc_length < threshold:
+            return target, min_lines
+    return LENGTH_TIERS[-1][1], LENGTH_TIERS[-1][2]
+
+
 def _build_podcast_prompt(doc_length: int, procedural: bool = False) -> str:
     """Build system prompt with length guidance scaled to document size."""
-    # Scale: ~1 min of audio ≈ 150 words of dialogue ≈ 6-8 exchanges
-    if doc_length < 500:        # Very short (a few lines)
-        target = "4-6 exchanges (about 1 minute of audio)"
-    elif doc_length < 2000:     # ~1 page
-        target = "8-10 exchanges (about 2 minutes of audio)"
-    elif doc_length < 5000:     # 2-4 pages
-        target = "12-16 exchanges (about 3-4 minutes of audio)"
-    elif doc_length < 10000:    # 5-8 pages
-        target = "16-20 exchanges (about 4-5 minutes of audio)"
-    else:                       # 9+ pages
-        target = "20-25 exchanges (about 5-6 minutes of audio)"
+    target, _ = _get_length_tier(doc_length)
 
     if procedural:
         coverage_rule = (
@@ -71,14 +78,14 @@ def _build_podcast_prompt(doc_length: int, procedural: bool = False) -> str:
             "responsible."
         )
         length_rule = (
-            f"6. Be thorough enough to cover all steps, but stay conversational. "
-            f"It's fine to exceed {target} if needed to include every step."
+            f"6. You MUST produce at least {target}. Be thorough enough to "
+            f"cover all steps. It's fine to go slightly over, but never under."
         )
-        turn_rule = "7. Each speaker turn should be 1-4 sentences. Keep it lively, no long monologues."
+        turn_rule = "7. Each speaker turn MUST be 2-3 sentences. Never just 1 sentence."
     else:
         coverage_rule = "5. Focus on the TOP 3-5 most important insights — do NOT try to cover every single detail."
-        length_rule = f"6. Keep it CONCISE and punchy. Target: {target}."
-        turn_rule = "7. Each speaker turn should be 1-3 sentences MAX. No long monologues."
+        length_rule = f"6. You MUST produce exactly {target}. Do not produce significantly fewer or more exchanges than specified."
+        turn_rule = "7. Each speaker turn MUST be 2-3 sentences. Never just 1 sentence. No long monologues either."
 
     return f"""You are a world-class podcast script writer.
 Given document content, create an engaging podcast-style conversation between two people:
@@ -321,15 +328,21 @@ def generate_podcast_script(document_text: str) -> str:
 
     # First part: full intro with length-scaled prompt
     system_prompt = _build_podcast_prompt(len(document_text), procedural=procedural)
+    _, min_lines = _get_length_tier(len(document_text))
     # Scale max output tokens: small docs get shorter scripts
     max_out = 1024 if len(document_text) < 3000 else 1536 if len(document_text) < 8000 else 2048
     if procedural:
         max_out = max(max_out, 2048)
+
+    # Temperature 0.5 = creative enough but consistent across runs
+    podcast_temp = 0.5
+
     script_parts = []
-    script = _call_llm([
+    first_messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Create a podcast conversation based on this document:\n\n{text_parts[0]}"},
-    ], max_tokens=max_out)
+    ]
+    script = _call_llm(first_messages, temperature=podcast_temp, max_tokens=max_out)
     script_parts.append(script)
 
     # Additional parts: continue the conversation
@@ -338,21 +351,47 @@ def generate_podcast_script(document_text: str) -> str:
         continuation = _call_llm([
             {"role": "system", "content": continue_prompt},
             {"role": "user", "content": f"Additional document content:\n\n{part}"},
-        ], max_tokens=max_out)
+        ], temperature=podcast_temp, max_tokens=max_out)
         script_parts.append(continuation)
 
     full_script = "\n\n".join(script_parts)
 
+    # Count dialogue lines
+    def _count_dialogue(text):
+        return [l for l in text.strip().split("\n")
+                if l.strip() and (l.strip().lower().startswith("host:") or l.strip().lower().startswith("guest:"))]
+
+    dialogue_lines = _count_dialogue(full_script)
+
+    # Minimum enforcement: if the LLM produced too few lines, retry ONCE with a
+    # stronger nudge. This closes the gap between the "short" and "long" runs.
+    if len(dialogue_lines) < min_lines and len(text_parts) == 1:
+        logger.warning(
+            f"[LLM] Script too short ({len(dialogue_lines)} lines, need {min_lines}). Retrying with emphasis..."
+        )
+        nudge_messages = first_messages + [
+            {"role": "assistant", "content": script},
+            {"role": "user", "content": (
+                f"That was too short — only {len(dialogue_lines)} exchanges. "
+                f"I need at least {min_lines} exchanges with 2-3 sentences each. "
+                f"Please rewrite the full conversation from the beginning, covering more of the document."
+            )},
+        ]
+        retry_script = _call_llm(nudge_messages, temperature=podcast_temp, max_tokens=max_out)
+        retry_lines = _count_dialogue(retry_script)
+        if len(retry_lines) >= len(dialogue_lines):
+            full_script = retry_script
+            dialogue_lines = retry_lines
+            logger.info(f"[LLM] Retry produced {len(dialogue_lines)} lines (was {len(_count_dialogue(script))})")
+
     # Safety: if LLM went wild, cap dialogue lines. Procedural docs need more
     # room to cover every step, so use a higher cap for them.
     max_lines = 60 if procedural else 30
-    lines = full_script.strip().split("\n")
-    dialogue_lines = [l for l in lines if l.strip() and (l.strip().lower().startswith("host:") or l.strip().lower().startswith("guest:"))]
     if len(dialogue_lines) > max_lines:
         logger.warning(f"LLM generated {len(dialogue_lines)} lines, truncating to {max_lines}")
         kept = []
         count = 0
-        for l in lines:
+        for l in full_script.strip().split("\n"):
             if l.strip() and (l.strip().lower().startswith("host:") or l.strip().lower().startswith("guest:")):
                 count += 1
                 if count > max_lines:
