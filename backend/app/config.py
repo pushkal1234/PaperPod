@@ -16,17 +16,18 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
     LLM_MODEL: str = "llama-3.1-8b-instant"
     WHISPER_MODEL: str = "whisper-large-v3"
-    # Indian English voices for a natural, conversational podcast feel.
-    # Neerja "Expressive" varies intonation far more than the standard neural
-    # voices, which fixes the flat/robotic/monotone delivery.
-    TTS_VOICE_HOST: str = os.getenv("TTS_VOICE_HOST", "en-IN-NeerjaExpressiveNeural")
-    TTS_VOICE_GUEST: str = os.getenv("TTS_VOICE_GUEST", "en-IN-PrabhatNeural")
-    # Per-speaker prosody (edge-tts rate/pitch) to add contrast between the two
-    # hosts and keep the energy up. Strings must carry an explicit sign.
-    TTS_RATE_HOST: str = os.getenv("TTS_RATE_HOST", "+8%")
-    TTS_PITCH_HOST: str = os.getenv("TTS_PITCH_HOST", "+2Hz")
-    TTS_RATE_GUEST: str = os.getenv("TTS_RATE_GUEST", "+5%")
-    TTS_PITCH_GUEST: str = os.getenv("TTS_PITCH_GUEST", "-2Hz")
+    # Voice casting:
+    #   HOST  = drives the convo / asks questions  -> male voice
+    #   GUEST = the expert who explains & speaks more -> Neerja Expressive (female)
+    TTS_VOICE_HOST: str = os.getenv("TTS_VOICE_HOST", "en-US-AndrewMultilingualNeural")
+    TTS_VOICE_GUEST: str = os.getenv("TTS_VOICE_GUEST", "en-IN-NeerjaExpressiveNeural")
+    # Per-speaker prosody (edge-tts rate/pitch). Explicit sign required.
+    # Host slightly faster/livelier to counter the male monotone; Guest (female)
+    # kept at her natural, well-liked settings.
+    TTS_RATE_HOST: str = os.getenv("TTS_RATE_HOST", "+10%")
+    TTS_PITCH_HOST: str = os.getenv("TTS_PITCH_HOST", "+0Hz")
+    TTS_RATE_GUEST: str = os.getenv("TTS_RATE_GUEST", "+8%")
+    TTS_PITCH_GUEST: str = os.getenv("TTS_PITCH_GUEST", "+2Hz")
 
 
 settings = Settings()
