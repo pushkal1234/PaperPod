@@ -125,6 +125,24 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
       setIsPlaying(false);
       if (positionKey) localStorage.removeItem(positionKey);
     };
+    // Restore saved position ONLY once the real media is loaded and seekable.
+    // Doing this against the backend's fallback duration before the element is
+    // ready wedges streamed audio into a stuck "seeking" state.
+    const onLoadedData = () => {
+      if (restoredRef.current || !positionKey) return;
+      restoredRef.current = true;
+      const realDur = audio.duration;
+      if (!Number.isFinite(realDur) || realDur <= 0) return;
+      const saved = parseFloat(localStorage.getItem(positionKey));
+      if (Number.isFinite(saved) && saved > 1 && saved < realDur - 5) {
+        try {
+          audio.currentTime = saved;
+          setCurrentTime(saved);
+        } catch {
+          /* not seekable yet — skip restore */
+        }
+      }
+    };
 
     // Mobile browsers may not have duration at loadedmetadata (returns Infinity
     // for streamed audio). Listen on multiple events to catch it reliably.
@@ -136,6 +154,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
     audio.addEventListener('ended', onEnded);
+    audio.addEventListener('loadeddata', onLoadedData);
 
     // If audio is already loaded (cached), grab duration immediately
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -151,6 +170,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
       audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('loadeddata', onLoadedData);
     };
   }, [audioUrl, positionKey, savePosition]);
 
@@ -161,22 +181,6 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     setDuration(0);
     setBuffered(0);
   }, [audioUrl]);
-
-  // Restore saved playback position once metadata (duration) is known.
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || restoredRef.current || !positionKey || !effectiveDuration) return;
-    const saved = parseFloat(localStorage.getItem(positionKey));
-    if (Number.isFinite(saved) && saved > 0 && saved < effectiveDuration - 5) {
-      try {
-        audio.currentTime = saved;
-        setCurrentTime(saved);
-      } catch {
-        /* seeking before fully seekable on some mobile browsers */
-      }
-    }
-    restoredRef.current = true;
-  }, [effectiveDuration, positionKey]);
 
   // Apply playback rate to the audio element and persist the choice.
   useEffect(() => {
@@ -201,32 +205,44 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     }
   }, []);
 
+  // Upper bound for seeking: prefer the browser's real decoded duration (so we
+  // never seek past the actually-seekable range), fall back to backend value.
+  const seekableMax = () => {
+    const audio = audioRef.current;
+    if (audio && Number.isFinite(audio.duration) && audio.duration > 0) return audio.duration;
+    return effectiveDuration;
+  };
+
+  const applySeek = (target) => {
+    const audio = audioRef.current;
+    if (!audio || !Number.isFinite(target)) return;
+    const max = seekableMax();
+    const clamped = Math.max(0, max ? Math.min(target, max - 0.25) : target);
+    try {
+      audio.currentTime = clamped;
+      setCurrentTime(clamped);
+    } catch {
+      /* element not ready to seek yet */
+    }
+  };
+
   const seek = useCallback(
     (seconds) => {
       const audio = audioRef.current;
       if (!audio) return;
-      const max = effectiveDuration || audio.currentTime + seconds;
-      const target = Math.max(0, Math.min(audio.currentTime + seconds, max));
-      audio.currentTime = target;
-      setCurrentTime(target);
+      applySeek(audio.currentTime + seconds);
     },
     [effectiveDuration]
   );
 
   const seekTo = (seconds) => {
-    if (!audioRef.current || !Number.isFinite(seconds)) return;
-    audioRef.current.currentTime = Math.max(0, Math.min(seconds, effectiveDuration || seconds));
-    setCurrentTime(audioRef.current.currentTime);
-    if (audioRef.current.paused) {
-      audioRef.current.play().catch(() => {});
-    }
+    applySeek(seconds);
+    const audio = audioRef.current;
+    if (audio && audio.paused) audio.play().catch(() => {});
   };
 
   const handleScrub = (e) => {
-    if (!effectiveDuration) return;
-    const target = parseFloat(e.target.value);
-    if (audioRef.current) audioRef.current.currentTime = target;
-    setCurrentTime(target);
+    applySeek(parseFloat(e.target.value));
   };
 
   const cyclePlaybackRate = () => {
