@@ -51,6 +51,9 @@ def _range_response(file_path: str, range_header: str, filename: str):
             "Accept-Ranges": "bytes",
             "Content-Length": str(content_length),
             "Content-Disposition": f'inline; filename="{filename}"',
+            # Generated audio is immutable per id — let browsers/CDNs cache it
+            # aggressively so mobile re-buffering and repeat plays are instant.
+            "Cache-Control": "public, max-age=31536000, immutable",
         },
     )
 
@@ -76,5 +79,8 @@ async def stream_audio(audio_id: str, request: Request, db: AsyncSession = Depen
         media_type="audio/mpeg",
         filename=filename,
         stat_result=stat,
-        headers={"Accept-Ranges": "bytes"},
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=31536000, immutable",
+        },
     )

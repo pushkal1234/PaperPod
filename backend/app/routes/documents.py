@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
@@ -59,7 +60,8 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
         current_step = "extracting text from PDF"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 1/4: Extracting text...")
-        raw_text = extract_text(file_path, content_type)
+        # Offload blocking PDF/DOCX parsing to a thread so the event loop stays free.
+        raw_text = await run_in_threadpool(extract_text, file_path, content_type)
         step_times['extract'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Extracted {len(raw_text)} chars in {step_times['extract']:.2f}s")
 
@@ -80,7 +82,8 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
         current_step = "generating podcast script"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
-        script = generate_podcast_script(raw_text)
+        # The Groq client is synchronous/blocking — run it off the event loop.
+        script = await run_in_threadpool(generate_podcast_script, raw_text)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 
@@ -227,7 +230,7 @@ async def _process_image_document(doc_id: str, image_bytes: bytes, mime_type: st
     # Step 1: OCR (can take 10-60s for large camera photos)
     try:
         t0 = time.perf_counter()
-        raw_text = extract_text_from_image(image_bytes, mime_type)
+        raw_text = await run_in_threadpool(extract_text_from_image, image_bytes, mime_type)
         ocr_time = time.perf_counter() - t0
         logger.info(f"[{doc_id}] OCR extracted {len(raw_text)} chars in {ocr_time:.2f}s")
     except Exception as e:
@@ -282,7 +285,8 @@ async def _process_text_document(doc_id: str, raw_text: str):
         current_step = "generating podcast script"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
-        script = generate_podcast_script(raw_text)
+        # The Groq client is synchronous/blocking — run it off the event loop.
+        script = await run_in_threadpool(generate_podcast_script, raw_text)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 

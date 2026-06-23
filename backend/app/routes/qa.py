@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,7 +60,7 @@ async def ask_question(
         t0 = time.perf_counter()
         audio_bytes = await audio.read()
         try:
-            question_text = transcribe_audio(audio_bytes)
+            question_text = await run_in_threadpool(transcribe_audio, audio_bytes)
         except RuntimeError as e:
             raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
         except Exception as e:
@@ -73,7 +74,7 @@ async def ask_question(
 
     # Retrieve context
     t0 = time.perf_counter()
-    context_chunks = query_chunks(question_text, doc_id, top_k=5)
+    context_chunks = await run_in_threadpool(query_chunks, question_text, doc_id, 5)
     step_times['retrieve'] = time.perf_counter() - t0
 
     citations: list = []
@@ -92,18 +93,18 @@ async def ask_question(
                 doc_context_parts.append("\n\n---\n\n".join(context_chunks))
             document_context = "\n\n---\n\n".join(doc_context_parts) or "No document text available."
             try:
-                result = serpapi_service.answer_with_web_search(question_text, document_context)
+                result = await run_in_threadpool(serpapi_service.answer_with_web_search, question_text, document_context)
                 answer_text = result["answer"]
                 citations = result.get("citations") or []
             except Exception as e:
                 logger.warning(f"[QA][{doc_id}] Web search failed, falling back to document-only: {e}")
-                answer_text = answer_question(question_text, context_chunks)
+                answer_text = await run_in_threadpool(answer_question, question_text, context_chunks)
                 mode = "document"
                 citations = [{"note": "Web search unavailable, answered from document only."}]
         else:
             if mode == "hybrid" and not serpapi_service.is_configured():
                 mode = "document"
-            answer_text = answer_question(question_text, context_chunks)
+            answer_text = await run_in_threadpool(answer_question, question_text, context_chunks)
     except RuntimeError as e:
         raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
     except Exception as e:

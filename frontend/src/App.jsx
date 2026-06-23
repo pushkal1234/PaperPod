@@ -327,6 +327,7 @@ function App() {
               title={sharedPodcast.title}
               dialogueScript={sharedPodcast.dialogue_script}
               transcriptSegments={sharedPodcast.transcript_segments}
+              fallbackDuration={sharedPodcast.duration_seconds}
             />
             <div className="text-center">
               <button
@@ -358,6 +359,7 @@ function App() {
                   title={currentDoc.filename}
                   dialogueScript={currentDoc.audio.dialogue_script}
                   transcriptSegments={currentDoc.audio.transcript_segments}
+                  fallbackDuration={currentDoc.audio.duration_seconds}
                   onShare={() => handleShare(currentDoc.doc_id)}
                 />
                 <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800/50">

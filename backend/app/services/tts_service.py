@@ -129,7 +129,15 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
 
     output_filename = f"{doc_id}_podcast.mp3"
     output_path = os.path.join(settings.AUDIO_DIR, output_filename)
-    combined.export(output_path, format="mp3")
+    # Export as constant-bitrate MP3 with a Xing/Info header (-write_xing 1) so
+    # mobile browsers (Safari/Chrome) can read the correct duration from the
+    # file header while streaming, instead of reporting Infinity/0.
+    combined.export(
+        output_path,
+        format="mp3",
+        bitrate="128k",
+        parameters=["-write_xing", "1"],
+    )
 
     duration = len(combined) / 1000.0
 

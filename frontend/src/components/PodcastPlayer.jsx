@@ -1,5 +1,9 @@
-import { useRef, useState, useEffect, useMemo } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2, Share2, Check, Download } from 'lucide-react';
+
+const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2];
+const POSITION_KEY_PREFIX = 'paperpod:pos:';
+const RATE_KEY = 'paperpod:rate';
 
 function buildProportionalSegments(dialogueScript, duration) {
   const lines = dialogueScript
@@ -29,21 +33,39 @@ function buildProportionalSegments(dialogueScript, duration) {
   });
 }
 
-export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcriptSegments, onShare }) {
+export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcriptSegments, fallbackDuration, onShare }) {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [buffered, setBuffered] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(() => {
+    const saved = parseFloat(localStorage.getItem(RATE_KEY));
+    return PLAYBACK_RATES.includes(saved) ? saved : 1;
+  });
   const [showTranscript, setShowTranscript] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
 
+  const restoredRef = useRef(false);
+  const positionKey = audioUrl ? `${POSITION_KEY_PREFIX}${audioUrl}` : null;
+
+  // Mobile Safari/Chrome often report audio.duration as Infinity/NaN/0 for
+  // streamed MP3. Fall back to the duration the backend computed so the end
+  // time, seek bar, and progress always work on mobile.
+  const effectiveDuration =
+    Number.isFinite(duration) && duration > 0
+      ? duration
+      : Number.isFinite(fallbackDuration) && fallbackDuration > 0
+      ? fallbackDuration
+      : 0;
+
   const segments = useMemo(() => {
     if (transcriptSegments?.length) return transcriptSegments;
-    if (dialogueScript && duration > 0) {
-      return buildProportionalSegments(dialogueScript, duration);
+    if (dialogueScript && effectiveDuration > 0) {
+      return buildProportionalSegments(dialogueScript, effectiveDuration);
     }
     return [];
-  }, [transcriptSegments, dialogueScript, duration]);
+  }, [transcriptSegments, dialogueScript, effectiveDuration]);
 
   const activeIndex = useMemo(() => {
     if (!segments.length) return -1;
@@ -57,6 +79,26 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     return -1;
   }, [segments, currentTime]);
 
+  const fmt = (s) => {
+    if (!Number.isFinite(s) || s < 0) return '0:00';
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  const savePosition = useCallback(
+    (time) => {
+      if (!positionKey || !Number.isFinite(time)) return;
+      // Don't persist if essentially finished or at the very start.
+      if (effectiveDuration && time >= effectiveDuration - 5) {
+        localStorage.removeItem(positionKey);
+      } else if (time > 3) {
+        localStorage.setItem(positionKey, String(Math.floor(time)));
+      }
+    },
+    [positionKey, effectiveDuration]
+  );
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -69,7 +111,20 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         setDuration(audio.duration);
       }
     };
-    const onEnded = () => setIsPlaying(false);
+    const onProgress = () => {
+      if (audio.buffered.length) {
+        setBuffered(audio.buffered.end(audio.buffered.length - 1));
+      }
+    };
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => {
+      setIsPlaying(false);
+      savePosition(audio.currentTime);
+    };
+    const onEnded = () => {
+      setIsPlaying(false);
+      if (positionKey) localStorage.removeItem(positionKey);
+    };
 
     // Mobile browsers may not have duration at loadedmetadata (returns Infinity
     // for streamed audio). Listen on multiple events to catch it reliably.
@@ -77,6 +132,9 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     audio.addEventListener('loadedmetadata', onDuration);
     audio.addEventListener('durationchange', onDuration);
     audio.addEventListener('canplaythrough', onDuration);
+    audio.addEventListener('progress', onProgress);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
     audio.addEventListener('ended', onEnded);
 
     // If audio is already loaded (cached), grab duration immediately
@@ -89,50 +147,132 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
       audio.removeEventListener('loadedmetadata', onDuration);
       audio.removeEventListener('durationchange', onDuration);
       audio.removeEventListener('canplaythrough', onDuration);
+      audio.removeEventListener('progress', onProgress);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
       audio.removeEventListener('ended', onEnded);
     };
+  }, [audioUrl, positionKey, savePosition]);
+
+  // Reset transient state when the source changes.
+  useEffect(() => {
+    restoredRef.current = false;
+    setCurrentTime(0);
+    setDuration(0);
+    setBuffered(0);
   }, [audioUrl]);
 
-  const togglePlay = () => {
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play();
+  // Restore saved playback position once metadata (duration) is known.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || restoredRef.current || !positionKey || !effectiveDuration) return;
+    const saved = parseFloat(localStorage.getItem(positionKey));
+    if (Number.isFinite(saved) && saved > 0 && saved < effectiveDuration - 5) {
+      try {
+        audio.currentTime = saved;
+        setCurrentTime(saved);
+      } catch {
+        /* seeking before fully seekable on some mobile browsers */
+      }
     }
-    setIsPlaying(!isPlaying);
-  };
+    restoredRef.current = true;
+  }, [effectiveDuration, positionKey]);
 
-  const seek = (seconds) => {
-    audioRef.current.currentTime = Math.max(
-      0,
-      Math.min(audioRef.current.currentTime + seconds, duration)
-    );
-  };
+  // Apply playback rate to the audio element and persist the choice.
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = playbackRate;
+    localStorage.setItem(RATE_KEY, String(playbackRate));
+  }, [playbackRate, audioUrl]);
+
+  // Persist position periodically and on unmount.
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) savePosition(audioRef.current.currentTime);
+    };
+  }, [savePosition]);
+
+  const togglePlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
+  }, []);
+
+  const seek = useCallback(
+    (seconds) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const max = effectiveDuration || audio.currentTime + seconds;
+      const target = Math.max(0, Math.min(audio.currentTime + seconds, max));
+      audio.currentTime = target;
+      setCurrentTime(target);
+    },
+    [effectiveDuration]
+  );
 
   const seekTo = (seconds) => {
     if (!audioRef.current || !Number.isFinite(seconds)) return;
-    audioRef.current.currentTime = Math.max(0, Math.min(seconds, duration || seconds));
+    audioRef.current.currentTime = Math.max(0, Math.min(seconds, effectiveDuration || seconds));
     setCurrentTime(audioRef.current.currentTime);
-    if (!isPlaying) {
+    if (audioRef.current.paused) {
       audioRef.current.play().catch(() => {});
-      setIsPlaying(true);
     }
   };
 
-  const handleSeekBar = (e) => {
-    if (!duration || !Number.isFinite(duration)) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    audioRef.current.currentTime = pct * duration;
+  const handleScrub = (e) => {
+    if (!effectiveDuration) return;
+    const target = parseFloat(e.target.value);
+    if (audioRef.current) audioRef.current.currentTime = target;
+    setCurrentTime(target);
   };
 
-  const fmt = (s) => {
-    if (!Number.isFinite(s) || s < 0) return '0:00';
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${m}:${sec.toString().padStart(2, '0')}`;
+  const cyclePlaybackRate = () => {
+    const idx = PLAYBACK_RATES.indexOf(playbackRate);
+    setPlaybackRate(PLAYBACK_RATES[(idx + 1) % PLAYBACK_RATES.length]);
   };
+
+  // Media Session API: lock-screen / notification controls + metadata.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = new window.MediaMetadata({
+      title: title || 'PaperPod Podcast',
+      artist: 'PaperPod',
+      album: 'AI-generated podcast',
+    });
+    const handlers = [
+      ['play', () => togglePlay()],
+      ['pause', () => togglePlay()],
+      ['seekbackward', () => seek(-15)],
+      ['seekforward', () => seek(15)],
+      ['seekto', (d) => { if (d.seekTime != null) seekTo(d.seekTime); }],
+    ];
+    handlers.forEach(([action, fn]) => {
+      try { navigator.mediaSession.setActionHandler(action, fn); } catch { /* unsupported action */ }
+    });
+    return () => {
+      handlers.forEach(([action]) => {
+        try { navigator.mediaSession.setActionHandler(action, null); } catch { /* noop */ }
+      });
+    };
+  }, [title, togglePlay, seek]);
+
+  // Keep Media Session play/pause + position state in sync.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    if (effectiveDuration && Number.isFinite(currentTime)) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: effectiveDuration,
+          playbackRate,
+          position: Math.min(currentTime, effectiveDuration),
+        });
+      } catch { /* setPositionState unsupported */ }
+    }
+  }, [isPlaying, currentTime, effectiveDuration, playbackRate]);
 
   return (
     <div className="bg-gradient-to-br from-zinc-900 to-zinc-800 rounded-2xl p-6 border border-zinc-700/50">
@@ -207,28 +347,48 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         )}
       </div>
 
-      <div
-        className="w-full h-2 bg-zinc-700 rounded-full cursor-pointer mb-2 group"
-        onClick={handleSeekBar}
-        onTouchStart={handleSeekBar}
-        onTouchMove={handleSeekBar}
-      >
-        <div
-          className="h-full bg-gradient-to-r from-brand-500 to-purple-500 rounded-full relative transition-all"
-          style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
-        >
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity" />
-        </div>
-      </div>
+      {(() => {
+        const pct = effectiveDuration ? Math.min(100, (currentTime / effectiveDuration) * 100) : 0;
+        const bufPct = effectiveDuration ? Math.min(100, (buffered / effectiveDuration) * 100) : 0;
+        return (
+          <div className="relative w-full h-5 mb-2 flex items-center group">
+            {/* Track */}
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-zinc-700 rounded-full overflow-hidden">
+              {/* Buffered */}
+              <div className="absolute inset-y-0 left-0 bg-zinc-600 rounded-full" style={{ width: `${bufPct}%` }} />
+              {/* Played */}
+              <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-brand-500 to-purple-500 rounded-full" style={{ width: `${pct}%` }} />
+            </div>
+            {/* Thumb */}
+            <div
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg ring-2 ring-brand-500/40 pointer-events-none"
+              style={{ left: `${pct}%` }}
+            />
+            {/* Native range for accessibility, keyboard, drag & touch */}
+            <input
+              type="range"
+              min={0}
+              max={effectiveDuration || 0}
+              step="any"
+              value={Math.min(currentTime, effectiveDuration || 0)}
+              onChange={handleScrub}
+              aria-label="Seek"
+              disabled={!effectiveDuration}
+              className="absolute inset-0 w-full h-full m-0 cursor-pointer appearance-none bg-transparent opacity-0"
+            />
+          </div>
+        );
+      })()}
 
       <div className="flex justify-between text-xs text-zinc-500 mb-4">
         <span>{fmt(currentTime)}</span>
-        <span>{fmt(duration)}</span>
+        <span>{fmt(effectiveDuration)}</span>
       </div>
 
-      <div className="flex items-center justify-center gap-6">
+      <div className="flex items-center justify-center gap-6 relative">
         <button
           onClick={() => seek(-15)}
+          aria-label="Rewind 15 seconds"
           className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all"
         >
           <SkipBack className="w-5 h-5" />
@@ -236,6 +396,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
 
         <button
           onClick={togglePlay}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
           className="w-14 h-14 rounded-full bg-brand-600 hover:bg-brand-500 flex items-center justify-center text-white shadow-lg shadow-brand-600/30 hover:shadow-brand-500/40 transition-all active:scale-95"
         >
           {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
@@ -243,9 +404,19 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
 
         <button
           onClick={() => seek(15)}
+          aria-label="Forward 15 seconds"
           className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all"
         >
           <SkipForward className="w-5 h-5" />
+        </button>
+
+        <button
+          onClick={cyclePlaybackRate}
+          aria-label="Playback speed"
+          title="Playback speed"
+          className="sm:absolute sm:right-0 min-w-[3rem] px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 transition-all border border-zinc-700"
+        >
+          {playbackRate}x
         </button>
       </div>
 
