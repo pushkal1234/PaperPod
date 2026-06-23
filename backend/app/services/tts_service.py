@@ -42,12 +42,23 @@ def parse_dialogue(script: str) -> list[dict]:
     return dialogue
 
 
-async def synthesize_speech(text: str, voice: str, output_path: str, max_retries: int = 3):
-    """Generate speech audio with retry and brand-safe error wrapping."""
+async def synthesize_speech(
+    text: str,
+    voice: str,
+    output_path: str,
+    max_retries: int = 3,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
+):
+    """Generate speech audio with retry and brand-safe error wrapping.
+
+    `rate` and `pitch` are edge-tts prosody controls (e.g. "+8%", "-2Hz") used
+    to add energy/contrast and reduce the flat, monotone delivery.
+    """
     last_error = None
     for attempt in range(max_retries):
         try:
-            communicator = edge_tts.Communicate(text, voice)
+            communicator = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
             await communicator.save(output_path)
             return
         except Exception as e:
@@ -66,10 +77,18 @@ async def synthesize_speech(text: str, voice: str, output_path: str, max_retries
     raise RuntimeError(TTS_SERVICE_ERROR_MSG)
 
 
-async def _synthesize_one(sem: asyncio.Semaphore, text: str, voice: str, clip_path: str, idx: int):
+async def _synthesize_one(
+    sem: asyncio.Semaphore,
+    text: str,
+    voice: str,
+    clip_path: str,
+    idx: int,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
+):
     """Synthesize a single clip with concurrency limit. Propagates errors."""
     async with sem:
-        await synthesize_speech(text, voice, clip_path)
+        await synthesize_speech(text, voice, clip_path, rate=rate, pitch=pitch)
 
 
 async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, list[dict]]:
@@ -97,14 +116,13 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
     clip_paths = []
 
     for i, entry in enumerate(dialogue):
-        voice = (
-            settings.TTS_VOICE_HOST
-            if entry["speaker"] == "Host"
-            else settings.TTS_VOICE_GUEST
-        )
+        is_host = entry["speaker"] == "Host"
+        voice = settings.TTS_VOICE_HOST if is_host else settings.TTS_VOICE_GUEST
+        rate = settings.TTS_RATE_HOST if is_host else settings.TTS_RATE_GUEST
+        pitch = settings.TTS_PITCH_HOST if is_host else settings.TTS_PITCH_GUEST
         clip_path = os.path.join(temp_dir, f"clip_{i:04d}.mp3")
         clip_paths.append(clip_path)
-        tasks.append(_synthesize_one(sem, entry["text"], voice, clip_path, i))
+        tasks.append(_synthesize_one(sem, entry["text"], voice, clip_path, i, rate=rate, pitch=pitch))
 
     logger.info(f"[{doc_id}] TTS: {len(tasks)} clips, concurrency={TTS_CONCURRENCY}")
     await asyncio.gather(*tasks)
