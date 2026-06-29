@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./paperpod.db")
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_files")
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
-    LLM_MODEL: str = "llama-3.1-8b-instant"
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
     WHISPER_MODEL: str = "whisper-large-v3"
     # Voice casting:
     #   HOST  = drives the convo / asks questions  -> male voice
