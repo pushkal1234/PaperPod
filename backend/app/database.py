@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -86,6 +87,19 @@ _IS_SQLITE = DATABASE_URL.startswith("sqlite")
 # managed Postgres that closes idle connections); harmless for SQLite.
 engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+# Surface (without leaking credentials) whether we're on the free private
+# endpoint or a billed public proxy, so it's verifiable from deploy logs.
+_logger = logging.getLogger("paperpod")
+if _IS_SQLITE:
+    _logger.info("DB endpoint: local SQLite")
+elif "railway.internal" in DATABASE_URL:
+    _logger.info("DB endpoint: private (railway.internal) — no egress charges")
+else:
+    _logger.warning(
+        "DB endpoint: NON-private host in use — this likely incurs Railway egress "
+        "charges. Point DATABASE_URL at the private railway.internal endpoint."
+    )
 
 
 if _IS_SQLITE:
