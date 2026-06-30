@@ -45,6 +45,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
   });
   const [showTranscript, setShowTranscript] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const [downloadingAudio, setDownloadingAudio] = useState(false);
 
   const restoredRef = useRef(false);
   const positionKey = audioUrl ? `${POSITION_KEY_PREFIX}${audioUrl}` : null;
@@ -290,6 +291,35 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     }
   }, [isPlaying, currentTime, effectiveDuration, playbackRate]);
 
+  // Download the audio via a fresh blob fetch instead of a cross-origin
+  // `<a download>`. Browsers ignore the download attribute for cross-origin
+  // URLs and may satisfy the request from the <audio> element's partial Range
+  // buffer, producing a truncated, unplayable MP3 (the shared-page bug). A
+  // standalone fetch issues a complete, non-Range GET and saves the full file.
+  const handleDownloadAudio = useCallback(async () => {
+    if (!audioUrl || downloadingAudio) return;
+    const filename = `${title.replace(/[^a-z0-9]/gi, '_')}_podcast.mp3`;
+    setDownloadingAudio(true);
+    try {
+      const res = await fetch(audioUrl, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      // Last-resort fallback: open in a new tab so the user can save manually.
+      window.open(audioUrl, '_blank', 'noopener');
+    } finally {
+      setDownloadingAudio(false);
+    }
+  }, [audioUrl, title, downloadingAudio]);
+
   return (
     <div className="bg-white rounded-2xl p-6 border border-paper-300 shadow-soft">
       <audio ref={audioRef} src={audioUrl} preload="metadata" />
@@ -333,15 +363,15 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
           </button>
         )}
         {audioUrl && (
-          <a
-            href={audioUrl}
-            download={`${title.replace(/[^a-z0-9]/gi, '_')}_podcast.mp3`}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
+          <button
+            onClick={handleDownloadAudio}
+            disabled={downloadingAudio}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300 disabled:opacity-60 disabled:cursor-wait"
             title="Download podcast audio"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Audio</span>
-          </a>
+            <span>{downloadingAudio ? 'Saving…' : 'Audio'}</span>
+          </button>
         )}
         {dialogueScript && (
           <button
