@@ -16,8 +16,8 @@ TTS_CONFIG_MSG = "Text-to-speech is not configured on this server. Please contac
 
 # Max concurrent TTS calls — keep low to avoid rate limits
 TTS_CONCURRENCY = 3
-# Hard cap on dialogue turns to prevent runaway generation
-MAX_DIALOGUE_TURNS = 30
+# Hard cap on dialogue turns (must be >= longest LENGTH_TIERS max + procedural headroom)
+MAX_DIALOGUE_TURNS = 64
 
 
 def _is_tts_rate_limit(err_msg: str) -> bool:
