@@ -12,7 +12,7 @@ function renderInline(text) {
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       return (
-        <strong key={i} className="font-semibold text-zinc-100">
+        <strong key={i} className="font-semibold text-stone-900">
           {part.slice(2, -2)}
         </strong>
       );

@@ -2,10 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background: #0f0f14;
-  color: #e4e4e7;
+  color: #1c2b27;
+  background-color: #fbf9f4;
+  background-image:
+    radial-gradient(55rem 55rem at 110% -10%, rgba(31, 157, 133, 0.10), transparent 60%),
+    radial-gradient(45rem 45rem at -10% 0%, rgba(240, 100, 52, 0.07), transparent 55%),
+    linear-gradient(180deg, #fbf9f4 0%, #f2f7f3 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(31, 157, 133, 0.18);
+}
+
+/* Soft, warm scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d8cfbf;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c4b9a5;
+  background-clip: content-box;
 }
 
 @keyframes pulse-ring {

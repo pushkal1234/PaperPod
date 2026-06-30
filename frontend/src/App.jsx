@@ -186,19 +186,19 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0f0f14]">
+    <div className="min-h-screen">
       {/* Navbar */}
-      <nav className="border-b border-zinc-800/80 bg-zinc-900/50 backdrop-blur-xl sticky top-0 z-50">
+      <nav className="border-b border-paper-300/70 bg-paper-50/80 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <button onClick={() => { setView('home'); setCurrentDoc(null); }} className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center shadow-lg shadow-brand-600/20">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center shadow-glow">
               <Headphones className="w-5 h-5 text-white" />
             </div>
-            <span className="text-xl font-bold text-white tracking-tight">
-              Paper<span className="text-brand-400">Pod</span>
+            <span className="text-xl font-bold text-stone-800 tracking-tight">
+              Paper<span className="text-brand-600">Pod</span>
             </span>
           </button>
-          <p className="text-xs text-zinc-600 hidden sm:block">Documents → Podcasts → Conversations</p>
+          <p className="text-xs text-stone-400 font-medium hidden sm:block">Documents → Podcasts → Conversations</p>
         </div>
       </nav>
 
@@ -207,21 +207,31 @@ function App() {
         {view === 'home' && (
           <div className="space-y-8">
             {/* Hero */}
-            <div className="text-center py-12">
-              <div className="inline-flex items-center gap-2 bg-brand-500/10 text-brand-400 text-xs font-medium px-3 py-1.5 rounded-full mb-4 border border-brand-500/20">
-                <Sparkles className="w-3.5 h-3.5" />
-                AI-Powered Document to Podcast
+            <div className="text-center pt-10 pb-6">
+              <div className="inline-flex items-center gap-2 bg-white/70 text-brand-700 text-xs font-semibold px-3.5 py-1.5 rounded-full mb-6 border border-brand-200 shadow-soft">
+                <Sparkles className="w-3.5 h-3.5 text-accent-500" />
+                Turn reading into listening
               </div>
-              <h1 className="text-4xl md:text-5xl font-extrabold text-white leading-tight">
+              <h1 className="font-display text-5xl md:text-6xl font-semibold text-stone-900 leading-[1.05] tracking-tight">
                 Turn any document into a<br />
-                <span className="bg-gradient-to-r from-brand-400 to-purple-400 bg-clip-text text-transparent">
+                <span className="bg-gradient-to-r from-brand-600 via-brand-500 to-accent-500 bg-clip-text text-transparent">
                   podcast conversation
                 </span>
               </h1>
-              <p className="text-zinc-500 mt-4 max-w-xl mx-auto text-lg">
-                Upload a PDF/DOCX/TXT, paste text, upload an image, or snap a photo — get a natural-sounding podcast with two AI hosts.
-                Then ask questions and get instant audio answers.
+              <p className="text-stone-500 mt-5 max-w-xl mx-auto text-lg leading-relaxed">
+                Upload a PDF, DOCX, or TXT, paste text, or snap a photo — and get a
+                natural, two-host podcast in minutes. Then ask questions and hear instant answers.
               </p>
+              {/* Decorative audio waveform — echoes the brand art */}
+              <div className="flex items-end justify-center gap-1 h-10 mt-7" aria-hidden="true">
+                {[0.5, 0.8, 0.4, 1, 0.6, 0.9, 0.45, 0.75, 0.55, 0.95, 0.5, 0.7].map((h, i) => (
+                  <span
+                    key={i}
+                    className="w-1.5 rounded-full bg-gradient-to-t from-brand-500 to-accent-400 animate-eq"
+                    style={{ height: `${h * 100}%`, animationDelay: `${i * 0.09}s` }}
+                  />
+                ))}
+              </div>
             </div>
 
             {/* Upload */}
@@ -230,7 +240,7 @@ function App() {
             {/* Previous Documents */}
             {documents.length > 0 && (
               <div>
-                <h2 className="text-lg font-semibold text-zinc-200 mb-4">Your Podcasts</h2>
+                <h2 className="font-display text-2xl font-semibold text-stone-800 mb-4">Your Podcasts</h2>
                 <div className="grid gap-3">
                   {documents.map((doc) => (
                     <div
@@ -241,14 +251,14 @@ function App() {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') openDoc(doc.doc_id);
                       }}
-                      className="flex items-center gap-4 bg-zinc-900 border border-zinc-800 rounded-xl p-4 hover:border-brand-500/30 hover:bg-zinc-800/50 transition-all text-left group w-full cursor-pointer"
+                      className="flex items-center gap-4 bg-white border border-paper-300 rounded-2xl p-4 shadow-soft hover:border-brand-300 hover:shadow-glow hover:-translate-y-0.5 transition-all duration-200 text-left group w-full cursor-pointer"
                     >
-                      <div className="w-10 h-10 rounded-lg bg-zinc-800 group-hover:bg-brand-500/10 flex items-center justify-center transition-colors">
-                        <FileAudio className="w-5 h-5 text-zinc-500 group-hover:text-brand-400 transition-colors" />
+                      <div className="w-11 h-11 rounded-xl bg-brand-50 group-hover:bg-brand-100 flex items-center justify-center transition-colors">
+                        <FileAudio className="w-5 h-5 text-brand-600 transition-colors" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-zinc-200 truncate">{doc.filename}</p>
-                        <p className="text-xs text-zinc-600">
+                        <p className="font-semibold text-stone-800 truncate">{doc.filename}</p>
+                        <p className="text-xs text-stone-400 mt-0.5">
                           {doc.status === 'ready' ? '✅ Ready to play' : doc.status === 'failed' ? '❌ Failed' : '⏳ Processing...'}
                         </p>
                       </div>
@@ -256,7 +266,7 @@ function App() {
                         type="button"
                         onClick={(e) => handleDelete(doc, e)}
                         disabled={deletingDocIds.has(doc.doc_id)}
-                        className="ml-2 inline-flex items-center justify-center w-9 h-9 rounded-lg border border-zinc-800 bg-zinc-950/30 text-zinc-500 hover:text-red-300 hover:border-red-500/30 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="ml-2 inline-flex items-center justify-center w-9 h-9 rounded-xl border border-paper-300 bg-paper-50 text-stone-400 hover:text-red-600 hover:border-red-300 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Delete podcast"
                         aria-label={`Delete ${doc.filename}`}
                       >
@@ -274,17 +284,17 @@ function App() {
         {view === 'processing' && (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <div className="relative mb-8">
-              <div className="w-20 h-20 rounded-full bg-brand-500/20 flex items-center justify-center">
-                <Headphones className="w-10 h-10 text-brand-400" />
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center shadow-glow">
+                <Headphones className="w-10 h-10 text-white" />
               </div>
-              <div className="absolute inset-0 w-20 h-20 rounded-full border-2 border-brand-400/30 animate-pulse-ring" />
+              <div className="absolute inset-0 w-20 h-20 rounded-full border-2 border-brand-400/40 animate-pulse-ring" />
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Generating Your Podcast</h2>
-            <p className="text-zinc-500 max-w-md">
+            <h2 className="font-display text-3xl font-semibold text-stone-900 mb-2">Composing your podcast</h2>
+            <p className="text-stone-500 max-w-md">
               Our AI is reading your document, writing a dialogue script, and synthesizing audio.
               This may take 1-3 minutes...
             </p>
-            <div className="flex items-center gap-2 mt-6 text-brand-400">
+            <div className="flex items-center gap-2 mt-6 text-brand-600">
               <RefreshCw className="w-4 h-4 animate-spin" />
               <span className="text-sm font-medium">Checking status...</span>
             </div>
@@ -294,19 +304,19 @@ function App() {
         {/* FAILED VIEW */}
         {view === 'failed' && (
           <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mb-8">
-              <AlertCircle className="w-10 h-10 text-red-400" />
+            <div className="w-20 h-20 rounded-full bg-red-100 flex items-center justify-center mb-8">
+              <AlertCircle className="w-10 h-10 text-red-500" />
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Generation Failed</h2>
-            <p className="text-zinc-500 max-w-md mb-2">
+            <h2 className="font-display text-3xl font-semibold text-stone-900 mb-2">Generation Failed</h2>
+            <p className="text-stone-500 max-w-md mb-2">
               Something went wrong while generating your podcast.
             </p>
             {errorMsg && (
-              <p className="text-red-400/70 text-sm max-w-lg mb-6 font-mono">{errorMsg}</p>
+              <p className="text-red-500/80 text-sm max-w-lg mb-6 font-mono">{errorMsg}</p>
             )}
             <button
               onClick={() => { setView('home'); setErrorMsg(null); }}
-              className="px-6 py-2.5 bg-brand-600 hover:bg-brand-500 text-white rounded-lg font-medium transition-colors"
+              className="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-semibold shadow-glow transition-colors"
             >
               Try Again
             </button>
@@ -317,8 +327,8 @@ function App() {
         {view === 'shared' && sharedPodcast && (
           <div className="space-y-6 max-w-2xl mx-auto py-8">
             <div className="text-center">
-              <div className="inline-flex items-center gap-2 bg-brand-500/10 text-brand-400 text-xs font-medium px-3 py-1.5 rounded-full mb-4 border border-brand-500/20">
-                <Sparkles className="w-3.5 h-3.5" />
+              <div className="inline-flex items-center gap-2 bg-white/70 text-brand-700 text-xs font-semibold px-3.5 py-1.5 rounded-full mb-4 border border-brand-200 shadow-soft">
+                <Sparkles className="w-3.5 h-3.5 text-accent-500" />
                 Shared Podcast
               </div>
             </div>
@@ -332,7 +342,7 @@ function App() {
             <div className="text-center">
               <button
                 onClick={() => { setView('home'); setSharedPodcast(null); }}
-                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+                className="text-sm text-stone-500 hover:text-brand-700 transition-colors"
               >
                 Back to home
               </button>
@@ -345,7 +355,7 @@ function App() {
           <div className="space-y-6">
             <button
               onClick={() => { setView('home'); setCurrentDoc(null); }}
-              className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="flex items-center gap-2 text-sm font-medium text-stone-500 hover:text-brand-700 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
               Back to documents
@@ -362,25 +372,25 @@ function App() {
                   fallbackDuration={currentDoc.audio.duration_seconds}
                   onShare={() => handleShare(currentDoc.doc_id)}
                 />
-                <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800/50">
+                <div className="bg-white rounded-2xl p-5 border border-paper-300 shadow-soft">
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <p className="text-zinc-500">Document</p>
-                      <p className="text-zinc-200 font-medium truncate">{currentDoc.filename}</p>
+                      <p className="text-stone-400 text-xs uppercase tracking-wide">Document</p>
+                      <p className="text-stone-800 font-semibold truncate mt-0.5">{currentDoc.filename}</p>
                     </div>
                     <div>
-                      <p className="text-zinc-500">Duration</p>
-                      <p className="text-zinc-200 font-medium">
+                      <p className="text-stone-400 text-xs uppercase tracking-wide">Duration</p>
+                      <p className="text-stone-800 font-semibold mt-0.5">
                         {Math.floor(currentDoc.audio.duration_seconds / 60)}m {Math.floor(currentDoc.audio.duration_seconds % 60)}s
                       </p>
                     </div>
                     <div>
-                      <p className="text-zinc-500">Created</p>
-                      <p className="text-zinc-200 font-medium">{new Date(currentDoc.created_at).toLocaleDateString()}</p>
+                      <p className="text-stone-400 text-xs uppercase tracking-wide">Created</p>
+                      <p className="text-stone-800 font-semibold mt-0.5">{new Date(currentDoc.created_at).toLocaleDateString()}</p>
                     </div>
                     <div>
-                      <p className="text-zinc-500">Format</p>
-                      <p className="text-zinc-200 font-medium">Podcast · 2 Hosts</p>
+                      <p className="text-stone-400 text-xs uppercase tracking-wide">Format</p>
+                      <p className="text-stone-800 font-semibold mt-0.5">Podcast · 2 Hosts</p>
                     </div>
                   </div>
                 </div>
@@ -394,7 +404,7 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-zinc-800/50 mt-16 py-6 text-center text-xs text-zinc-700">
+      <footer className="border-t border-paper-300/70 mt-16 py-6 text-center text-xs text-stone-400">
         PaperPod · Documents to Podcasts with Real-time Q&A · Built with ❤️
       </footer>
     </div>

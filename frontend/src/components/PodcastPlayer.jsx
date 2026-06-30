@@ -291,16 +291,16 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
   }, [isPlaying, currentTime, effectiveDuration, playbackRate]);
 
   return (
-    <div className="bg-gradient-to-br from-zinc-900 to-zinc-800 rounded-2xl p-6 border border-zinc-700/50">
+    <div className="bg-white rounded-2xl p-6 border border-paper-300 shadow-soft">
       <audio ref={audioRef} src={audioUrl} preload="metadata" />
 
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-500 to-purple-600 flex items-center justify-center animate-float">
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center shadow-glow animate-float">
           <Volume2 className="w-6 h-6 text-white" />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-zinc-100 text-lg truncate">{title}</h3>
-          <p className="text-sm text-zinc-500">AI-generated podcast</p>
+          <h3 className="font-display font-semibold text-stone-900 text-lg truncate">{title}</h3>
+          <p className="text-sm text-stone-400">AI-generated podcast</p>
         </div>
         {onShare && (
           <button
@@ -316,13 +316,13 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
                 }
               }
             }}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all border border-zinc-700"
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
             title="Copy share link"
           >
             {shareCopied ? (
               <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-emerald-400">Copied</span>
+                <Check className="w-3.5 h-3.5 text-brand-600" />
+                <span className="text-brand-600">Copied</span>
               </>
             ) : (
               <>
@@ -336,7 +336,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
           <a
             href={audioUrl}
             download={`${title.replace(/[^a-z0-9]/gi, '_')}_podcast.mp3`}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all border border-zinc-700"
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
             title="Download podcast audio"
           >
             <Download className="w-3.5 h-3.5" />
@@ -354,7 +354,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
               a.click();
               URL.revokeObjectURL(url);
             }}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all border border-zinc-700"
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
             title="Download transcript"
           >
             <Download className="w-3.5 h-3.5" />
@@ -369,15 +369,15 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         return (
           <div className="relative w-full h-5 mb-2 flex items-center group">
             {/* Track */}
-            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-zinc-700 rounded-full overflow-hidden">
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 bg-paper-200 rounded-full overflow-hidden">
               {/* Buffered */}
-              <div className="absolute inset-y-0 left-0 bg-zinc-600 rounded-full" style={{ width: `${bufPct}%` }} />
+              <div className="absolute inset-y-0 left-0 bg-paper-300 rounded-full" style={{ width: `${bufPct}%` }} />
               {/* Played */}
-              <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-brand-500 to-purple-500 rounded-full" style={{ width: `${pct}%` }} />
+              <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-brand-500 to-accent-500 rounded-full" style={{ width: `${pct}%` }} />
             </div>
             {/* Thumb */}
             <div
-              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-lg ring-2 ring-brand-500/40 pointer-events-none"
+              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-md ring-2 ring-brand-500/50 pointer-events-none"
               style={{ left: `${pct}%` }}
             />
             {/* Native range for accessibility, keyboard, drag & touch */}
@@ -396,7 +396,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         );
       })()}
 
-      <div className="flex justify-between text-xs text-zinc-500 mb-4">
+      <div className="flex justify-between text-xs text-stone-400 font-medium mb-4">
         <span>{fmt(currentTime)}</span>
         <span>{fmt(effectiveDuration)}</span>
       </div>
@@ -405,7 +405,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         <button
           onClick={() => seek(-15)}
           aria-label="Rewind 15 seconds"
-          className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all"
+          className="w-10 h-10 rounded-full flex items-center justify-center text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all"
         >
           <SkipBack className="w-5 h-5" />
         </button>
@@ -413,7 +413,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         <button
           onClick={togglePlay}
           aria-label={isPlaying ? 'Pause' : 'Play'}
-          className="w-14 h-14 rounded-full bg-brand-600 hover:bg-brand-500 flex items-center justify-center text-white shadow-lg shadow-brand-600/30 hover:shadow-brand-500/40 transition-all active:scale-95"
+          className="w-14 h-14 rounded-full bg-gradient-to-br from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 flex items-center justify-center text-white shadow-glow transition-all active:scale-95"
         >
           {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
         </button>
@@ -421,7 +421,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         <button
           onClick={() => seek(15)}
           aria-label="Forward 15 seconds"
-          className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all"
+          className="w-10 h-10 rounded-full flex items-center justify-center text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all"
         >
           <SkipForward className="w-5 h-5" />
         </button>
@@ -430,7 +430,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
           onClick={cyclePlaybackRate}
           aria-label="Playback speed"
           title="Playback speed"
-          className="sm:absolute sm:right-0 min-w-[3rem] px-2.5 py-1 rounded-lg text-xs font-semibold bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 transition-all border border-zinc-700"
+          className="sm:absolute sm:right-0 min-w-[3rem] px-2.5 py-1 rounded-lg text-xs font-semibold bg-paper-100 text-stone-600 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
         >
           {playbackRate}x
         </button>
@@ -440,14 +440,14 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         <div className="mt-6">
           <button
             onClick={() => setShowTranscript(!showTranscript)}
-            className="text-sm text-brand-400 hover:text-brand-300 transition-colors"
+            className="text-sm font-semibold text-brand-700 hover:text-brand-800 transition-colors"
           >
             {showTranscript ? 'Hide' : 'Show'} Transcript
           </button>
           {showTranscript && (
-            <div className="mt-3 max-h-64 overflow-y-auto bg-zinc-800/50 rounded-xl p-4 text-sm border border-zinc-700/50">
+            <div className="mt-3 max-h-64 overflow-y-auto bg-paper-50 rounded-xl p-4 text-sm border border-paper-200">
               {segments.length > 0 ? (
-                <p className="text-xs text-zinc-500 mb-3">Click any line to jump in the audio</p>
+                <p className="text-xs text-stone-400 mb-3">Click any line to jump in the audio</p>
               ) : null}
               <div className="space-y-2">
                 {segments.length > 0
@@ -461,17 +461,17 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
                           onClick={() => seekTo(seg.start_seconds)}
                           className={`w-full text-left rounded-lg px-3 py-2 transition-all border ${
                             isActive
-                              ? 'bg-brand-500/15 border-brand-500/40 ring-1 ring-brand-500/30'
-                              : 'border-transparent hover:bg-zinc-700/50 hover:border-zinc-600'
+                              ? 'bg-brand-50 border-brand-200 ring-1 ring-brand-300'
+                              : 'border-transparent hover:bg-white hover:border-paper-300'
                           }`}
                         >
-                          <span className="text-[10px] text-zinc-500 font-mono mr-2">
+                          <span className="text-[10px] text-stone-400 font-mono mr-2">
                             {fmt(seg.start_seconds)}
                           </span>
-                          <span className={isHost ? 'text-brand-300 font-medium' : 'text-emerald-300 font-medium'}>
+                          <span className={isHost ? 'text-brand-700 font-semibold' : 'text-accent-600 font-semibold'}>
                             {seg.speaker}:
                           </span>{' '}
-                          <span className="text-zinc-300">{seg.text}</span>
+                          <span className="text-stone-600">{seg.text}</span>
                         </button>
                       );
                     })
@@ -481,7 +481,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
                       .map((line, i) => {
                         const isHost = line.toLowerCase().startsWith('host:');
                         return (
-                          <p key={i} className={isHost ? 'text-brand-300' : 'text-emerald-300'}>
+                          <p key={i} className={isHost ? 'text-brand-700' : 'text-accent-600'}>
                             {line}
                           </p>
                         );

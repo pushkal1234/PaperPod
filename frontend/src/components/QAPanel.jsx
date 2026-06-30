@@ -141,8 +141,8 @@ export default function QAPanel({ docId }) {
   const renderCitations = (citations) => {
     if (!citations?.length) return null;
     return (
-      <div className="mt-3 pt-2 border-t border-zinc-700/50">
-        <p className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1.5">Sources</p>
+      <div className="mt-3 pt-2 border-t border-paper-300">
+        <p className="text-[10px] uppercase tracking-wide text-stone-400 mb-1.5">Sources</p>
         <ul className="space-y-1">
           {citations.map((c, i) => {
             if (typeof c === 'string') {
@@ -152,7 +152,7 @@ export default function QAPanel({ docId }) {
                     href={c}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-brand-400 hover:text-brand-300 break-all"
+                    className="text-xs text-brand-700 hover:text-brand-800 underline break-all"
                   >
                     {c}
                   </a>
@@ -166,7 +166,7 @@ export default function QAPanel({ docId }) {
                     href={c.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-brand-400 hover:text-brand-300 break-all"
+                    className="text-xs text-brand-700 hover:text-brand-800 underline break-all"
                   >
                     {c.title || c.url}
                   </a>
@@ -175,7 +175,7 @@ export default function QAPanel({ docId }) {
             }
             if (c?.note) {
               return (
-                <li key={i} className="text-xs text-zinc-500">
+                <li key={i} className="text-xs text-stone-400">
                   {c.note}
                 </li>
               );
@@ -188,18 +188,18 @@ export default function QAPanel({ docId }) {
   };
 
   return (
-    <div className={`bg-zinc-900 rounded-2xl border border-zinc-700/50 flex flex-col transition-all duration-300 ${isMaximized ? 'fixed inset-4 z-50 h-auto' : 'h-[500px]'}`}>
+    <div className={`bg-white rounded-2xl border border-paper-300 shadow-soft flex flex-col transition-all duration-300 ${isMaximized ? 'fixed inset-4 z-50 h-auto' : 'h-[500px]'}`}>
       <audio ref={answerAudioRef} className="hidden" />
 
-      <div className="p-4 border-b border-zinc-800">
+      <div className="p-4 border-b border-paper-200">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <MessageCircle className="w-5 h-5 text-brand-400" />
-            <h3 className="font-semibold text-zinc-100">Ask About This Document</h3>
+            <MessageCircle className="w-5 h-5 text-brand-600" />
+            <h3 className="font-display font-semibold text-stone-900">Ask About This Document</h3>
           </div>
           <button
             onClick={() => setIsMaximized(!isMaximized)}
-            className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+            className="p-1.5 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-paper-100 transition-colors"
             title={isMaximized ? 'Minimize' : 'Maximize'}
           >
             {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -209,10 +209,10 @@ export default function QAPanel({ docId }) {
           <button
             type="button"
             onClick={() => setSearchMode('document')}
-            className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-medium py-2 px-3 rounded-lg border transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg border transition-all ${
               searchMode === 'document'
-                ? 'bg-brand-600/20 border-brand-500/50 text-brand-300'
-                : 'bg-zinc-800/50 border-zinc-700 text-zinc-500 hover:text-zinc-300'
+                ? 'bg-brand-50 border-brand-300 text-brand-700'
+                : 'bg-paper-50 border-paper-300 text-stone-400 hover:text-stone-600'
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
@@ -227,10 +227,10 @@ export default function QAPanel({ docId }) {
                 ? 'Search your document + the web'
                 : 'Web search is not configured on the server'
             }
-            className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-medium py-2 px-3 rounded-lg border transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg border transition-all ${
               searchMode === 'hybrid'
-                ? 'bg-purple-600/20 border-purple-500/50 text-purple-300'
-                : 'bg-zinc-800/50 border-zinc-700 text-zinc-500 hover:text-zinc-300'
+                ? 'bg-accent-50 border-accent-300 text-accent-700'
+                : 'bg-paper-50 border-paper-300 text-stone-400 hover:text-stone-600'
             } ${!webSearchAvailable ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
             <Globe className="w-3.5 h-3.5" />
@@ -238,7 +238,7 @@ export default function QAPanel({ docId }) {
           </button>
         </div>
         {searchMode === 'hybrid' && (
-          <p className="text-[10px] text-purple-400/80 mt-2">
+          <p className="text-[10px] text-accent-600/90 mt-2">
             Searches the web, then answers using your document + web results.
           </p>
         )}
@@ -246,8 +246,8 @@ export default function QAPanel({ docId }) {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
-          <div className="text-center text-zinc-600 mt-12">
-            <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <div className="text-center text-stone-400 mt-12">
+            <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-40 text-brand-300" />
             <p className="text-sm">Ask anything — document-only or document + web search</p>
           </div>
         )}
@@ -258,15 +258,15 @@ export default function QAPanel({ docId }) {
               max-w-[85%] rounded-2xl px-4 py-3 text-sm
               ${
                 msg.type === 'question'
-                  ? 'bg-brand-600 text-white rounded-br-md'
+                  ? 'bg-brand-600 text-white rounded-br-md shadow-soft'
                   : msg.type === 'error'
-                    ? 'bg-red-900/30 text-red-300 border border-red-800/50'
-                    : 'bg-zinc-800 text-zinc-200 rounded-bl-md'
+                    ? 'bg-red-50 text-red-600 border border-red-200'
+                    : 'bg-paper-100 text-stone-700 rounded-bl-md border border-paper-200'
               }
             `}
             >
               {msg.type === 'answer' && msg.searchMode === 'hybrid' && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full mb-2">
+                <span className="inline-flex items-center gap-1 text-[10px] text-accent-700 bg-accent-100 px-2 py-0.5 rounded-full mb-2">
                   <Globe className="w-3 h-3" />
                   Document + Web
                 </span>
@@ -282,10 +282,10 @@ export default function QAPanel({ docId }) {
                 {msg.type === 'answer' && (
                   <button
                     onClick={() => handleCopy(msg.text, i)}
-                    className="absolute top-0 right-0 p-1 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors"
+                    className="absolute top-0 right-0 p-1 rounded-md text-stone-400 hover:text-stone-600 hover:bg-paper-200 transition-colors"
                     title={copiedIndex === i ? 'Copied!' : 'Copy'}
                   >
-                    {copiedIndex === i ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedIndex === i ? <Check className="w-3.5 h-3.5 text-brand-600" /> : <Copy className="w-3.5 h-3.5" />}
                   </button>
                 )}
               </div>
@@ -293,7 +293,7 @@ export default function QAPanel({ docId }) {
                 <div className="mt-2 flex items-center gap-2">
                   <button
                     onClick={() => playAnswerAudio(msg.audioUrl)}
-                    className="flex items-center gap-1.5 text-xs text-brand-300 hover:text-brand-200 transition-colors"
+                    className="flex items-center gap-1.5 text-xs font-medium text-brand-700 hover:text-brand-800 transition-colors"
                   >
                     <Volume2 className="w-3.5 h-3.5" />
                     {playingAudioUrl === msg.audioUrl ? 'Pause' : 'Play audio answer'}
@@ -301,7 +301,7 @@ export default function QAPanel({ docId }) {
                   {playingAudioUrl === msg.audioUrl && (
                     <button
                       onClick={stopAnswerAudio}
-                      className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors"
+                      className="flex items-center gap-1 text-xs text-red-500 hover:text-red-600 transition-colors"
                       title="Stop"
                     >
                       <Square className="w-3 h-3" />
@@ -315,15 +315,15 @@ export default function QAPanel({ docId }) {
         ))}
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-zinc-800 rounded-2xl rounded-bl-md px-4 py-3">
-              <Loader2 className="w-5 h-5 text-brand-400 animate-spin" />
+            <div className="bg-paper-100 border border-paper-200 rounded-2xl rounded-bl-md px-4 py-3">
+              <Loader2 className="w-5 h-5 text-brand-600 animate-spin" />
             </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="p-4 border-t border-zinc-800">
+      <div className="p-4 border-t border-paper-200">
         <div className="flex items-center gap-2">
           <button
             onClick={handleVoiceToggle}
@@ -333,7 +333,7 @@ export default function QAPanel({ docId }) {
               ${
                 isRecording
                   ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/30'
-                  : 'bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700'
+                  : 'bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 border border-paper-300'
               }
               ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
             `}
@@ -348,19 +348,19 @@ export default function QAPanel({ docId }) {
             onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
             placeholder={isRecording ? 'Recording...' : 'Type your question...'}
             disabled={isLoading || isRecording}
-            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 disabled:opacity-50 transition-all"
+            className="flex-1 bg-paper-50 border border-paper-300 rounded-xl px-4 py-2.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20 disabled:opacity-50 transition-all"
           />
 
           <button
             onClick={handleSendText}
             disabled={isLoading || !textInput.trim()}
-            className="w-10 h-10 rounded-full bg-brand-600 hover:bg-brand-500 flex items-center justify-center text-white shrink-0 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
+            className="w-10 h-10 rounded-full bg-brand-600 hover:bg-brand-700 flex items-center justify-center text-white shrink-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-glow transition-all active:scale-95"
           >
             <Send className="w-4 h-4" />
           </button>
         </div>
         {isRecording && (
-          <p className="text-xs text-red-400 mt-2 text-center animate-pulse">
+          <p className="text-xs text-red-500 mt-2 text-center animate-pulse">
             🔴 Recording... Click mic again to stop and send
           </p>
         )}
