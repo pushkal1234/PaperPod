@@ -25,11 +25,11 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 |-------|-----------|
 | **Frontend** | React 18 + Vite + Tailwind CSS |
 | **Backend** | FastAPI (Python 3.10+) |
-| **LLM** | Groq Llama 3.1 8B (free tier — generous limits) |
-| **STT** | Groq Whisper (free tier) |
-| **TTS** | edge-tts v7.2+ (free, no key needed — conversational voices) |
-| **Image OCR** | Google Gemini Vision (free tier) |
-| **Retrieval** | In-memory keyword search (demo) |
+| **LLM** | Groq GPT OSS 20B |
+| **STT** | Groq Whisper |
+| **TTS** | edge-tts v7.2+ |
+| **Image OCR** | Google Gemini Vision |
+| **Retrieval** | In-memory keyword search |
 | **Database** | SQLite (via SQLAlchemy async) |
 
 ---
@@ -180,7 +180,7 @@ PaperPod/
 ```mermaid
 flowchart LR
     subgraph GROQ["☁️ Groq (Free Tier)"]
-        LLM["🧠 Llama 3.1 8B\n─────────────────\n• Podcast script generation\n• Q&A answering\n• Fast & reliable"]
+        LLM["🧠 GPT OSS 20B \n─────────────────\n• Podcast script generation\n• Q&A answering\n• Fast & reliable"]
         STT["🎤 Whisper\n─────────────────\n• Speech-to-text\n• Voice question transcription\n• Multi-language support"]
     end
 
@@ -214,7 +214,7 @@ flowchart LR
 
 | Model | Provider | Purpose | Cost |
 |-------|----------|---------|------|
-| **Llama 3.1 8B** | Groq | Podcast script generation + Q&A | Free |
+| **GPT OSS 20B** | Groq | Podcast script generation + Q&A | Free |
 | **Whisper** | Groq | Speech-to-text (voice questions) | Free |
 | **edge-tts** | Microsoft Edge TTS | TTS — Host (Aria) + Guest (Guy) | Free |
 | **Gemini Vision** | Google AI Studio | Image OCR (camera upload) | Free |
