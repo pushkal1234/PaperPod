@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, Document, QASession
 from app.services.stt_service import transcribe_audio
 from app.services.vector_service import query_chunks
-from app.services.llm_service import answer_question
+from app.services.llm_service import answer_question, strip_markdown_for_speech
 from app.services.tts_service import synthesize_answer
 from app.services import serpapi_service
 
@@ -116,7 +116,7 @@ async def ask_question(
     t0 = time.perf_counter()
     qa_id = str(uuid.uuid4())
     try:
-        answer_audio_path = await synthesize_answer(answer_text, doc_id, qa_id)
+        answer_audio_path = await synthesize_answer(strip_markdown_for_speech(answer_text), doc_id, qa_id)
     except RuntimeError as e:
         raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
     except Exception as e:

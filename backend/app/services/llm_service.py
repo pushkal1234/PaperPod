@@ -139,7 +139,8 @@ Rules:
 1. Answer based on the provided context FIRST.
 2. If the context doesn't contain enough information OR the question is clearly unrelated to the document, say so and answer from general knowledge.
 3. Be concise but thorough.
-4. Speak naturally as if explaining to a friend."""
+4. Speak naturally as if explaining to a friend.
+5. Use plain text only — NO markdown (no **bold**, no bullets, no headers). Write as if speaking aloud."""
 
 HYBRID_QA_SYSTEM_PROMPT = """You are PaperPod's research assistant. The user uploaded a document and asked a question.
 
@@ -153,7 +154,8 @@ Rules:
 2. Use web results for current facts, definitions, news, or gaps the document doesn't cover.
 3. Briefly distinguish what comes from the document vs the web when both are used.
 4. Only cite URLs that appear in the web results section — do not invent links.
-5. Be concise and conversational — suitable for spoken audio."""
+5. Be concise and conversational — suitable for spoken audio.
+6. Use plain text only — NO markdown (no **bold**, no bullets, no headers). Write as if speaking aloud."""
 
 
 def normalize_answer_text(text: str) -> str:
@@ -173,6 +175,18 @@ def normalize_answer_text(text: str) -> str:
         if cleaned:
             paragraphs.append(cleaned)
     return "\n\n".join(paragraphs)
+
+
+def strip_markdown_for_speech(text: str) -> str:
+    """Remove markdown/LaTeX markers before TTS so audio doesn't read asterisks aloud."""
+    if not text:
+        return text
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"\\[\(\[]", "", text)
+    text = re.sub(r"\\[\)\]]", "", text)
+    return text
 
 
 def _tokenize_for_overlap(text: str) -> set[str]:

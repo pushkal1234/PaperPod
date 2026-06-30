@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Mic, MicOff, Send, MessageCircle, Volume2, Loader2, FileText, Globe, Square, Maximize2, Minimize2, Copy, Check } from 'lucide-react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { askQuestion, getQAAudioUrl, getHealth } from '../api';
+import FormattedAnswer from './FormattedAnswer';
 
 export default function QAPanel({ docId }) {
   const [messages, setMessages] = useState([]);
@@ -271,7 +272,13 @@ export default function QAPanel({ docId }) {
                 </span>
               )}
               <div className="relative">
-                <p className="whitespace-pre-wrap pr-7">{msg.text}</p>
+                {msg.type === 'answer' ? (
+                  <div className="pr-7">
+                    <FormattedAnswer text={msg.text} />
+                  </div>
+                ) : (
+                  <p className="whitespace-pre-wrap pr-7">{msg.text}</p>
+                )}
                 {msg.type === 'answer' && (
                   <button
                     onClick={() => handleCopy(msg.text, i)}
