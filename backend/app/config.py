@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     TTS_RATE_GUEST: str = os.getenv("TTS_RATE_GUEST", "+8%")
     TTS_PITCH_GUEST: str = os.getenv("TTS_PITCH_GUEST", "+2Hz")
 
+    # Reject oversized uploads before they are read fully into memory (OOM guard).
+    MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "25"))
+    # Cap simultaneous heavy LLM+TTS pipelines so background work can't starve
+    # the web process or hammer provider rate limits.
+    MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
+    # Comma-separated extra CORS origins (in addition to the built-in defaults).
+    CORS_EXTRA_ORIGINS: str = os.getenv("CORS_EXTRA_ORIGINS", "")
+
+    @property
+    def MAX_UPLOAD_BYTES(self) -> int:
+        return self.MAX_UPLOAD_MB * 1024 * 1024
+
 
 settings = Settings()
 

@@ -1,16 +1,17 @@
+import os
 import uuid
 import time
 import logging
-from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, Document, QASession
+from app.database import get_db, Document, QASession, _utcnow
 from app.services.stt_service import transcribe_audio
-from app.services.vector_service import query_chunks
+from app.services.vector_service import query_chunks, store_chunks
+from app.services.document_service import chunk_text
 from app.services.llm_service import answer_question, strip_markdown_for_speech
 from app.services.tts_service import synthesize_answer
 from app.services import serpapi_service
@@ -75,6 +76,15 @@ async def ask_question(
     # Retrieve context
     t0 = time.perf_counter()
     context_chunks = await run_in_threadpool(query_chunks, question_text, doc_id, 5)
+    # The chunk index lives in process memory and is lost on restart/redeploy
+    # (and isn't shared across workers). On a miss, rebuild it from the
+    # persisted raw_text so Q&A keeps working instead of silently answering
+    # with no document context.
+    if not context_chunks and doc.raw_text:
+        rebuilt = await run_in_threadpool(chunk_text, doc.raw_text)
+        store_chunks(doc_id, rebuilt)
+        context_chunks = await run_in_threadpool(query_chunks, question_text, doc_id, 5)
+        logger.info(f"[QA][{doc_id}] Rebuilt {len(rebuilt)} chunks from persisted text")
     step_times['retrieve'] = time.perf_counter() - t0
 
     citations: list = []
@@ -138,7 +148,7 @@ async def ask_question(
         question_text=question_text,
         answer_text=answer_text,
         answer_audio_path=answer_audio_path,
-        created_at=datetime.utcnow(),
+        created_at=_utcnow(),
     )
     db.add(qa_session)
     await db.commit()
@@ -160,6 +170,9 @@ async def get_qa_audio(qa_id: str, db: AsyncSession = Depends(get_db)):
     qa = await db.get(QASession, qa_id)
     if not qa or not qa.answer_audio_path:
         raise HTTPException(status_code=404, detail="Q&A audio not found")
+
+    if not os.path.exists(qa.answer_audio_path):
+        raise HTTPException(status_code=404, detail="This answer's audio is no longer available.")
 
     return FileResponse(
         qa.answer_audio_path,

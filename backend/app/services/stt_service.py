@@ -15,6 +15,10 @@ RATE_LIMIT_MSG = "You've reached PaperPod's free-tier rate limit. Please try aga
 SERVICE_ERROR_MSG = "PaperPod's speech service is temporarily busy. Please try again shortly."
 CONFIG_ERROR_MSG = "Speech-to-text is not configured on this server. Please contact support."
 
+# Hard ceiling on total retry backoff so a single transcription can't pin a
+# worker thread for minutes when the provider is degraded.
+STT_MAX_TOTAL_SECONDS = 75
+
 
 def _is_rate_limit(err_str: str) -> bool:
     """Detect rate-limit / quota errors from any provider."""
@@ -34,6 +38,7 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "question.webm") -> str
         tmp_path = tmp.name
 
     last_error = None
+    deadline = time.monotonic() + STT_MAX_TOTAL_SECONDS
     try:
         for attempt in range(4):
             try:
@@ -50,12 +55,16 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "question.webm") -> str
                 last_error = e
                 err_str = str(e)
                 if _is_rate_limit(err_str):
-                    wait = 10 * (attempt + 1)
-                    logger.warning(f"[STT] Rate limited (attempt {attempt + 1}/4), waiting {wait}s...")
+                    wait = min(10 * (attempt + 1), max(0.0, deadline - time.monotonic()))
+                    if wait <= 0:
+                        break
+                    logger.warning(f"[STT] Rate limited (attempt {attempt + 1}/4), waiting {wait:.1f}s...")
                     time.sleep(wait)
                 elif any(k in err_str.lower() for k in ["connection", "timeout", "unavailable", "network"]):
-                    wait = 5 * (attempt + 1)
-                    logger.warning(f"[STT] Connection error (attempt {attempt + 1}/4), retrying in {wait}s...")
+                    wait = min(5 * (attempt + 1), max(0.0, deadline - time.monotonic()))
+                    if wait <= 0:
+                        break
+                    logger.warning(f"[STT] Connection error (attempt {attempt + 1}/4), retrying in {wait:.1f}s...")
                     time.sleep(wait)
                 else:
                     logger.error(f"[STT] Unrecoverable error: {e}")

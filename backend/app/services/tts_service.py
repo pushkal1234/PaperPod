@@ -4,6 +4,7 @@ import logging
 import re
 
 import edge_tts
+from fastapi.concurrency import run_in_threadpool
 from pydub import AudioSegment
 
 from app.config import settings
@@ -127,6 +128,27 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
     logger.info(f"[{doc_id}] TTS: {len(tasks)} clips, concurrency={TTS_CONCURRENCY}")
     await asyncio.gather(*tasks)
 
+    output_filename = f"{doc_id}_podcast.mp3"
+    output_path = os.path.join(settings.AUDIO_DIR, output_filename)
+    # pydub/ffmpeg are synchronous C calls — run the decode/concat/export off
+    # the event loop so we don't block the async server during the merge.
+    duration, transcript_segments = await run_in_threadpool(
+        _merge_clips_to_mp3, clip_paths, dialogue, output_path, temp_dir
+    )
+
+    return output_path, duration, transcript_segments
+
+
+def _merge_clips_to_mp3(
+    clip_paths: list[str],
+    dialogue: list[dict],
+    output_path: str,
+    temp_dir: str,
+) -> tuple[float, list[dict]]:
+    """Blocking: concatenate clips, export MP3, build transcript, clean up temp.
+
+    Intended to be called via run_in_threadpool since pydub/ffmpeg block.
+    """
     combined = AudioSegment.empty()
     pause = AudioSegment.silent(duration=400)
     transcript_segments: list[dict] = []
@@ -145,8 +167,6 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
             "end_seconds": round(end_seconds, 2),
         })
 
-    output_filename = f"{doc_id}_podcast.mp3"
-    output_path = os.path.join(settings.AUDIO_DIR, output_filename)
     # Export as constant-bitrate MP3 with a Xing/Info header (-write_xing 1) so
     # mobile browsers (Safari/Chrome) can read the correct duration from the
     # file header while streaming, instead of reporting Infinity/0.
@@ -169,7 +189,7 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
     except OSError:
         pass
 
-    return output_path, duration, transcript_segments
+    return duration, transcript_segments
 
 
 async def synthesize_answer(text: str, doc_id: str, qa_id: str) -> str:

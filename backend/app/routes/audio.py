@@ -51,9 +51,14 @@ def _range_response(file_path: str, range_header: str, filename: str):
             "Accept-Ranges": "bytes",
             "Content-Length": str(content_length),
             "Content-Disposition": f'inline; filename="{filename}"',
-            # Generated audio is immutable per id — let browsers/CDNs cache it
-            # aggressively so mobile re-buffering and repeat plays are instant.
-            "Cache-Control": "public, max-age=31536000, immutable",
+            # A partial (206) response must NEVER be stored by a shared/CDN
+            # cache. If it were, the edge could serve that single byte-slice
+            # for every request to this URL (including non-Range requests),
+            # returning a truncated, header-less MP3 that won't play, seek, or
+            # download. Keep partials browser-private only; the full 200
+            # response below is what gets cached long-term.
+            "Cache-Control": "private, no-store",
+            "Vary": "Range",
         },
     )
 
@@ -65,6 +70,12 @@ async def stream_audio(audio_id: str, request: Request, db: AsyncSession = Depen
     if not audio:
         raise HTTPException(status_code=404, detail="Audio not found")
 
+    # The row can outlive the file (e.g. storage wiped before persistent
+    # volumes were attached). Return a clean 404 instead of a 500 from
+    # os.stat / FileResponse on a missing path.
+    if not audio.file_path or not os.path.exists(audio.file_path):
+        raise HTTPException(status_code=404, detail="This podcast's audio is no longer available.")
+
     filename = f"podcast_{audio_id}.mp3"
     range_header = request.headers.get("range")
 
@@ -72,7 +83,9 @@ async def stream_audio(audio_id: str, request: Request, db: AsyncSession = Depen
     if range_header:
         return _range_response(audio.file_path, range_header, filename)
 
-    # Normal full-file response with Content-Length so browsers know the duration
+    # Normal full-file response with Content-Length so browsers know the duration.
+    # Only the complete file (200) is safe to cache long-term; `Vary: Range`
+    # keeps it from ever being served in place of a Range request and vice versa.
     stat = os.stat(audio.file_path)
     return FileResponse(
         audio.file_path,
@@ -82,5 +95,6 @@ async def stream_audio(audio_id: str, request: Request, db: AsyncSession = Depen
         headers={
             "Accept-Ranges": "bytes",
             "Cache-Control": "public, max-age=31536000, immutable",
+            "Vary": "Range",
         },
     )

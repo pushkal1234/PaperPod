@@ -4,14 +4,17 @@ import traceback
 import os
 import json
 import time
-from datetime import datetime
+import asyncio
+import hashlib
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
+from sqlalchemy.orm import selectinload
 
-from app.database import get_db, Document, AudioFile, QASession
+from app.config import settings
+from app.database import get_db, Document, AudioFile, QASession, _utcnow
 from app.services.document_service import save_upload, extract_text, chunk_text
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
@@ -20,6 +23,25 @@ from app.services.tts_service import generate_podcast_audio
 logger = logging.getLogger("paperpod")
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+# Heavy LLM+TTS jobs run in the web process via BackgroundTasks; cap how many
+# run at once so a burst of uploads can't exhaust the process or trip provider
+# rate limits. (A dedicated Redis-backed worker is the production-grade step.)
+_job_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_JOBS)
+
+
+async def _find_reusable_document(db: AsyncSession, content_hash: str) -> Document | None:
+    """Return an existing non-failed document with the same content hash.
+
+    Lets repeated uploads of identical content reuse the already-generated
+    podcast instead of paying for LLM+TTS again (idempotent uploads).
+    """
+    result = await db.execute(
+        select(Document)
+        .where(Document.content_hash == content_hash, Document.status.in_(["ready", "processing"]))
+        .order_by(Document.created_at.desc())
+    )
+    return result.scalars().first()
 
 # Provider keywords that must never leak to the user
 _PROVIDER_KEYWORDS = ["groq", "whisper", "edge-tts", "edge_tts", "google", "gemini", "gtts", "g_tts", "serpapi", "azure"]
@@ -50,7 +72,13 @@ def _parse_transcript_segments(audio: AudioFile | None) -> list[dict] | None:
 
 
 async def _process_document(doc_id: str, file_path: str, content_type: str):
-    """Background task: extract text → LLM script → TTS audio."""
+    """Background entrypoint (file upload) — concurrency-limited pipeline."""
+    async with _job_semaphore:
+        await _run_document_pipeline(doc_id, file_path, content_type)
+
+
+async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str):
+    """Extract text → LLM script → TTS audio."""
     from app.database import async_session
 
     overall_start = time.perf_counter()
@@ -103,7 +131,7 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                 duration_seconds=duration,
                 dialogue_script=script,
                 transcript_segments=json.dumps(transcript_segments),
-                created_at=datetime.utcnow(),
+                created_at=_utcnow(),
             )
             session.add(audio)
             doc = await session.get(Document, doc_id)
@@ -147,6 +175,17 @@ async def upload_document(
     content_type = file.content_type or "text/plain"
 
     file_bytes = await file.read()
+    if len(file_bytes) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {settings.MAX_UPLOAD_MB} MB.")
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    content_hash = hashlib.sha256(file_bytes).hexdigest()
+    existing = await _find_reusable_document(db, content_hash)
+    if existing:
+        logger.info(f"[{existing.id}] Dedup hit for re-upload of {file.filename}")
+        return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
+
     file_path = save_upload(file_bytes, file.filename)
 
     doc_id = str(uuid.uuid4())
@@ -156,17 +195,14 @@ async def upload_document(
         content_type=content_type,
         raw_text="",
         num_chunks=0,
-        created_at=datetime.utcnow(),
+        content_hash=content_hash,
+        created_at=_utcnow(),
     )
     db.add(doc)
     await db.commit()
 
     logger.info(f"[{doc_id}] Upload received: {file.filename} ({content_type})")
-
-    background_tasks.add_task(
-        _process_document, doc_id, file_path, content_type
-    )
-
+    background_tasks.add_task(_process_document, doc_id, file_path, content_type)
     return {"doc_id": doc_id, "filename": file.filename, "status": "processing"}
 
 
@@ -178,6 +214,18 @@ async def upload_text(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload raw text directly (copy-paste)."""
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No text provided.")
+    text_bytes = text.encode("utf-8")
+    if len(text_bytes) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"Text too large. Maximum size is {settings.MAX_UPLOAD_MB} MB.")
+
+    content_hash = hashlib.sha256(text_bytes).hexdigest()
+    existing = await _find_reusable_document(db, content_hash)
+    if existing:
+        logger.info(f"[{existing.id}] Dedup hit for re-submitted text")
+        return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
+
     doc_id = str(uuid.uuid4())
     doc = Document(
         id=doc_id,
@@ -185,7 +233,8 @@ async def upload_text(
         content_type="text/plain",
         raw_text=text,
         num_chunks=0,
-        created_at=datetime.utcnow(),
+        content_hash=content_hash,
+        created_at=_utcnow(),
     )
     db.add(doc)
     await db.commit()
@@ -203,7 +252,17 @@ async def upload_image(
 ):
     """Upload an image — OCR extracts text in background, then generates podcast."""
     image_bytes = await file.read()
+    if len(image_bytes) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"Image too large. Maximum size is {settings.MAX_UPLOAD_MB} MB.")
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded image is empty.")
     mime_type = file.content_type or "image/jpeg"
+
+    content_hash = hashlib.sha256(image_bytes).hexdigest()
+    existing = await _find_reusable_document(db, content_hash)
+    if existing:
+        logger.info(f"[{existing.id}] Dedup hit for re-uploaded image {file.filename}")
+        return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
 
     doc_id = str(uuid.uuid4())
     doc = Document(
@@ -212,7 +271,8 @@ async def upload_image(
         content_type="text/plain",
         raw_text="",
         num_chunks=0,
-        created_at=datetime.utcnow(),
+        content_hash=content_hash,
+        created_at=_utcnow(),
     )
     db.add(doc)
     await db.commit()
@@ -255,14 +315,20 @@ async def _process_image_document(doc_id: str, image_bytes: bytes, mime_type: st
                 doc.raw_text = raw_text
                 await session.commit()
     except Exception:
-        pass
+        logger.error(f"[{doc_id}] Failed to persist OCR text before generation", exc_info=True)
 
     # Step 2: Use the shared text pipeline
     await _process_text_document(doc_id, raw_text)
 
 
 async def _process_text_document(doc_id: str, raw_text: str):
-    """Background task for text/image uploads (skip file extraction, go straight to chunks → LLM → TTS)."""
+    """Background entrypoint (text/image) — concurrency-limited pipeline."""
+    async with _job_semaphore:
+        await _run_text_pipeline(doc_id, raw_text)
+
+
+async def _run_text_pipeline(doc_id: str, raw_text: str):
+    """Skip file extraction, go straight to chunks → LLM → TTS."""
     from app.database import async_session
 
     overall_start = time.perf_counter()
@@ -306,7 +372,7 @@ async def _process_text_document(doc_id: str, raw_text: str):
                 duration_seconds=duration,
                 dialogue_script=script,
                 transcript_segments=json.dumps(transcript_segments),
-                created_at=datetime.utcnow(),
+                created_at=_utcnow(),
             )
             session.add(audio)
             doc = await session.get(Document, doc_id)
@@ -341,15 +407,16 @@ async def _process_text_document(doc_id: str, raw_text: str):
 @router.get("/list")
 async def list_documents(db: AsyncSession = Depends(get_db)):
     """List all uploaded documents."""
-    result = await db.execute(select(Document).order_by(Document.created_at.desc()))
+    result = await db.execute(
+        select(Document)
+        .options(selectinload(Document.audio_file))
+        .order_by(Document.created_at.desc())
+    )
     docs = result.scalars().all()
 
     items = []
     for doc in docs:
-        audio_result = await db.execute(
-            select(AudioFile).where(AudioFile.document_id == doc.id)
-        )
-        audio = audio_result.scalar_one_or_none()
+        audio = doc.audio_file
         items.append({
             "doc_id": doc.id,
             "filename": doc.filename,
