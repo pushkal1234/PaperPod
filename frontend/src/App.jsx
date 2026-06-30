@@ -259,7 +259,7 @@ function App() {
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-stone-800 truncate">{doc.filename}</p>
                         <p className="text-xs text-stone-400 mt-0.5">
-                          {doc.status === 'ready' ? '✅ Ready to play' : doc.status === 'failed' ? '❌ Failed' : '⏳ Processing...'}
+                          {doc.status === 'ready' ? 'Ready to play' : doc.status === 'failed' ? '❌ Failed' : '⏳ Processing...'}
                         </p>
                       </div>
                       <button
@@ -405,7 +405,7 @@ function App() {
 
       {/* Footer */}
       <footer className="border-t border-paper-300/70 mt-16 py-6 text-center text-xs text-stone-400">
-        PaperPod · Documents to Podcasts with Real-time Q&A · Built with ❤️
+        PaperPod · Documents to Podcasts with Real-time Q&A
       </footer>
     </div>
   );
