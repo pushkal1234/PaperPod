@@ -84,8 +84,6 @@ async def stream_audio(audio_id: str, request: Request, db: AsyncSession = Depen
         return _range_response(audio.file_path, range_header, filename)
 
     # Normal full-file response with Content-Length so browsers know the duration.
-    # Only the complete file (200) is safe to cache long-term; `Vary: Range`
-    # keeps it from ever being served in place of a Range request and vice versa.
     stat = os.stat(audio.file_path)
     return FileResponse(
         audio.file_path,
@@ -94,7 +92,13 @@ async def stream_audio(audio_id: str, request: Request, db: AsyncSession = Depen
         stat_result=stat,
         headers={
             "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=31536000, immutable",
+            # Railway's edge cache ignores `Vary: Range`: it stores ONE response
+            # for this URL and serves it for every request regardless of Range.
+            # That breaks seeking (a seek returns the full body) and, worse, if a
+            # streamed 206 partial gets cached first it is handed to the Download
+            # button as a truncated, unplayable file. Keep this endpoint
+            # origin-authoritative so our 200/206 logic is always correct.
+            "Cache-Control": "no-store",
             "Vary": "Range",
         },
     )
