@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     # Comma-separated extra CORS origins (in addition to the built-in defaults).
     CORS_EXTRA_ORIGINS: str = os.getenv("CORS_EXTRA_ORIGINS", "")
 
+    # --- Auth ---
+    # Secret used to sign JWT session tokens. MUST be set in production; a blank
+    # value falls back to an ephemeral random key (tokens won't survive restarts).
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "")
+    JWT_ALG: str = "HS256"
+    JWT_EXPIRE_DAYS: int = int(os.getenv("JWT_EXPIRE_DAYS", "30"))
+    # Google OAuth Web client ID — used as the expected audience when verifying
+    # Google Sign-In ID tokens. Get it from Google Cloud Console > Credentials.
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+
     @property
     def MAX_UPLOAD_BYTES(self) -> int:
         return self.MAX_UPLOAD_MB * 1024 * 1024

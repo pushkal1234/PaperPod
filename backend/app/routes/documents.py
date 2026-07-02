@@ -14,7 +14,8 @@ from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.database import get_db, Document, AudioFile, QASession, _utcnow
+from app.database import get_db, Document, AudioFile, QASession, User, _utcnow
+from app.security import get_current_user, get_optional_user
 from app.services.document_service import save_upload, extract_text, chunk_text
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
@@ -30,15 +31,25 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 _job_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_JOBS)
 
 
-async def _find_reusable_document(db: AsyncSession, content_hash: str) -> Document | None:
+async def _find_reusable_document(
+    db: AsyncSession, content_hash: str, user_id: str | None
+) -> Document | None:
     """Return an existing non-failed document with the same content hash.
 
     Lets repeated uploads of identical content reuse the already-generated
     podcast instead of paying for LLM+TTS again (idempotent uploads).
+
+    Scoped to the uploader: a signed-in user only dedupes against their own
+    podcasts, and anonymous uploads only dedupe against anonymous ones. This
+    prevents one account's content from leaking into another via dedup.
     """
     result = await db.execute(
         select(Document)
-        .where(Document.content_hash == content_hash, Document.status.in_(["ready", "processing"]))
+        .where(
+            Document.content_hash == content_hash,
+            Document.status.in_(["ready", "processing"]),
+            Document.user_id == user_id,
+        )
         .order_by(Document.created_at.desc())
     )
     return result.scalars().first()
@@ -74,7 +85,16 @@ def _parse_transcript_segments(audio: AudioFile | None) -> list[dict] | None:
 async def _process_document(doc_id: str, file_path: str, content_type: str):
     """Background entrypoint (file upload) — concurrency-limited pipeline."""
     async with _job_semaphore:
-        await _run_document_pipeline(doc_id, file_path, content_type)
+        try:
+            await _run_document_pipeline(doc_id, file_path, content_type)
+        finally:
+            # The source upload is only needed for text extraction; raw_text is
+            # persisted in the DB. Remove it so the storage volume doesn't grow
+            # with every upload (audio is kept separately for playback).
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
 
 
 async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str):
@@ -170,6 +190,7 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
 ):
     """Upload a document and start podcast generation in background."""
     content_type = file.content_type or "text/plain"
@@ -180,8 +201,9 @@ async def upload_document(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+    user_id = user.id if user else None
     content_hash = hashlib.sha256(file_bytes).hexdigest()
-    existing = await _find_reusable_document(db, content_hash)
+    existing = await _find_reusable_document(db, content_hash, user_id)
     if existing:
         logger.info(f"[{existing.id}] Dedup hit for re-upload of {file.filename}")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
@@ -191,6 +213,7 @@ async def upload_document(
     doc_id = str(uuid.uuid4())
     doc = Document(
         id=doc_id,
+        user_id=user_id,
         filename=file.filename,
         content_type=content_type,
         raw_text="",
@@ -212,6 +235,7 @@ async def upload_text(
     text: str = Form(...),
     title: str = Form("Pasted text"),
     db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
 ):
     """Upload raw text directly (copy-paste)."""
     if not text.strip():
@@ -220,8 +244,9 @@ async def upload_text(
     if len(text_bytes) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"Text too large. Maximum size is {settings.MAX_UPLOAD_MB} MB.")
 
+    user_id = user.id if user else None
     content_hash = hashlib.sha256(text_bytes).hexdigest()
-    existing = await _find_reusable_document(db, content_hash)
+    existing = await _find_reusable_document(db, content_hash, user_id)
     if existing:
         logger.info(f"[{existing.id}] Dedup hit for re-submitted text")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
@@ -229,6 +254,7 @@ async def upload_text(
     doc_id = str(uuid.uuid4())
     doc = Document(
         id=doc_id,
+        user_id=user_id,
         filename=f"{title}.txt",
         content_type="text/plain",
         raw_text=text,
@@ -249,6 +275,7 @@ async def upload_image(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
 ):
     """Upload an image — OCR extracts text in background, then generates podcast."""
     image_bytes = await file.read()
@@ -258,8 +285,9 @@ async def upload_image(
         raise HTTPException(status_code=400, detail="Uploaded image is empty.")
     mime_type = file.content_type or "image/jpeg"
 
+    user_id = user.id if user else None
     content_hash = hashlib.sha256(image_bytes).hexdigest()
-    existing = await _find_reusable_document(db, content_hash)
+    existing = await _find_reusable_document(db, content_hash, user_id)
     if existing:
         logger.info(f"[{existing.id}] Dedup hit for re-uploaded image {file.filename}")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
@@ -267,6 +295,7 @@ async def upload_image(
     doc_id = str(uuid.uuid4())
     doc = Document(
         id=doc_id,
+        user_id=user_id,
         filename=file.filename,
         content_type="text/plain",
         raw_text="",
@@ -405,10 +434,19 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
 
 
 @router.get("/list")
-async def list_documents(db: AsyncSession = Depends(get_db)):
-    """List all uploaded documents."""
+async def list_documents(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """List the signed-in user's podcasts only.
+
+    Requires auth: this is what keeps each user's library private and stops
+    every tester's document from piling up on a new user's home screen.
+    Anonymous (owner-less) documents are intentionally never listed here.
+    """
     result = await db.execute(
         select(Document)
+        .where(Document.user_id == user.id)
         .options(selectinload(Document.audio_file))
         .order_by(Document.created_at.desc())
     )
@@ -463,11 +501,20 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{doc_id}")
-async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)):
-    """Delete a document and all associated audio + Q&A history."""
+async def delete_document(
+    doc_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Delete a document and all associated audio + Q&A history.
+
+    Requires auth and ownership: a user can only delete a podcast they own.
+    """
     doc = await db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    if doc.user_id is not None and doc.user_id != user.id:
+        raise HTTPException(status_code=403, detail="You don't have permission to delete this podcast.")
 
     # Collect file paths to delete (best-effort)
     audio_result = await db.execute(

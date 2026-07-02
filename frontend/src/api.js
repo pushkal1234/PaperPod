@@ -2,9 +2,77 @@ import axios from 'axios';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
+const TOKEN_KEY = 'paperpod:token';
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
 const api = axios.create({
   baseURL: `${API_BASE}/api`,
 });
+
+// Attach the bearer token (if any) to every request.
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// On an expired/invalid token, drop it and let the app fall back to logged-out.
+let onUnauthorized = null;
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn;
+}
+api.interceptors.response.use(
+  (res) => res,
+  (error) => {
+    if (error?.response?.status === 401) {
+      clearToken();
+      if (onUnauthorized) onUnauthorized();
+    }
+    return Promise.reject(error);
+  }
+);
+
+// ── Auth ──
+export async function register(email, password, name) {
+  const res = await api.post('/auth/register', { email, password, name });
+  if (res.data?.token) setToken(res.data.token);
+  return res.data;
+}
+
+export async function login(email, password) {
+  const res = await api.post('/auth/login', { email, password });
+  if (res.data?.token) setToken(res.data.token);
+  return res.data;
+}
+
+export async function googleSignIn(idToken) {
+  const res = await api.post('/auth/google', { id_token: idToken });
+  if (res.data?.token) setToken(res.data.token);
+  return res.data;
+}
+
+export async function getMe() {
+  const res = await api.get('/auth/me');
+  return res.data;
+}
+
+export function logout() {
+  clearToken();
+}
 
 export async function uploadDocument(file) {
   const formData = new FormData();

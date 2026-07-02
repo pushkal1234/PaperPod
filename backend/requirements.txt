@@ -21,3 +21,7 @@ httpx==0.28.1
 aiofiles==24.1.0
 python-dotenv==1.0.1
 Pillow>=10.0.0
+# Auth: JWT sessions, password hashing, and Google Sign-In verification
+PyJWT==2.10.1
+bcrypt==4.2.1
+google-auth==2.37.0

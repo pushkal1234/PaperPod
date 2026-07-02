@@ -18,10 +18,28 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String, nullable=False, unique=True, index=True)
+    name = Column(String, nullable=True)
+    # Null for Google-only accounts (they authenticate via Google, no password).
+    password_hash = Column(String, nullable=True)
+    # Google "sub" (stable account id) for accounts created via Google Sign-In.
+    google_sub = Column(String, nullable=True, unique=True, index=True)
+    avatar_url = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
 class Document(Base):
     __tablename__ = "documents"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Owner of this podcast. Null = anonymous (e.g. created via the browser
+    # extension before it authenticates). Anonymous docs are never listed in a
+    # signed-in user's library, only reachable by their direct id.
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
     filename = Column(String, nullable=False)
     content_type = Column(String, nullable=False)
     raw_text = Column(Text, nullable=False)
@@ -113,12 +131,11 @@ if _IS_SQLITE:
         cur.close()
 
 
-async def _migrate_schema(conn):
-    """Backfill columns added after the initial SQLite deploy.
+async def _migrate_schema_sqlite(conn):
+    """Backfill SQLite columns added after the initial deploy.
 
-    Only runs on SQLite: Postgres starts from an empty database where
-    ``create_all`` already produces the full, current schema, and the
-    ``PRAGMA`` introspection used here is SQLite-specific.
+    ``create_all`` never ALTERs existing tables, so new columns on tables that
+    predate them must be added by hand. PRAGMA introspection is SQLite-specific.
     """
     from sqlalchemy import text
 
@@ -143,15 +160,41 @@ async def _migrate_schema(conn):
             sync_conn.execute(
                 text("CREATE INDEX IF NOT EXISTS ix_documents_content_hash ON documents (content_hash)")
             )
+        if "user_id" not in doc_cols:
+            sync_conn.execute(
+                text("ALTER TABLE documents ADD COLUMN user_id TEXT")
+            )
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_documents_user_id ON documents (user_id)")
+            )
 
     await conn.run_sync(_migrate)
+
+
+async def _migrate_schema_postgres(conn):
+    """Add columns to pre-existing Postgres tables.
+
+    ``create_all`` creates the new ``users`` table but will not add ``user_id``
+    to the ``documents`` table that already holds data on Railway. Postgres
+    supports ``ADD COLUMN IF NOT EXISTS`` so this is safe to run every boot.
+    """
+    from sqlalchemy import text
+
+    await conn.execute(
+        text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS user_id VARCHAR")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_documents_user_id ON documents (user_id)")
+    )
 
 
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         if _IS_SQLITE:
-            await _migrate_schema(conn)
+            await _migrate_schema_sqlite(conn)
+        else:
+            await _migrate_schema_postgres(conn)
 
 
 async def get_db():

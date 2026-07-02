@@ -139,6 +139,9 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
     return output_path, duration, transcript_segments
 
 
+_PAUSE_MS = 400
+
+
 def _merge_clips_to_mp3(
     clip_paths: list[str],
     dialogue: list[dict],
@@ -148,16 +151,22 @@ def _merge_clips_to_mp3(
     """Blocking: concatenate clips, export MP3, build transcript, clean up temp.
 
     Intended to be called via run_in_threadpool since pydub/ffmpeg block.
-    """
-    combined = AudioSegment.empty()
-    pause = AudioSegment.silent(duration=400)
-    transcript_segments: list[dict] = []
 
+    Memory note: the whole podcast is NOT held in RAM. Clips are stitched
+    file-to-file by ffmpeg (streaming), and durations are probed one clip at a
+    time. This keeps peak memory at ~a single clip instead of the entire
+    uncompressed episode (which previously pushed idle RSS very high).
+    """
+    # 1) Build transcript timings by decoding one clip at a time, freeing each
+    #    immediately so only a single clip's PCM is ever resident.
+    transcript_segments: list[dict] = []
+    cursor_ms = 0
     for i, clip_path in enumerate(clip_paths):
-        segment = AudioSegment.from_mp3(clip_path)
-        start_seconds = len(combined) / 1000.0
-        combined += segment + pause
-        end_seconds = start_seconds + len(segment) / 1000.0
+        seg = AudioSegment.from_mp3(clip_path)
+        clip_ms = len(seg)
+        del seg  # release this clip's PCM before decoding the next
+        start_seconds = cursor_ms / 1000.0
+        end_seconds = start_seconds + clip_ms / 1000.0
         entry = dialogue[i]
         transcript_segments.append({
             "speaker": entry["speaker"],
@@ -166,22 +175,27 @@ def _merge_clips_to_mp3(
             "start_seconds": round(start_seconds, 2),
             "end_seconds": round(end_seconds, 2),
         })
+        cursor_ms += clip_ms + _PAUSE_MS
+    duration = cursor_ms / 1000.0
 
-    # Export as constant-bitrate MP3 with a Xing/Info header (-write_xing 1) so
-    # mobile browsers (Safari/Chrome) can read the correct duration from the
-    # file header while streaming, instead of reporting Infinity/0.
-    combined.export(
-        output_path,
-        format="mp3",
-        bitrate="128k",
-        parameters=["-write_xing", "1"],
-    )
+    # 2) Concatenate. Prefer the low-memory ffmpeg path; fall back to the
+    #    proven (higher-memory) pydub merge if anything goes wrong so audio
+    #    generation can never break on this optimization.
+    try:
+        _concat_clips_ffmpeg(clip_paths, output_path, temp_dir)
+    except Exception as ex:
+        logger.warning(f"[merge] ffmpeg concat failed ({ex}); falling back to pydub merge")
+        duration = _concat_clips_pydub(clip_paths, output_path)
 
-    duration = len(combined) / 1000.0
-
+    # 3) Clean up temp clips + dir.
     for clip_path in clip_paths:
         try:
             os.remove(clip_path)
+        except OSError:
+            pass
+    for leftover in ("_silence.mp3", "_concat.txt"):
+        try:
+            os.remove(os.path.join(temp_dir, leftover))
         except OSError:
             pass
     try:
@@ -190,6 +204,57 @@ def _merge_clips_to_mp3(
         pass
 
     return duration, transcript_segments
+
+
+def _concat_clips_ffmpeg(clip_paths: list[str], output_path: str, temp_dir: str):
+    """Stitch clips + inter-clip pauses into one MP3 using ffmpeg (streaming).
+
+    edge-tts clips are uniform (24 kHz mono MP3), so a matching silence clip is
+    generated once and interleaved via the concat demuxer, then re-encoded to a
+    128k CBR MP3 with a Xing header (-write_xing 1) so mobile browsers read the
+    correct duration. ffmpeg decodes incrementally, so RAM stays flat.
+    """
+    import subprocess
+
+    # Use whatever ffmpeg pydub is configured to use (falls back to the literal
+    # "ffmpeg", resolved via PATH at run time — same as pydub's own export).
+    ffmpeg = AudioSegment.converter or "ffmpeg"
+
+    # A silence clip matching edge-tts output params (24 kHz mono, 48k).
+    silence_path = os.path.join(temp_dir, "_silence.mp3")
+    subprocess.run(
+        [ffmpeg, "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+         "-t", str(_PAUSE_MS / 1000.0), "-c:a", "libmp3lame", "-b:a", "48k", silence_path],
+        check=True, capture_output=True,
+    )
+
+    # Concat list: clip, pause, clip, pause, ...
+    list_path = os.path.join(temp_dir, "_concat.txt")
+    with open(list_path, "w") as f:
+        for clip_path in clip_paths:
+            f.write(f"file '{os.path.abspath(clip_path)}'\n")
+            f.write(f"file '{os.path.abspath(silence_path)}'\n")
+
+    subprocess.run(
+        [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+         "-c:a", "libmp3lame", "-b:a", "128k", "-write_xing", "1", output_path],
+        check=True, capture_output=True,
+    )
+
+
+def _concat_clips_pydub(clip_paths: list[str], output_path: str) -> float:
+    """Fallback: original in-memory pydub concatenation. Returns duration (s)."""
+    combined = AudioSegment.empty()
+    pause = AudioSegment.silent(duration=_PAUSE_MS)
+    for clip_path in clip_paths:
+        combined += AudioSegment.from_mp3(clip_path) + pause
+    combined.export(
+        output_path,
+        format="mp3",
+        bitrate="128k",
+        parameters=["-write_xing", "1"],
+    )
+    return len(combined) / 1000.0
 
 
 async def synthesize_answer(text: str, doc_id: str, qa_id: str) -> str:

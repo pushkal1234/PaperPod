@@ -23,6 +23,10 @@ MAX_INPUT_CHARS = 6000
 # Large docs: summarize first, then podcast from summary
 LARGE_DOC_THRESHOLD = 15000
 MAX_SUMMARY_CHARS = 8000
+# Below this many real dialogue lines the script is considered degenerate
+# (e.g. the model returned empty/garbage on an oversized doc). We refuse to
+# ship a near-empty "thank you"-only podcast and surface a clear error instead.
+MIN_VIABLE_DIALOGUE_LINES = 6
 
 def _is_procedural(document_text: str) -> bool:
     """Detect documents whose core value is a sequence of steps/procedures.
@@ -435,6 +439,21 @@ def generate_podcast_script(document_text: str) -> str:
         dialogue_lines = _count_dialogue_lines(full_script)
 
     logger.info(f"Final script: {len(dialogue_lines)} dialogue lines (target {target_lines}-{max_lines}), {len(full_script)} chars")
+
+    # Guard against degenerate output: if the model returned an empty/garbage
+    # script (common when an oversized PDF blows the context budget), we must
+    # NOT ship a 2-line "thank you"-only podcast. Fail loudly so the pipeline
+    # marks the document failed and the user sees a real error instead.
+    if len(dialogue_lines) < MIN_VIABLE_DIALOGUE_LINES:
+        logger.error(
+            f"[LLM] Degenerate script — only {len(dialogue_lines)} dialogue lines "
+            f"(need >= {MIN_VIABLE_DIALOGUE_LINES}). original={original_length} chars. Failing."
+        )
+        # Long docs that starve the model map to the free-tier limit message the
+        # user expects; smaller docs get the generic service-busy message.
+        if original_length >= LARGE_DOC_THRESHOLD:
+            raise RuntimeError(LLM_RATE_LIMIT_MSG)
+        raise RuntimeError(LLM_SERVICE_ERROR_MSG)
 
     # Deterministic ending: always finish with a consistent outro.
     # If the final line is a question (often after truncation), add a generic wrap-up line first.

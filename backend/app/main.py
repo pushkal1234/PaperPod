@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, update
 
 from app.database import init_db, async_session, Document
-from app.routes import documents, audio, qa, share
+from app.routes import documents, audio, qa, share, auth
 from app.config import settings
 
 # Startup configuration check
@@ -78,13 +78,16 @@ app.add_middleware(
     # `paper.*\.vercel\.app` matched any attacker-owned `paper-*` site).
     # chrome-extension origins are kept for the browser extension.
     allow_origin_regex=r"https://paper-pod-[a-z0-9-]+-pushkal1234s-projects\.vercel\.app|chrome-extension://.*",
-    # No cookies/Authorization are used, so credentials can stay off — which is
-    # also what lets the scoped origins above be safe.
+    # Auth uses a Bearer token in the Authorization header (not cookies), so
+    # credentials can stay off. The wildcard allow_headers covers Authorization
+    # only because credentials are disabled — which also keeps the scoped
+    # origins above safe.
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(audio.router)
 app.include_router(qa.router)

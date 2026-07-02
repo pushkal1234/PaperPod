@@ -69,9 +69,14 @@ export default {
           '0%, 100%': { transform: 'scaleY(0.3)' },
           '50%': { transform: 'scaleY(1)' },
         },
+        'pulse-slow': {
+          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
+          '50%': { opacity: '0.85', transform: 'scale(1.03)' },
+        },
       },
       animation: {
         eq: 'eq 1.1s ease-in-out infinite',
+        'pulse-slow': 'pulse-slow 2.4s ease-in-out infinite',
       },
     },
   },
