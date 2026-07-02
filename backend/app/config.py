@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     AUDIO_DIR: str = os.getenv("AUDIO_DIR", "./audio_files")
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
+    # Gemini model used as an automatic fallback when Groq is rate-limited (429)
+    # or unavailable. Reuses GOOGLE_API_KEY. Set to "" to disable the fallback.
+    LLM_FALLBACK_MODEL: str = os.getenv("LLM_FALLBACK_MODEL", "gemini-2.5-flash")
     WHISPER_MODEL: str = "whisper-large-v3"
     # Voice casting:
     #   HOST  = drives the convo / asks questions  -> male voice
@@ -31,6 +34,11 @@ class Settings(BaseSettings):
 
     # Reject oversized uploads before they are read fully into memory (OOM guard).
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "25"))
+    # Podcast guardrail: documents whose extracted text exceeds this many
+    # characters are rejected up-front with a clear "too long" message, instead
+    # of firing dozens of summarization calls that drain the free-tier limit.
+    # ~40000 chars ≈ 22 pages. Raise this if you move off the free tier.
+    MAX_DOC_CHARS: int = int(os.getenv("MAX_DOC_CHARS", "40000"))
     # Cap simultaneous heavy LLM+TTS pipelines so background work can't starve
     # the web process or hammer provider rate limits.
     MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))

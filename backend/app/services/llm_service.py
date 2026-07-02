@@ -8,8 +8,8 @@ from app.config import settings
 
 logger = logging.getLogger("paperpod")
 
-LLM_RATE_LIMIT_MSG = "You've reached PaperPod's free-tier rate limit. Please try again in a few moments."
-LLM_SERVICE_ERROR_MSG = "PaperPod's AI engine is temporarily busy. Please try again shortly."
+LLM_RATE_LIMIT_MSG = "PaperPod's AI service is temporarily unavailable — the provider is at capacity. This isn't related to your document. Please try again in a minute."
+LLM_SERVICE_ERROR_MSG = "PaperPod's AI service is temporarily unavailable. Please try again shortly."
 LLM_CONFIG_MSG = "The AI service is not configured on this server. Please contact support."
 
 # Create client once
@@ -22,6 +22,9 @@ _client = Groq(api_key=settings.GROQ_API_KEY, max_retries=0) if settings.GROQ_AP
 MAX_INPUT_CHARS = 6000
 # Large docs: summarize first, then podcast from summary
 LARGE_DOC_THRESHOLD = 15000
+# Rough extracted-text-per-page estimate, used only to phrase the "too long"
+# message in human terms (a 1-page PDF in our tests ≈ 1760 chars).
+CHARS_PER_PAGE = 1800
 MAX_SUMMARY_CHARS = 8000
 # Below this many real dialogue lines the script is considered degenerate
 # (e.g. the model returned empty/garbage on an oversized doc). We refuse to
@@ -239,9 +242,92 @@ def _is_payload_too_large(err_str: str) -> bool:
     return "413" in err_str or "payload too large" in err_str.lower()
 
 
+# --- Gemini fallback (used when Groq is rate-limited / unavailable) ---------
+# Lazily created so the google-genai SDK is only imported when the fallback is
+# actually needed, keeping idle memory and cold-start cost low.
+_gemini_client = None
+_gemini_init_failed = False
+
+
+def _get_gemini_client():
+    """Lazily construct a shared google-genai client, or None if unavailable."""
+    global _gemini_client, _gemini_init_failed
+    if _gemini_client is not None:
+        return _gemini_client
+    if _gemini_init_failed or not settings.GOOGLE_API_KEY or not settings.LLM_FALLBACK_MODEL:
+        return None
+    try:
+        from google import genai
+        _gemini_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        return _gemini_client
+    except Exception as e:
+        _gemini_init_failed = True
+        logger.error(f"[LLM] Gemini fallback unavailable (init failed): {e}")
+        return None
+
+
+def _call_gemini(messages: list[dict], temperature: float, max_tokens: int) -> str:
+    """Run the same chat request on Gemini. Converts OpenAI-style messages to
+    Gemini's contents + system_instruction. Raises on failure (caller guards)."""
+    client = _get_gemini_client()
+    if client is None:
+        raise RuntimeError("Gemini fallback not configured")
+
+    from google.genai import types
+
+    system_parts, contents = [], []
+    for m in messages:
+        role, content = m.get("role"), m.get("content", "")
+        if role == "system":
+            system_parts.append(content)
+        else:
+            g_role = "model" if role == "assistant" else "user"
+            contents.append({"role": g_role, "parts": [{"text": content}]})
+
+    config = types.GenerateContentConfig(
+        system_instruction="\n\n".join(system_parts) or None,
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+        # Disable "thinking" — otherwise reasoning tokens eat the output budget
+        # and can return empty text on 2.5-flash.
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+    )
+    response = client.models.generate_content(
+        model=settings.LLM_FALLBACK_MODEL,
+        contents=contents,
+        config=config,
+    )
+    text = (response.text or "").strip()
+    if not text:
+        raise RuntimeError("Gemini returned empty response")
+    return text
+
+
+def _try_gemini_fallback(messages: list[dict], temperature: float, max_tokens: int):
+    """Attempt the Gemini fallback. Never raises — returns the text or None."""
+    if not settings.GOOGLE_API_KEY or not settings.LLM_FALLBACK_MODEL:
+        return None
+    try:
+        logger.warning(f"[LLM] Falling back to Gemini ({settings.LLM_FALLBACK_MODEL})...")
+        text = _call_gemini(messages, temperature, max_tokens)
+        logger.info(f"[LLM] Gemini fallback succeeded ({len(text)} chars)")
+        return text
+    except Exception as e:
+        logger.error(f"[LLM] Gemini fallback failed: {e}")
+        return None
+
+
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
-    """Call LLM with retry on rate limit and connection errors."""
+    """Call LLM with retry on rate limit and connection errors.
+
+    On a Groq rate-limit (429) or unavailability we immediately try the Gemini
+    fallback instead of burning ~60s on backoff, so generation keeps working.
+    """
     if not _client:
+        # No Groq configured — go straight to Gemini if available.
+        fb = _try_gemini_fallback(messages, temperature, max_tokens)
+        if fb is not None:
+            return fb
         raise RuntimeError(LLM_CONFIG_MSG)
 
     last_error = None
@@ -262,6 +348,10 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
                 logger.error(f"[LLM] Payload too large — failing fast")
                 raise RuntimeError("Input too large for processing. Please try a shorter document.")
             elif _is_llm_rate_limit(err_str.lower()):
+                # Groq is throttled — try Gemini right away rather than waiting.
+                fb = _try_gemini_fallback(messages, temperature, max_tokens)
+                if fb is not None:
+                    return fb
                 wait = 10 * (attempt + 1)
                 logger.warning(f"[LLM] Rate limited (attempt {attempt+1}/3), waiting {wait}s...")
                 time.sleep(wait)
@@ -270,10 +360,16 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
                 logger.warning(f"[LLM] Connection error (attempt {attempt+1}/3), retrying in {wait}s...")
                 time.sleep(wait)
             else:
-                # Unknown error — fail fast, don't waste user's time
-                logger.error(f"[LLM] Unrecoverable error — failing fast: {e}")
+                # Unknown error — try Gemini once before giving up.
+                logger.error(f"[LLM] Unrecoverable Groq error: {e}")
+                fb = _try_gemini_fallback(messages, temperature, max_tokens)
+                if fb is not None:
+                    return fb
                 raise RuntimeError(LLM_SERVICE_ERROR_MSG)
-    # All retries exhausted
+    # All Groq retries exhausted — last chance on Gemini.
+    fb = _try_gemini_fallback(messages, temperature, max_tokens)
+    if fb is not None:
+        return fb
     if last_error and _is_llm_rate_limit(str(last_error)):
         raise RuntimeError(LLM_RATE_LIMIT_MSG)
     raise RuntimeError(LLM_SERVICE_ERROR_MSG)
@@ -357,6 +453,23 @@ def generate_podcast_script(document_text: str) -> str:
         raise RuntimeError("The uploaded document appears to be empty or contains no readable text. Please try a different file.")
 
     original_length = len(document_text)
+
+    # Guard: document too long for the free tier. A very long PDF (e.g. 55 pages)
+    # would fire dozens of summarization calls that exhaust the shared free-tier
+    # rate limit — breaking generation for this doc AND everyone else's uploads.
+    # Reject it up-front with a clear, length-specific message and zero API calls.
+    if original_length > settings.MAX_DOC_CHARS:
+        approx_pages = max(1, round(original_length / CHARS_PER_PAGE))
+        limit_pages = max(1, round(settings.MAX_DOC_CHARS / CHARS_PER_PAGE))
+        logger.warning(
+            f"[LLM] Document too long: {original_length} chars (~{approx_pages} pages) "
+            f"exceeds cap {settings.MAX_DOC_CHARS} (~{limit_pages} pages) — rejecting up-front"
+        )
+        raise RuntimeError(
+            f"This document is too long for PaperPod's free tier — it's about {approx_pages} pages. "
+            f"Free podcast generation supports documents up to roughly {limit_pages} pages. "
+            f"Please upload a shorter document, or split this one into smaller sections and try again."
+        )
 
     # Detect procedural content on the ORIGINAL text (summarization may strip step structure)
     procedural = _is_procedural(document_text)
