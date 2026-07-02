@@ -420,6 +420,63 @@ Target ~2500 words."""},
     return merged
 
 
+_FULL_SUMMARY_SYSTEM_PROMPT = """You are an expert academic summarizer preparing source material for a two-host podcast.
+Read the ENTIRE document below and produce a comprehensive, well-structured brief that captures:
+- The core thesis, purpose, and main takeaways
+- The key arguments, findings, data points, methods, and conclusions
+- Important names, terms, definitions, and illustrative examples
+- The logical flow / structure of the document, section by section
+
+Write it as detailed prose and bullet points (NOT a transcript, NOT dialogue).
+Be thorough but tight — aim for roughly 1200-2000 words.
+Do NOT invent anything that is not in the document."""
+
+
+def _summarize_full_document_gemini(document_text: str, original_length: int) -> str:
+    """Condense an entire long document in a SINGLE Gemini call.
+
+    Gemini's ~1M-token context fits large PDFs whole, so one call replaces the
+    dozens of Groq chunk-summaries that would otherwise drain the free tier. The
+    returned brief is then podcasted normally on Groq. If Gemini is unavailable
+    or fails, raise a clear length-specific error so the user knows to shorten
+    the document rather than seeing a generic failure.
+    """
+    approx_pages = max(1, round(original_length / CHARS_PER_PAGE))
+    soft_pages = max(1, round(settings.MAX_DOC_CHARS / CHARS_PER_PAGE))
+
+    if not settings.GOOGLE_API_KEY or not settings.LLM_FALLBACK_MODEL:
+        raise RuntimeError(
+            f"This document is about {approx_pages} pages. Documents this large aren't "
+            f"supported on PaperPod's free plan, which covers up to roughly {soft_pages} pages. "
+            f"Please upload a shorter document, or split it into smaller sections."
+        )
+
+    logger.info(
+        f"[LLM] Long doc (~{approx_pages} pages, {original_length} chars) — "
+        f"condensing in a single {settings.LLM_FALLBACK_MODEL} pass"
+    )
+    try:
+        summary = _call_gemini(
+            [
+                {"role": "system", "content": _FULL_SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": document_text},
+            ],
+            temperature=0.3,
+            max_tokens=4096,
+        )
+    except Exception as e:
+        logger.error(f"[LLM] Single-pass summarization failed: {e}")
+        raise RuntimeError(
+            f"This document is about {approx_pages} pages. Documents this large are limited "
+            f"on PaperPod's free plan (up to roughly {soft_pages} pages). Please try again in "
+            f"a moment, or upload a shorter document / split it into smaller sections."
+        )
+
+    summary = summary[:MAX_SUMMARY_CHARS]
+    logger.info(f"[LLM] Single-pass summary: {len(summary)} chars (from {original_length} original)")
+    return summary
+
+
 def _count_dialogue_lines(text: str) -> list[str]:
     return [
         l for l in text.strip().split("\n")
@@ -444,9 +501,12 @@ def _trim_script_to_max_lines(script: str, max_lines: int) -> str:
 def generate_podcast_script(document_text: str) -> str:
     """Generate a podcast-style dialogue from document text.
 
-    Strategy:
-    - Small docs (<15K chars): direct podcast generation
-    - Large docs (>=15K chars): summarize first, then podcast from summary
+    Strategy (by extracted-text size):
+    - Small (<15K chars): direct podcast generation on Groq
+    - Large (15K..MAX_DOC_CHARS): Groq chunked summary → podcast
+    - Very large (MAX_DOC_CHARS..MAX_DOC_CHARS_HARD): single-pass Gemini summary
+      (huge context, one call) → podcast on Groq
+    - Beyond MAX_DOC_CHARS_HARD: rejected with a clear "too long" message
     """
     # Guard: empty document
     if not document_text or not document_text.strip():
@@ -454,21 +514,21 @@ def generate_podcast_script(document_text: str) -> str:
 
     original_length = len(document_text)
 
-    # Guard: document too long for the free tier. A very long PDF (e.g. 55 pages)
-    # would fire dozens of summarization calls that exhaust the shared free-tier
-    # rate limit — breaking generation for this doc AND everyone else's uploads.
-    # Reject it up-front with a clear, length-specific message and zero API calls.
-    if original_length > settings.MAX_DOC_CHARS:
+    # Hard guard: absurdly long PDFs (beyond ~150 pages) are rejected up-front
+    # with a clear, length-specific message and zero API calls — even a single
+    # summary + the podcast format can't do them justice. Documents between the
+    # soft and hard caps are handled below via a single-pass Gemini summary.
+    if original_length > settings.MAX_DOC_CHARS_HARD:
         approx_pages = max(1, round(original_length / CHARS_PER_PAGE))
-        limit_pages = max(1, round(settings.MAX_DOC_CHARS / CHARS_PER_PAGE))
+        limit_pages = max(1, round(settings.MAX_DOC_CHARS_HARD / CHARS_PER_PAGE))
         logger.warning(
             f"[LLM] Document too long: {original_length} chars (~{approx_pages} pages) "
-            f"exceeds cap {settings.MAX_DOC_CHARS} (~{limit_pages} pages) — rejecting up-front"
+            f"exceeds hard cap {settings.MAX_DOC_CHARS_HARD} (~{limit_pages} pages) — rejecting"
         )
         raise RuntimeError(
-            f"This document is too long for PaperPod's free tier — it's about {approx_pages} pages. "
-            f"Free podcast generation supports documents up to roughly {limit_pages} pages. "
-            f"Please upload a shorter document, or split this one into smaller sections and try again."
+            f"This document is about {approx_pages} pages, which is beyond what PaperPod's "
+            f"free plan supports. The free tier covers documents up to roughly {limit_pages} pages. "
+            f"Please upload a shorter document, or split this one into smaller sections."
         )
 
     # Detect procedural content on the ORIGINAL text (summarization may strip step structure)
@@ -480,8 +540,14 @@ def generate_podcast_script(document_text: str) -> str:
     _, target_lines, tier_max_lines = _get_length_tier(original_length)
     max_lines = tier_max_lines + (16 if procedural else 0)
 
-    # Large document strategy: summarize → podcast
-    if len(document_text) > LARGE_DOC_THRESHOLD:
+    # Large document strategy: summarize → podcast.
+    #  - Very large (soft cap .. hard cap): one-shot Gemini summary. Its huge
+    #    context digests the whole doc in a SINGLE call, so Groq's tight
+    #    free-tier limits are never drained by dozens of chunk-summaries.
+    #  - Moderately large (LARGE_DOC_THRESHOLD .. soft cap): Groq chunked summary.
+    if original_length > settings.MAX_DOC_CHARS:
+        document_text = _summarize_full_document_gemini(document_text, original_length)
+    elif len(document_text) > LARGE_DOC_THRESHOLD:
         logger.info(f"[LLM] Large document detected ({len(document_text)} chars), using summarize-then-podcast strategy")
         document_text = _summarize_large_document(document_text)
 
