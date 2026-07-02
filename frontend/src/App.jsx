@@ -4,6 +4,7 @@ import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
 import AuthModal from './components/AuthModal';
+import SampleEpisode from './components/SampleEpisode';
 import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler } from './api';
 
 // Browser extension store listings — surfaced in the navbar, hero, and footer.
@@ -455,57 +456,8 @@ function App() {
               </div>
             </div>
 
-            {/* Sample conversation showcase */}
-            <div className="pt-6 max-w-3xl mx-auto w-full">
-              <div className="relative overflow-hidden rounded-3xl border border-paper-300 bg-gradient-to-br from-white to-paper-50 shadow-soft p-6 md:p-8">
-                <div className="flex items-center justify-between mb-5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center shadow-glow">
-                      <Headphones className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-stone-800 leading-tight">A sample episode</p>
-                      <p className="text-xs text-stone-400">This is an example of how your podcast sounds</p>
-                    </div>
-                  </div>
-                  <div className="flex items-end gap-1 h-8" aria-hidden="true">
-                    {[0.4, 0.9, 0.5, 1, 0.6, 0.8, 0.45].map((h, i) => (
-                      <span
-                        key={i}
-                        className="w-1.5 rounded-full bg-gradient-to-t from-brand-500 to-accent-400 animate-eq"
-                        style={{ height: `${h * 100}%`, animationDelay: `${i * 0.1}s` }}
-                      />
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {[
-                    { host: 'A', name: 'Maya', text: "So this paper claims you can cut training costs by nearly 40%. How?", me: false },
-                    { host: 'B', name: 'Leo', text: "Right — the trick is a smarter sampling method. Instead of every data point, it focuses on the ones the model finds confusing.", me: true },
-                    { host: 'A', name: 'Maya', text: "Ah, so it's learning from its own mistakes, basically.", me: false },
-                    { host: 'B', name: 'Leo', text: "Exactly. Less compute, same accuracy. That's the headline.", me: true },
-                  ].map((m, i) => (
-                    <div key={i} className={`flex items-end gap-2.5 ${m.me ? 'flex-row-reverse' : ''}`}>
-                      <div className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${m.me ? 'bg-accent-100 text-accent-700' : 'bg-brand-100 text-brand-700'}`}>
-                        {m.name.charAt(0)}
-                      </div>
-                      <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-soft ${m.me ? 'bg-accent-500 text-white rounded-br-md' : 'bg-white border border-paper-300 text-stone-700 rounded-bl-md'}`}>
-                        {m.text}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-6 text-center">
-                  <button
-                    onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-                    className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-brand-600 text-white font-semibold hover:bg-brand-700 shadow-glow hover:-translate-y-0.5 transition-all"
-                  >
-                    <Sparkles className="w-5 h-5" />
-                    Create yours — free
-                  </button>
-                </div>
-              </div>
-            </div>
+            {/* Sample episode — real audio playback + interrupt-and-ask demo */}
+            <SampleEpisode onCreateClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} />
           </div>
         )}
 

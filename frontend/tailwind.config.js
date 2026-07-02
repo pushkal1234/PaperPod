@@ -73,10 +73,15 @@ export default {
           '0%, 100%': { opacity: '1', transform: 'scale(1)' },
           '50%': { opacity: '0.85', transform: 'scale(1.03)' },
         },
+        'fade-in': {
+          '0%': { opacity: '0', transform: 'translateY(6px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         eq: 'eq 1.1s ease-in-out infinite',
         'pulse-slow': 'pulse-slow 2.4s ease-in-out infinite',
+        'fade-in': 'fade-in 0.35s ease-out',
       },
     },
   },
