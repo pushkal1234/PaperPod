@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star } from 'lucide-react';
+import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
@@ -635,6 +635,21 @@ function App() {
                   fallbackDuration={currentDoc.audio.duration_seconds}
                   onShare={() => handleShare(currentDoc.doc_id)}
                 />
+                {!user && (
+                  <div className="flex items-center gap-3 rounded-2xl border border-brand-200 bg-gradient-to-r from-brand-50 to-accent-50/60 px-4 py-3 shadow-soft">
+                    <div className="w-9 h-9 shrink-0 rounded-full bg-white/80 text-brand-600 flex items-center justify-center shadow-soft">
+                      <Bookmark className="w-4 h-4" />
+                    </div>
+                    <p className="text-sm text-stone-600 leading-snug flex-1">
+                      <span className="font-semibold text-stone-800">Keep this episode.</span>{' '}
+                      Sign in to save it to your{' '}
+                      <button onClick={goToLibrary} className="font-semibold text-brand-700 hover:text-brand-800 underline underline-offset-2 decoration-brand-300">
+                        My Podcasts
+                      </button>{' '}
+                      library and open it anytime.
+                    </p>
+                  </div>
+                )}
                 <div className="bg-white rounded-2xl p-5 border border-paper-300 shadow-soft">
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>

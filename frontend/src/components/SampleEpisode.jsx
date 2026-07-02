@@ -12,8 +12,15 @@ const DEMO_ANSWER =
   "of a valley. The learning rate decides how big each step is: too big and you overshoot, " +
   "too small and it crawls.";
 
-// Static bar heights for the waveform; they animate (scaleY) only while playing.
-const BARS = [0.35, 0.7, 0.45, 0.9, 0.55, 1, 0.6, 0.8, 0.4, 0.75, 0.5, 0.95, 0.45, 0.7, 0.5, 0.85, 0.4, 0.65];
+// A refined, tapered waveform: many thin bars shaped by layered sine waves so it
+// reads as a real audio waveform (taller in the middle, gently fading at the ends).
+const BAR_COUNT = 60;
+const BARS = Array.from({ length: BAR_COUNT }, (_, i) => {
+  const t = i / (BAR_COUNT - 1);
+  const wave = 0.5 + 0.3 * Math.sin(t * Math.PI * 7) + 0.16 * Math.sin(t * Math.PI * 15 + 1.2);
+  const taper = 0.45 + 0.55 * Math.sin(t * Math.PI); // fuller in the center
+  return Math.max(0.18, Math.min(1, wave * taper));
+});
 
 function fmt(sec) {
   if (!Number.isFinite(sec) || sec < 0) return '0:00';
@@ -113,28 +120,33 @@ export default function SampleEpisode({ onCreateClick }) {
           </button>
 
           <div className="flex-1 min-w-0">
-            {/* Waveform */}
-            <div className="flex items-end justify-between gap-0.5 h-9 mb-2" aria-hidden="true">
-              {BARS.map((h, i) => (
-                <span
-                  key={i}
-                  className={`flex-1 rounded-full bg-gradient-to-t from-brand-500 to-accent-400 ${isPlaying ? 'animate-eq' : ''}`}
-                  style={{ height: `${h * 100}%`, animationDelay: `${(i % 6) * 0.09}s`, opacity: isPlaying ? 1 : 0.55 }}
-                />
-              ))}
-            </div>
-            {/* Seek bar */}
+            {/* Waveform — click anywhere to seek. Bars fill with brand color up
+                to the playhead; only bars near the playhead subtly pulse. */}
             <div
               onClick={seek}
-              className="group relative h-2 rounded-full bg-paper-200 cursor-pointer"
               role="slider"
               aria-label="Seek"
               aria-valuenow={Math.round(progress)}
+              className="group relative flex items-center justify-between h-11 cursor-pointer"
             >
-              <div className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-brand-500 to-accent-500" style={{ width: `${progress}%` }} />
-              <div className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-white border-2 border-brand-500 shadow-soft opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${progress}% - 7px)` }} />
+              {BARS.map((h, i) => {
+                const headIndex = (progress / 100) * (BARS.length - 1);
+                const played = i <= headIndex;
+                const nearHead = isPlaying && Math.abs(i - headIndex) < 2.5;
+                return (
+                  <span
+                    key={i}
+                    className={`w-[3px] rounded-full origin-center transition-colors duration-200 ${
+                      played
+                        ? `bg-gradient-to-t from-brand-600 to-accent-400 ${nearHead ? 'animate-eq' : ''}`
+                        : 'bg-brand-200/70'
+                    }`}
+                    style={{ height: `${h * 100}%`, animationDelay: `${(i % 8) * 0.07}s` }}
+                  />
+                );
+              })}
             </div>
-            <div className="flex justify-between text-xs text-stone-400 mt-1.5 tabular-nums">
+            <div className="flex justify-between text-xs text-stone-400 mt-2 tabular-nums">
               <span>{fmt(current)}</span>
               <span>{fmt(duration)}</span>
             </div>
