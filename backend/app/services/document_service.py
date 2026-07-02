@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -9,6 +10,16 @@ from docx.table import Table as _DocxTable
 from docx.text.paragraph import Paragraph as _DocxParagraph
 
 from app.config import settings
+
+logger = logging.getLogger("paperpod")
+
+# Minimum embedded-image dimension (px) to treat a PDF image as a real figure
+# rather than a logo/icon — avoids sending trivial images to the vision model.
+_MIN_FIGURE_DIM = 200
+# Number of vector paths on a page that signals a drawn diagram/chart.
+_VECTOR_DIAGRAM_THRESHOLD = 30
+# Resolution to render figure pages at before sending to the vision model.
+_FIGURE_RENDER_DPI = 150
 
 
 def extract_text(file_path: str, content_type: str) -> str:
@@ -33,7 +44,88 @@ def _extract_pdf(file_path: str) -> str:
             page_text = page.extract_text()
             if page_text:
                 text_parts.append(page_text)
-    return "\n\n".join(text_parts)
+    text = "\n\n".join(text_parts)
+
+    # Enrich with spoken-language descriptions of diagrams/charts/figures that
+    # PyPDF2 (text layer only) cannot read, so the podcast can narrate visuals.
+    visuals = _describe_pdf_visuals(file_path)
+    if visuals:
+        text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
+    return text
+
+
+def _describe_pdf_visuals(file_path: str) -> str:
+    """Render figure-bearing PDF pages and get Gemini descriptions of them.
+
+    Best-effort: returns "" (never raises) if vision is disabled/unconfigured,
+    PyMuPDF is unavailable, the PDF has no real figures, or the call fails.
+    """
+    if not settings.PDF_VISION_EXTRACTION or not settings.GOOGLE_API_KEY:
+        return ""
+    try:
+        import fitz  # PyMuPDF — imported lazily so it's only needed for PDFs
+    except ImportError:
+        logger.warning("[Vision] PyMuPDF not installed; skipping figure descriptions")
+        return ""
+
+    try:
+        pages = _render_figure_pages(fitz, file_path)
+    except Exception as e:  # noqa: BLE001 — best-effort enhancement
+        logger.warning(f"[Vision] Could not scan PDF for figures ({e})")
+        return ""
+
+    if not pages:
+        return ""
+
+    from app.services.image_service import describe_pdf_figures
+    return describe_pdf_figures(pages)
+
+
+def _page_has_visual(page) -> bool:
+    """True if a PDF page likely contains a real figure/diagram/chart.
+
+    Catches (a) sizeable embedded raster images (ignoring tiny logos/icons) and
+    (b) vector-drawn diagrams with many paths. A full-page scan also qualifies.
+    """
+    for img in page.get_images(full=True):
+        width, height = img[2], img[3]
+        if width >= _MIN_FIGURE_DIM and height >= _MIN_FIGURE_DIM:
+            return True
+    try:
+        if len(page.get_drawings()) >= _VECTOR_DIAGRAM_THRESHOLD:
+            return True
+    except Exception:  # noqa: BLE001 — drawing extraction is optional
+        pass
+    return False
+
+
+def _render_figure_pages(fitz, file_path: str) -> list[tuple[int, bytes]]:
+    """Return [(page_number, png_bytes)] for figure-bearing pages, capped.
+
+    Skips very long PDFs entirely (latency/cost guard).
+    """
+    rendered: list[tuple[int, bytes]] = []
+    doc = fitz.open(file_path)
+    try:
+        if doc.page_count > settings.PDF_VISION_MAX_PAGES:
+            logger.info(
+                f"[Vision] Skipping figure scan: {doc.page_count} pages "
+                f"> PDF_VISION_MAX_PAGES ({settings.PDF_VISION_MAX_PAGES})"
+            )
+            return []
+        matrix = fitz.Matrix(_FIGURE_RENDER_DPI / 72.0, _FIGURE_RENDER_DPI / 72.0)
+        for i in range(doc.page_count):
+            if len(rendered) >= settings.PDF_VISION_MAX_FIGURES:
+                break
+            page = doc[i]
+            if _page_has_visual(page):
+                pix = page.get_pixmap(matrix=matrix)
+                rendered.append((i + 1, pix.tobytes("png")))
+        if rendered:
+            logger.info(f"[Vision] Found {len(rendered)} figure page(s) to describe")
+    finally:
+        doc.close()
+    return rendered
 
 
 def _iter_block_items(parent):

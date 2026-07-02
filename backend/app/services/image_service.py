@@ -4,6 +4,7 @@ import logging
 import time
 
 from google import genai
+from google.genai import types
 from PIL import Image
 
 from app.config import settings
@@ -98,3 +99,57 @@ def extract_text_from_image(image_bytes: bytes, mime_type: str = "image/jpeg") -
     if last_error and _is_rate_limit(str(last_error)):
         raise RuntimeError(OCR_RATE_LIMIT_MSG)
     raise RuntimeError(OCR_SERVICE_ERROR_MSG)
+
+
+_FIGURE_DESC_PROMPT = (
+    "You are helping turn a document into an AUDIO podcast. Below are page images "
+    "from the document that contain diagrams, architecture diagrams, flowcharts, "
+    "charts, or figures. For EACH page, in the order given, write a clear "
+    "spoken-language description of the visual so a listener who cannot see it "
+    "still understands it: name the components, how they connect or flow, and the "
+    "key trend or takeaway. If a page contains an equation, state it in plain "
+    "spoken form (e.g. 'loss equals the average of ...'). Ignore ordinary body "
+    "paragraphs — focus only on the visual content. Start each description with "
+    "'Page N:' using the page number I provide. Keep each to 2-4 sentences. If a "
+    "page has no meaningful visual, skip it."
+)
+
+
+def describe_pdf_figures(pages: list[tuple[int, bytes]]) -> str:
+    """Describe diagrams/charts/figures from rendered PDF pages in one Gemini call.
+
+    `pages` is a list of (page_number, png_bytes). Returns a plain-text block of
+    figure descriptions suitable for appending to the extracted document text so
+    the podcast can narrate the visuals. Never raises — returns "" on any failure
+    (vision is a best-effort enhancement, not a hard dependency).
+    """
+    if not _vision_client or not pages:
+        return ""
+
+    parts: list[dict] = [{"text": _FIGURE_DESC_PROMPT}]
+    for page_no, img_bytes in pages:
+        parts.append({"text": f"\n--- Page {page_no} ---"})
+        parts.append({
+            "inline_data": {
+                "mime_type": "image/png",
+                "data": base64.b64encode(img_bytes).decode("utf-8"),
+            }
+        })
+
+    try:
+        response = _vision_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": parts}],
+            config=types.GenerateContentConfig(
+                max_output_tokens=2048,
+                temperature=0.2,
+                # Disable "thinking" so the output budget isn't spent on reasoning.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        text = (response.text or "").strip()
+        logger.info(f"[Vision] Described {len(pages)} figure page(s) -> {len(text)} chars")
+        return text
+    except Exception as e:  # noqa: BLE001 — best-effort enhancement
+        logger.warning(f"[Vision] Figure description failed ({e}); continuing without visuals")
+        return ""

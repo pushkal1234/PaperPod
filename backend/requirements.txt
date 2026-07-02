@@ -8,6 +8,8 @@ greenlet>=3.0.0
 pydantic==2.10.3
 pydantic-settings==2.7.0
 PyPDF2==3.0.1
+# PDF page rendering + figure detection for Gemini vision descriptions
+PyMuPDF>=1.24.0
 python-docx==1.1.2
 # LLM: Google Gemini AI Studio
 google-genai>=1.0.0

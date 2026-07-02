@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "25"))
     MAX_DOC_CHARS: int = int(os.getenv("MAX_DOC_CHARS", "40000"))
     MAX_DOC_CHARS_HARD: int = int(os.getenv("MAX_DOC_CHARS_HARD", "270000"))
+    # PDF vision: describe diagrams/charts/figures with Gemini so they're narrated
+    # in the podcast (PyPDF2 reads text only). Set to "0" to disable.
+    PDF_VISION_EXTRACTION: bool = os.getenv("PDF_VISION_EXTRACTION", "1") not in ("0", "false", "False")
+    PDF_VISION_MAX_PAGES: int = int(os.getenv("PDF_VISION_MAX_PAGES", "60"))
+    PDF_VISION_MAX_FIGURES: int = int(os.getenv("PDF_VISION_MAX_FIGURES", "12"))
     MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
     # Comma-separated extra CORS origins (in addition to the built-in defaults).
     CORS_EXTRA_ORIGINS: str = os.getenv("CORS_EXTRA_ORIGINS", "")
