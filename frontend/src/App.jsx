@@ -621,7 +621,7 @@ function App() {
               className="flex items-center gap-2 text-sm font-medium text-stone-500 hover:text-brand-700 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
-              Back to documents
+              Back to home
             </button>
 
             <div className="grid lg:grid-cols-2 gap-6">
