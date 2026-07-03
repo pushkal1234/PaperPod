@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark } from 'lucide-react';
+import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2 } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
@@ -498,9 +498,24 @@ function App() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-stone-800 truncate">{doc.filename}</p>
-                      <p className="text-xs text-stone-400 mt-0.5">
-                        {doc.status === 'ready' ? 'Ready to play' : doc.status === 'failed' ? '❌ Failed' : '⏳ Processing...'}
-                      </p>
+                      <div className="mt-1">
+                        {doc.status === 'ready' ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            Ready to play
+                          </span>
+                        ) : doc.status === 'failed' ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-500/80">
+                            <AlertCircle className="w-3.5 h-3.5" strokeWidth={2} />
+                            Couldn't generate
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-400">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            Processing…
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <button
                       type="button"

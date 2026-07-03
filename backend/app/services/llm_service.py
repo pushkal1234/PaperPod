@@ -330,6 +330,16 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
             return fb
         raise RuntimeError(LLM_CONFIG_MSG)
 
+    # gpt-oss reasoning models can spend the ENTIRE max_tokens budget on hidden
+    # reasoning and return empty content (finish_reason="length") — e.g. on noisy
+    # inputs like fragmented diagram labels. Cap reasoning effort so there's
+    # always room for the actual dialogue.
+    # Passed via extra_body since the pinned groq SDK doesn't expose it as a
+    # named kwarg; the Groq API reads reasoning_effort from the request body.
+    extra_kwargs = {}
+    if "gpt-oss" in settings.LLM_MODEL.lower():
+        extra_kwargs["extra_body"] = {"reasoning_effort": "low"}
+
     last_error = None
     for attempt in range(3):
         try:
@@ -338,8 +348,25 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                **extra_kwargs,
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            if content and content.strip():
+                return content
+            # Empty content despite no exception (reasoning ate the whole budget,
+            # a refusal, etc.). Never return it silently — the caller would treat
+            # it as a lost part and ship an intro-less/degenerate script. Try
+            # Gemini, then retry Groq.
+            finish = response.choices[0].finish_reason
+            logger.warning(
+                f"[LLM] Groq returned empty content (attempt {attempt+1}/3, "
+                f"finish_reason={finish}). Falling back / retrying."
+            )
+            fb = _try_gemini_fallback(messages, temperature, max_tokens)
+            if fb is not None and fb.strip():
+                return fb
+            last_error = RuntimeError("Groq returned empty content")
+            time.sleep(2)
         except Exception as e:
             last_error = e
             err_str = str(e)
@@ -498,6 +525,37 @@ def _trim_script_to_max_lines(script: str, max_lines: int) -> str:
     return "\n".join(kept)
 
 
+# Phrases that mark a farewell/closing line. Multi-part scripts often have each
+# part end with its own goodbye, so we strip these before appending one outro.
+_SIGNOFF_MARKERS = (
+    "thanks for listening", "thank you for listening", "thanks for tuning",
+    "tuning in", "see you next", "see you in the next", "goodbye", "good bye",
+    "signing off", "until next time", "that's all for", "that is all for",
+    "to wrap up", "wrapping up", "big takeaway", "thanks for joining",
+)
+
+
+def _strip_trailing_signoff(script: str) -> str:
+    """Remove trailing farewell/closing dialogue lines so the deterministic outro
+    isn't doubled up. Only strips from the end, stops at the first real content
+    line, and is capped so it can never eat the whole script."""
+    lines = script.rstrip().split("\n")
+    removed = 0
+    while lines and removed < 4:
+        s = lines[-1].strip()
+        if not s:
+            lines.pop()
+            continue
+        low = s.lower()
+        is_dialogue = low.startswith("host:") or low.startswith("guest:")
+        if is_dialogue and any(m in low for m in _SIGNOFF_MARKERS):
+            lines.pop()
+            removed += 1
+            continue
+        break
+    return "\n".join(lines).rstrip()
+
+
 def generate_podcast_script(document_text: str) -> str:
     """Generate a podcast-style dialogue from document text.
 
@@ -641,7 +699,10 @@ def generate_podcast_script(document_text: str) -> str:
         "Host: Thanks for listening — see you in the next one!",
     ]
 
-    trimmed = full_script.rstrip()
+    # Strip any farewell lines the model already produced (each part of a
+    # multi-part script tends to add its own), so we don't stack goodbyes.
+    trimmed = _strip_trailing_signoff(full_script)
+
     last_dialogue = ""
     for l in reversed(trimmed.split("\n")):
         s = l.strip()
@@ -649,12 +710,12 @@ def generate_podcast_script(document_text: str) -> str:
             last_dialogue = s
             break
 
+    # If the now-final line is a question, bridge it so the outro doesn't dangle.
     if last_dialogue.endswith("?"):
         trimmed += "\n\nGuest: Great question — in short, it comes down to the main ideas we just covered."
 
-    # Always append outro, but avoid duplicating if already present
-    if not (trimmed.lower().endswith(outro[1].lower()) or "thanks for listening" in trimmed.lower()[-200:]):
-        trimmed += "\n\n" + "\n".join(outro)
+    # Append exactly one deterministic outro.
+    trimmed += "\n\n" + "\n".join(outro)
 
     full_script = trimmed
 
