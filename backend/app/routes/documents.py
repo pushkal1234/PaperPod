@@ -31,6 +31,17 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 _job_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_JOBS)
 
 
+def _content_hash(data: bytes) -> str:
+    """sha256 of the source, salted with the generation pipeline version.
+
+    Folding GENERATION_VERSION in means any change to the extraction/prompt/
+    LLM/TTS pipeline (bump the version) makes re-uploads MISS caches produced by
+    the previous pipeline and regenerate, instead of serving an old, buggy
+    podcast. Old rows keep their previous hash and simply never match again.
+    """
+    return hashlib.sha256(f"{settings.GENERATION_VERSION}:".encode() + data).hexdigest()
+
+
 async def _find_reusable_document(
     db: AsyncSession, content_hash: str, user_id: str | None
 ) -> Document | None:
@@ -71,6 +82,24 @@ def _sanitize_error(msg: str) -> str:
     clean = clean.replace("api_key", "configuration")
     clean = clean.replace("API_KEY", "configuration")
     return clean
+
+
+def _podcast_quality_issue(script: str, duration: float) -> str | None:
+    """Return a reason string if the generated podcast is degenerate, else None.
+
+    Guards against caching/serving broken output (e.g. the 9-second, outro-only
+    episode). Callers should mark such docs "failed" — failed docs are excluded
+    from dedup, so the next upload regenerates instead of reusing the bad one.
+    """
+    lines = [
+        l for l in (script or "").split("\n")
+        if l.strip().lower().startswith(("host:", "guest:"))
+    ]
+    if len(lines) < settings.MIN_PODCAST_DIALOGUE_LINES:
+        return f"script too short ({len(lines)} dialogue lines, need >= {settings.MIN_PODCAST_DIALOGUE_LINES})"
+    if duration < settings.MIN_PODCAST_DURATION_SECONDS:
+        return f"audio too short ({duration:.0f}s, need >= {settings.MIN_PODCAST_DURATION_SECONDS:.0f}s)"
+    return None
 
 
 def _parse_transcript_segments(audio: AudioFile | None) -> list[dict] | None:
@@ -142,6 +171,15 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         step_times['tts'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path} in {step_times['tts']:.2f}s")
 
+        current_step = "validating podcast"
+        quality_issue = _podcast_quality_issue(script, duration)
+        if quality_issue:
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
+            raise RuntimeError(f"Generated podcast failed quality check: {quality_issue}")
+
         audio_id = str(uuid.uuid4())
         async with async_session() as session:
             audio = AudioFile(
@@ -202,7 +240,7 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
     user_id = user.id if user else None
-    content_hash = hashlib.sha256(file_bytes).hexdigest()
+    content_hash = _content_hash(file_bytes)
     existing = await _find_reusable_document(db, content_hash, user_id)
     if existing:
         logger.info(f"[{existing.id}] Dedup hit for re-upload of {file.filename}")
@@ -245,7 +283,7 @@ async def upload_text(
         raise HTTPException(status_code=413, detail=f"Text too large. Maximum size is {settings.MAX_UPLOAD_MB} MB.")
 
     user_id = user.id if user else None
-    content_hash = hashlib.sha256(text_bytes).hexdigest()
+    content_hash = _content_hash(text_bytes)
     existing = await _find_reusable_document(db, content_hash, user_id)
     if existing:
         logger.info(f"[{existing.id}] Dedup hit for re-submitted text")
@@ -286,7 +324,7 @@ async def upload_image(
     mime_type = file.content_type or "image/jpeg"
 
     user_id = user.id if user else None
-    content_hash = hashlib.sha256(image_bytes).hexdigest()
+    content_hash = _content_hash(image_bytes)
     existing = await _find_reusable_document(db, content_hash, user_id)
     if existing:
         logger.info(f"[{existing.id}] Dedup hit for re-uploaded image {file.filename}")
@@ -391,6 +429,15 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
         step_times['tts'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s in {step_times['tts']:.2f}s")
+
+        current_step = "validating podcast"
+        quality_issue = _podcast_quality_issue(script, duration)
+        if quality_issue:
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
+            raise RuntimeError(f"Generated podcast failed quality check: {quality_issue}")
 
         audio_id = str(uuid.uuid4())
         async with async_session() as session:
