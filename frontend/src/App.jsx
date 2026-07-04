@@ -1,16 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2 } from 'lucide-react';
+import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
 import AuthModal from './components/AuthModal';
 import SignOutModal from './components/SignOutModal';
 import SampleEpisode from './components/SampleEpisode';
+import VideoShowcase from './components/VideoShowcase';
 import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler } from './api';
 
 // Browser extension store listings — surfaced in the navbar, hero, and footer.
 const CHROME_STORE_URL = 'https://chromewebstore.google.com/detail/paperpod-%E2%80%94-ai-podcast-for/oeppbenincbmdaomedjpjfegnfphdoeo';
 const FIREFOX_STORE_URL = 'https://addons.mozilla.org/en-US/firefox/addon/paperpod-ai-podcast/';
+
+// Footer video links — point straight to YouTube so views are counted in YT
+// analytics (no in-app route needed).
+const FOOTER_VIDEOS = [
+  { label: 'Founder intro', url: 'https://www.youtube.com/watch?v=G0jdx3Y9ZQE' },
+  { label: 'Product demo', url: 'https://www.youtube.com/watch?v=3UU8Ikde_2M' },
+  { label: 'Feature deep dive', url: 'https://www.youtube.com/watch?v=KqSpaN2U7qM' },
+];
 
 function App() {
   const [view, setView] = useState('home');
@@ -467,6 +476,9 @@ function App() {
               </div>
             </div>
 
+            {/* Watch PaperPod — founder intro + product demo + feature deep dive */}
+            <VideoShowcase />
+
             {/* Sample episode — real audio playback + interrupt-and-ask demo */}
             <SampleEpisode onCreateClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} />
           </div>
@@ -709,6 +721,20 @@ function App() {
 
       {/* Footer */}
       <footer className="border-t border-paper-300/70 mt-16 py-6 text-center text-xs text-stone-400">
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 mb-3">
+          {FOOTER_VIDEOS.map(({ label, url }) => (
+            <a
+              key={url}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-stone-500 hover:text-brand-600 font-medium transition-colors"
+            >
+              <Youtube className="w-3.5 h-3.5" />
+              {label}
+            </a>
+          ))}
+        </div>
         <div className="flex flex-wrap items-center justify-center gap-4 mb-2">
           <a
             href={CHROME_STORE_URL}
