@@ -476,11 +476,11 @@ function App() {
               </div>
             </div>
 
-            {/* Watch PaperPod — founder intro + product demo + feature deep dive */}
-            <VideoShowcase />
-
             {/* Sample episode — real audio playback + interrupt-and-ask demo */}
             <SampleEpisode onCreateClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} />
+
+            {/* Watch PaperPod — kept at the bottom, secondary to the product itself */}
+            <VideoShowcase />
           </div>
         )}
 
