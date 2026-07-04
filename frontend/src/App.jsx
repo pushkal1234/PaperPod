@@ -4,6 +4,7 @@ import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
 import AuthModal from './components/AuthModal';
+import SignOutModal from './components/SignOutModal';
 import SampleEpisode from './components/SampleEpisode';
 import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler } from './api';
 
@@ -24,6 +25,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
+  const [showSignOut, setShowSignOut] = useState(false);
   const [postAuthView, setPostAuthView] = useState(null);
   const pollRef = useRef(null);
 
@@ -100,6 +102,7 @@ function App() {
   };
 
   const handleLogout = () => {
+    setShowSignOut(false);
     logout();
     setUser(null);
     setDocuments([]);
@@ -307,11 +310,11 @@ function App() {
                   </span>
                 </div>
                 <button
-                  onClick={handleLogout}
+                  onClick={() => setShowSignOut(true)}
                   className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full bg-paper-100 text-stone-500 hover:text-stone-800 border border-paper-300 transition-all"
                   title="Sign out"
                 >
-                  <LogOut className="w-4 h-4" />
+                  <LogOut className="w-4 h-4 -scale-x-100" />
                   <span className="hidden sm:inline">Sign out</span>
                 </button>
               </div>
@@ -330,6 +333,14 @@ function App() {
 
       {showAuth && (
         <AuthModal onClose={() => setShowAuth(false)} onSuccess={handleAuthSuccess} />
+      )}
+
+      {showSignOut && (
+        <SignOutModal
+          userName={user?.name || user?.email}
+          onClose={() => setShowSignOut(false)}
+          onConfirm={handleLogout}
+        />
       )}
 
       <main className="max-w-6xl mx-auto px-6 py-8">

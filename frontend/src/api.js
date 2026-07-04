@@ -74,6 +74,11 @@ export function logout() {
   clearToken();
 }
 
+export async function submitFeedback({ rating, comment, source = 'signout' }) {
+  const res = await api.post('/feedback', { rating, comment, source });
+  return res.data;
+}
+
 export async function uploadDocument(file) {
   const formData = new FormData();
   formData.append('file', file);

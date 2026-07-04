@@ -84,6 +84,22 @@ class QASession(Base):
     document = relationship("Document", back_populates="qa_sessions")
 
 
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Owner if signed in; null for anonymous feedback.
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    # Snapshot of who left it at submit time, so the view survives account edits
+    # and lets you see "who likes / who dislikes" without a join.
+    user_name = Column(String, nullable=True)
+    user_email = Column(String, nullable=True)
+    rating = Column(Integer, nullable=True)  # 1..5
+    comment = Column(Text, nullable=True)
+    source = Column(String, default="signout")  # where it was collected
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
 def _normalize_async_url(url: str) -> str:
     """Coerce a DB URL to its async SQLAlchemy driver.
 
