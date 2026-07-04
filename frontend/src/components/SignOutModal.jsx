@@ -14,6 +14,8 @@ const RATING_MESSAGES = {
 export default function SignOutModal({ userName, onClose, onConfirm }) {
   const [rating, setRating] = useState(0);
   const [hover, setHover] = useState(0);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   // Close on Escape for a proper modal feel.
   useEffect(() => {
@@ -27,16 +29,32 @@ export default function SignOutModal({ userName, onClose, onConfirm }) {
   const firstName = (userName || '').trim().split(' ')[0];
   const active = hover || rating;
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (rating) {
       try {
         localStorage.setItem('paperpod_last_rating', String(rating));
       } catch {
         /* ignore storage errors (private mode etc.) */
       }
-      // Fire BEFORE onConfirm() — logout clears the token, and we want the
-      // request built while the auth header is still attached. Best-effort.
-      submitFeedback({ rating, source: 'signout' }).catch(() => {});
+    }
+    const trimmed = comment.trim();
+    if (rating || trimmed) {
+      // Must AWAIT here: onConfirm() runs logout() which clears the token
+      // synchronously, but axios request interceptors run on a microtask — so
+      // firing-and-forgetting would build the request AFTER the token is gone,
+      // saving the feedback as anonymous (no user_id/name/email). Awaiting keeps
+      // the Authorization header attached. Best-effort: never block sign-out.
+      setSubmitting(true);
+      try {
+        await submitFeedback({
+          rating: rating || null,
+          comment: trimmed || null,
+          source: 'signout',
+        });
+      } catch {
+        /* ignore — feedback should never prevent the user from signing out */
+      }
+      setSubmitting(false);
     }
     onConfirm(rating);
   };
@@ -102,23 +120,34 @@ export default function SignOutModal({ userName, onClose, onConfirm }) {
           <p className="text-xs text-center mt-2 h-4 text-brand-600 font-medium">
             {active ? RATING_MESSAGES[active] : ''}
           </p>
+
+          <textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            rows={2}
+            maxLength={500}
+            placeholder="Anything we could do better? (optional)"
+            className="mt-3 w-full rounded-xl border border-paper-300 bg-white px-3 py-2 text-sm text-stone-700 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-200 resize-none"
+          />
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl border border-paper-300 bg-white text-stone-600 font-semibold hover:bg-paper-100 transition-colors"
+            disabled={submitting}
+            className="flex-1 py-2.5 rounded-xl border border-paper-300 bg-white text-stone-600 font-semibold hover:bg-paper-100 transition-colors disabled:opacity-60"
           >
             Stay signed in
           </button>
           <button
             type="button"
             onClick={handleConfirm}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-stone-900 text-white font-semibold hover:bg-stone-800 shadow-soft transition-colors"
+            disabled={submitting}
+            className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-stone-900 text-white font-semibold hover:bg-stone-800 shadow-soft transition-colors disabled:opacity-60"
           >
             <LogOut className="w-4 h-4 -scale-x-100" />
-            Sign out
+            {submitting ? 'Signing out…' : 'Sign out'}
           </button>
         </div>
       </div>
