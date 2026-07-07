@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="index, follow" />
+  <title>Privacy Policy — PaperPod</title>
+  <meta name="description" content="How PaperPod collects, uses, and protects your data across the web app and browser extension." />
+  <style>
+    :root {
+      --paper-50: #fbf9f4;
+      --paper-100: #f5f0e6;
+      --paper-300: #e6dcc8;
+      --stone-900: #1c1917;
+      --stone-700: #44403c;
+      --stone-500: #78716c;
+      --brand-600: #b45309;
+      --brand-700: #92400e;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-font-smoothing: antialiased; }
+    body {
+      margin: 0;
+      background: var(--paper-50);
+      color: var(--stone-700);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.7;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 80px; }
+    header { border-bottom: 1px solid var(--paper-300); padding-bottom: 24px; margin-bottom: 32px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--stone-900); font-weight: 700; font-size: 20px; letter-spacing: -0.01em; }
+    .brand-dot { width: 12px; height: 12px; border-radius: 50%; background: linear-gradient(135deg, var(--brand-600), #d97706); }
+    h1 { color: var(--stone-900); font-size: 34px; letter-spacing: -0.02em; margin: 24px 0 8px; }
+    h2 { color: var(--stone-900); font-size: 20px; letter-spacing: -0.01em; margin: 36px 0 10px; }
+    p, li { font-size: 16px; }
+    ul { padding-left: 22px; }
+    li { margin: 6px 0; }
+    a { color: var(--brand-700); }
+    .meta { color: var(--stone-500); font-size: 14px; }
+    .card {
+      background: #fff;
+      border: 1px solid var(--paper-300);
+      border-radius: 18px;
+      padding: 18px 22px;
+      margin: 24px 0;
+      box-shadow: 0 1px 2px rgba(28,25,23,0.04);
+    }
+    strong { color: var(--stone-900); }
+    footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--paper-300); color: var(--stone-500); font-size: 14px; }
+    footer a { color: var(--stone-500); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/"><span class="brand-dot"></span>PaperPod</a>
+    </header>
+
+    <h1>Privacy Policy</h1>
+    <p class="meta">Last updated: July 6, 2026</p>
+
+    <p>
+      PaperPod ("we", "us", "our") turns documents, images, text, and webpages into
+      AI-generated podcast conversations. This policy explains what information we
+      collect, how we use it, and the choices you have. It covers both the PaperPod
+      web app and the PaperPod browser extension for Chrome, Edge, and Firefox.
+    </p>
+
+    <div class="card">
+      <strong>The short version.</strong> We only process the content you explicitly
+      submit, in order to generate a podcast for you. The browser extension never runs
+      in the background and only reads a page when you trigger it from the right-click
+      menu. We do not sell your data or use it for advertising.
+    </div>
+
+    <h2>1. Information we collect</h2>
+    <ul>
+      <li><strong>Content you submit:</strong> the documents (PDF, DOCX, TXT), images, pasted text, or webpage text you choose to turn into a podcast.</li>
+      <li><strong>Account information (optional):</strong> if you create an account, we store your email address and display name. If you sign in with Google, we receive your email, name, and profile picture from Google. Passwords (for email sign-up) are stored only as a securely hashed value — never in plain text.</li>
+      <li><strong>Feedback you provide:</strong> if you leave a star rating or comment, we store it (associated with your account if you are signed in) to help us improve the product.</li>
+      <li><strong>Basic technical logs:</strong> standard server logs needed to operate and secure the service.</li>
+    </ul>
+
+    <h2>2. How the browser extension handles your data</h2>
+    <ul>
+      <li>The extension adds right-click ("context menu") options to send a page, selection, image, or file to PaperPod.</li>
+      <li>It reads page content (title, selected text, or image URL) <strong>only at the moment you click one of those menu options</strong> — it does not monitor, track, or read your browsing in the background.</li>
+      <li>The extension does <strong>not</strong> store your content in the browser. Content is passed to the PaperPod web app to create your podcast.</li>
+      <li>The extension requests only the minimum permissions needed for this: <em>contextMenus</em>, <em>activeTab</em>, and <em>scripting</em>.</li>
+    </ul>
+
+    <h2>3. How we use your information</h2>
+    <ul>
+      <li>To extract text from your content and generate a podcast-style audio conversation.</li>
+      <li>To let you play, download, ask follow-up questions about, and (if signed in) save your podcasts.</li>
+      <li>To authenticate you and maintain your personal library.</li>
+      <li>To improve the quality and reliability of the service.</li>
+    </ul>
+
+    <h2>4. Third-party services we use</h2>
+    <p>To generate podcasts, the content you submit may be processed by trusted third-party AI providers:</p>
+    <ul>
+      <li><strong>Groq</strong> — large-language-model processing and speech-to-text.</li>
+      <li><strong>Google (Gemini AI &amp; Google Sign-In)</strong> — language and document/image understanding, and (if you choose it) authentication.</li>
+    </ul>
+    <p>These providers process the data solely to return a result to us and are subject to their own privacy policies. We do not share your data with advertisers.</p>
+
+    <h2>5. Data retention</h2>
+    <ul>
+      <li><strong>Uploaded source files</strong> (e.g. the original PDF or image) are deleted from our servers after the text has been extracted.</li>
+      <li><strong>Extracted text and generated audio</strong> are retained so you can replay and revisit your podcasts.</li>
+      <li><strong>Account data</strong> is retained until you delete your account or request deletion.</li>
+    </ul>
+
+    <h2>6. Your choices and rights</h2>
+    <ul>
+      <li>You can delete any podcast from your library at any time.</li>
+      <li>You can request deletion of your account and associated data by contacting us.</li>
+      <li>You can uninstall the browser extension at any time to stop all extension access.</li>
+    </ul>
+
+    <h2>7. Data security</h2>
+    <p>
+      We use industry-standard measures to protect your data, including encrypted
+      connections (HTTPS) and hashed password storage. No method of transmission or
+      storage is 100% secure, but we work to protect your information.
+    </p>
+
+    <h2>8. Children's privacy</h2>
+    <p>PaperPod is not directed to children under 13, and we do not knowingly collect personal information from them.</p>
+
+    <h2>9. Changes to this policy</h2>
+    <p>We may update this policy from time to time. Material changes will be reflected by updating the "Last updated" date above.</p>
+
+    <h2>10. Contact us</h2>
+    <p>
+      For privacy questions or data-deletion requests, contact us at:
+      <a href="mailto:pushkalshuk@gmail.com">pushkalshuk@gmail.com</a>.
+    </p>
+
+    <footer>
+      &copy; 2026 PaperPod &middot; <a href="/">Back to PaperPod</a>
+    </footer>
+  </div>
+</body>
+</html>
