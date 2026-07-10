@@ -1,6 +1,6 @@
 import { useCallback, useState, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileText, Clipboard, Camera, Type } from 'lucide-react';
+import { Upload, FileText, Clipboard, Camera, Type, AlertCircle } from 'lucide-react';
 
 const TABS = [
   { id: 'file', label: 'Upload File', icon: Upload },
@@ -8,20 +8,41 @@ const TABS = [
   { id: 'camera', label: 'Camera', icon: Camera },
 ];
 
+// Keep in sync with backend MAX_UPLOAD_MB (config.py).
+const MAX_UPLOAD_MB = 25;
+
 export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUploading }) {
   const [activeTab, setActiveTab] = useState('file');
   const [pastedText, setPastedText] = useState('');
   const [title, setTitle] = useState('');
+  const [rejectionMsg, setRejectionMsg] = useState(null);
   const cameraInputRef = useRef(null);
 
   const onDrop = useCallback((acceptedFiles) => {
     if (acceptedFiles.length > 0) {
+      setRejectionMsg(null);
       onUpload(acceptedFiles[0]);
     }
   }, [onUpload]);
 
+  // Surface why a dropped file was refused instead of silently ignoring it.
+  const onDropRejected = useCallback((rejections) => {
+    const first = rejections?.[0]?.errors?.[0];
+    if (!first) return;
+    if (first.code === 'file-too-large') {
+      setRejectionMsg(`That file is too large. Please keep uploads under ${MAX_UPLOAD_MB} MB.`);
+    } else if (first.code === 'file-invalid-type') {
+      setRejectionMsg('Unsupported file type. Upload a PDF, DOCX, TXT, or image (PNG/JPG/WEBP).');
+    } else if (first.code === 'too-many-files') {
+      setRejectionMsg('Please upload one file at a time.');
+    } else {
+      setRejectionMsg(first.message || 'That file could not be accepted.');
+    }
+  }, []);
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected,
     accept: {
       'application/pdf': ['.pdf'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
@@ -29,6 +50,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
       'image/*': ['.png', '.jpg', '.jpeg', '.webp'],
     },
     maxFiles: 1,
+    maxSize: MAX_UPLOAD_MB * 1024 * 1024,
     disabled: isUploading,
   });
 
@@ -50,15 +72,21 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
   return (
     <div className="bg-white rounded-2xl border border-paper-300 shadow-soft overflow-hidden">
       {/* Tabs */}
-      <div className="flex border-b border-paper-200">
+      <div className="flex border-b border-paper-200" role="tablist" aria-label="Upload method">
         {TABS.map((tab) => {
           const Icon = tab.icon;
+          const selected = activeTab === tab.id;
           return (
             <button
               key={tab.id}
+              role="tab"
+              type="button"
+              aria-selected={selected}
+              aria-controls={`upload-panel-${tab.id}`}
+              id={`upload-tab-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-xs font-semibold transition-all ${
-                activeTab === tab.id
+                selected
                   ? 'text-brand-700 bg-brand-50 border-b-2 border-brand-500'
                   : 'text-stone-400 hover:text-stone-600 hover:bg-paper-50'
               }`}
@@ -71,7 +99,12 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
       </div>
 
       {/* Content */}
-      <div className="p-6">
+      <div
+        className="p-6"
+        role="tabpanel"
+        id={`upload-panel-${activeTab}`}
+        aria-labelledby={`upload-tab-${activeTab}`}
+      >
         {activeTab === 'file' && (
           <div
             {...getRootProps()}
@@ -103,10 +136,20 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
                   {isDragActive ? 'Drop your document here' : 'Upload a Document'}
                 </p>
                 <p className="text-sm text-stone-400 mt-1">
-                  PDF, DOCX, TXT, or Image (PNG, JPG)
+                  PDF, DOCX, TXT, or Image (PNG, JPG) · up to {MAX_UPLOAD_MB} MB
                 </p>
               </div>
             </div>
+          </div>
+        )}
+
+        {rejectionMsg && activeTab === 'file' && (
+          <div
+            role="alert"
+            className="mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-600"
+          >
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>{rejectionMsg}</span>
           </div>
         )}
 

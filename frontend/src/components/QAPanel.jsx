@@ -35,6 +35,16 @@ export default function QAPanel({ docId }) {
     return () => audio.removeEventListener('ended', onEnded);
   }, []);
 
+  // Allow Esc to exit the maximized (overlay) mode.
+  useEffect(() => {
+    if (!isMaximized) return;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setIsMaximized(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isMaximized]);
+
   const handleSendText = async () => {
     if (!textInput.trim() || isLoading) return;
     const question = textInput.trim();
@@ -188,7 +198,20 @@ export default function QAPanel({ docId }) {
   };
 
   return (
-    <div className={`bg-white rounded-2xl border border-paper-300 shadow-soft flex flex-col transition-all duration-300 ${isMaximized ? 'fixed inset-4 z-50 h-auto' : 'h-[500px]'}`}>
+    <>
+      {isMaximized && (
+        <div
+          className="fixed inset-0 z-40 bg-stone-900/40 backdrop-blur-sm animate-fade-in"
+          onClick={() => setIsMaximized(false)}
+          aria-hidden="true"
+        />
+      )}
+      <div
+        role={isMaximized ? 'dialog' : undefined}
+        aria-modal={isMaximized ? 'true' : undefined}
+        aria-label={isMaximized ? 'Ask about this document' : undefined}
+        className={`bg-white rounded-2xl border border-paper-300 shadow-soft flex flex-col transition-all duration-300 ${isMaximized ? 'fixed inset-4 z-50 h-auto' : 'h-[500px]'}`}
+      >
       <audio ref={answerAudioRef} className="hidden" />
 
       <div className="p-4 border-b border-paper-200">
@@ -201,6 +224,8 @@ export default function QAPanel({ docId }) {
             onClick={() => setIsMaximized(!isMaximized)}
             className="p-1.5 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-paper-100 transition-colors"
             title={isMaximized ? 'Minimize' : 'Maximize'}
+            aria-label={isMaximized ? 'Minimize Q&A panel' : 'Maximize Q&A panel'}
+            aria-expanded={isMaximized}
           >
             {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
@@ -328,6 +353,8 @@ export default function QAPanel({ docId }) {
           <button
             onClick={handleVoiceToggle}
             disabled={isLoading}
+            aria-label={isRecording ? 'Stop recording and send' : 'Ask a question by voice'}
+            aria-pressed={isRecording}
             className={`
               w-10 h-10 rounded-full flex items-center justify-center transition-all shrink-0
               ${
@@ -354,6 +381,7 @@ export default function QAPanel({ docId }) {
           <button
             onClick={handleSendText}
             disabled={isLoading || !textInput.trim()}
+            aria-label="Send question"
             className="w-10 h-10 rounded-full bg-brand-600 hover:bg-brand-700 flex items-center justify-center text-white shrink-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-glow transition-all active:scale-95"
           >
             <Send className="w-4 h-4" />
@@ -365,6 +393,7 @@ export default function QAPanel({ docId }) {
           </p>
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }

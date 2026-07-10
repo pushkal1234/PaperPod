@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, RefreshCw, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube } from 'lucide-react';
+import { Headphones, FileAudio, Sparkles, ArrowLeft, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
@@ -7,11 +7,19 @@ import AuthModal from './components/AuthModal';
 import SignOutModal from './components/SignOutModal';
 import SampleEpisode from './components/SampleEpisode';
 import VideoShowcase from './components/VideoShowcase';
+import ProcessingView from './components/ProcessingView';
+import ConfirmModal from './components/ConfirmModal';
+import ToastContainer from './components/ToastContainer';
 import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler } from './api';
 
 // Browser extension store listings — surfaced in the navbar, hero, and footer.
 const CHROME_STORE_URL = 'https://chromewebstore.google.com/detail/paperpod-%E2%80%94-ai-podcast-for/oeppbenincbmdaomedjpjfegnfphdoeo';
 const FIREFOX_STORE_URL = 'https://addons.mozilla.org/en-US/firefox/addon/paperpod-ai-podcast/';
+
+// Optional muted product-demo video shown behind the generation loading screen.
+// Set to a hosted .webm/.mp4 URL to enable it; null falls back to a branded
+// animation so nothing 404s until the asset exists.
+const PROCESSING_VIDEO_URL = null;
 
 // Footer video links — point straight to YouTube so views are counted in YT
 // analytics (no in-app route needed).
@@ -36,7 +44,18 @@ function App() {
   const [showAuth, setShowAuth] = useState(false);
   const [showSignOut, setShowSignOut] = useState(false);
   const [postAuthView, setPostAuthView] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  const [confirmState, setConfirmState] = useState(null);
+  const [processingElapsed, setProcessingElapsed] = useState(0);
   const pollRef = useRef(null);
+  const elapsedRef = useRef(null);
+  const toastIdRef = useRef(0);
+
+  const pushToast = (message, type = 'info', duration = 5000) => {
+    const id = ++toastIdRef.current;
+    setToasts((prev) => [...prev, { id, message, type, duration }]);
+  };
+  const dismissToast = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
 
   useEffect(() => {
     // If a token expires mid-session, drop the user back to logged-out state.
@@ -128,7 +147,7 @@ function App() {
       startPolling(res.doc_id);
     } catch (err) {
       console.error('Upload failed:', err);
-      alert('Upload failed. Please try again.');
+      pushToast('Upload failed. Please check the file and try again.', 'error');
     } finally {
       setIsUploading(false);
     }
@@ -142,7 +161,7 @@ function App() {
       startPolling(res.doc_id);
     } catch (err) {
       console.error('Text upload failed:', err);
-      alert('Upload failed. Please try again.');
+      pushToast('Upload failed. Please try again.', 'error');
     } finally {
       setIsUploading(false);
     }
@@ -156,27 +175,40 @@ function App() {
       startPolling(res.doc_id);
     } catch (err) {
       console.error('Image upload failed:', err);
-      alert('Image upload failed. Please try again.');
+      pushToast('Image upload failed. Please try again.', 'error');
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const stopElapsedTimer = () => {
+    if (elapsedRef.current) {
+      clearInterval(elapsedRef.current);
+      elapsedRef.current = null;
     }
   };
 
   const startPolling = (docId) => {
     setIsPolling(true);
     setErrorMsg(null);
+    // Drive the ProcessingView's staged progress with a 1s wall-clock timer.
+    setProcessingElapsed(0);
+    stopElapsedTimer();
+    elapsedRef.current = setInterval(() => setProcessingElapsed((s) => s + 1), 1000);
     let elapsed = 0;
     const poll = async () => {
       try {
         const doc = await getDocument(docId);
         if (doc.status === 'ready') {
           setIsPolling(false);
+          stopElapsedTimer();
           setCurrentDoc(doc);
           setView('player');
           loadDocuments();
           return;
         } else if (doc.status === 'failed') {
           setIsPolling(false);
+          stopElapsedTimer();
           setErrorMsg(doc.error || 'Podcast generation failed. Please try again.');
           setView('failed');
           loadDocuments();
@@ -197,6 +229,7 @@ function App() {
   useEffect(() => {
     return () => {
       if (pollRef.current) clearTimeout(pollRef.current);
+      if (elapsedRef.current) clearInterval(elapsedRef.current);
     };
   }, []);
 
@@ -218,13 +251,20 @@ function App() {
     }
   };
 
-  const handleDelete = async (doc, e) => {
+  // Open the branded confirm dialog; the actual delete runs on confirm.
+  const handleDelete = (doc, e) => {
     e?.preventDefault?.();
     e?.stopPropagation?.();
+    setConfirmState({
+      title: `Delete "${doc.filename}"?`,
+      message: 'This permanently removes the podcast and its Q&A history from the server.',
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: () => performDelete(doc),
+    });
+  };
 
-    const ok = window.confirm(`Delete "${doc.filename}"?\n\nThis will remove the podcast and Q&A history from the server.`);
-    if (!ok) return;
-
+  const performDelete = async (doc) => {
     setDeletingDocIds((prev) => new Set([...prev, doc.doc_id]));
     try {
       await deleteDocument(doc.doc_id);
@@ -233,10 +273,12 @@ function App() {
         setView('home');
       }
       await loadDocuments();
+      pushToast('Podcast deleted.', 'success');
     } catch (err) {
       console.error('Delete failed:', err);
-      alert('Delete failed. Please try again.');
+      pushToast('Delete failed. Please try again.', 'error');
     } finally {
+      setConfirmState(null);
       setDeletingDocIds((prev) => {
         const next = new Set(prev);
         next.delete(doc.doc_id);
@@ -251,7 +293,7 @@ function App() {
       return `${window.location.origin}/?share=${res.share_token}`;
     } catch (err) {
       console.error('Share failed:', err);
-      alert('Failed to create share link. Please try again.');
+      pushToast('Failed to create share link. Please try again.', 'error');
       return null;
     }
   };
@@ -352,6 +394,20 @@ function App() {
         />
       )}
 
+      {confirmState && (
+        <ConfirmModal
+          title={confirmState.title}
+          message={confirmState.message}
+          confirmLabel={confirmState.confirmLabel}
+          danger={confirmState.danger}
+          busy={deletingDocIds.size > 0}
+          onConfirm={confirmState.onConfirm}
+          onCancel={() => setConfirmState(null)}
+        />
+      )}
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
       <main className="max-w-6xl mx-auto px-6 py-8">
         {/* HOME VIEW */}
         {view === 'home' && (
@@ -383,37 +439,39 @@ function App() {
                 ))}
               </div>
 
-              {/* Browser extension CTA — free-forever emphasis */}
-              <div className="flex flex-col items-center gap-4 mt-9">
+              {/* Trust line — free-forever emphasis (extension demoted below) */}
+              <div className="flex flex-col items-center gap-3 mt-8">
                 <span className="inline-flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.12em] text-accent-600 bg-accent-50 border border-accent-200 px-3 py-1 rounded-full shadow-soft animate-pulse-slow">
                   <Sparkles className="w-3.5 h-3.5" />
                   100% Free forever
                 </span>
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  <a
-                    href={CHROME_STORE_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group inline-flex items-center gap-2.5 px-7 py-3.5 rounded-full bg-brand-600 text-white text-base font-semibold hover:bg-brand-700 shadow-glow hover:-translate-y-0.5 hover:shadow-lg transition-all"
-                  >
-                    <Chrome className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    Free Download for Chrome
-                  </a>
-                  <a
-                    href={FIREFOX_STORE_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group inline-flex items-center gap-2.5 px-7 py-3.5 rounded-full bg-white text-brand-700 border border-brand-200 text-base font-semibold hover:bg-brand-50 shadow-soft hover:-translate-y-0.5 transition-all"
-                  >
-                    <Puzzle className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    Free Download for Firefox
-                  </a>
-                </div>
                 <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs font-medium text-stone-500">
                   <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> Free lifetime access</span>
                   <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No credit card required</span>
                   <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No sign-up to try it</span>
                 </div>
+              </div>
+            </div>
+
+            {/* PRIMARY ACTION — upload is the hero CTA for the web app. */}
+            <div className="max-w-2xl mx-auto w-full">
+              <UploadZone onUpload={handleUpload} onUploadText={handleUploadText} onUploadImage={handleUploadImage} isUploading={isUploading} />
+              <p className="text-center text-sm text-stone-400 mt-4">
+                Want to keep your podcasts?{' '}
+                <button onClick={goToLibrary} className="text-brand-600 font-semibold hover:text-brand-700">
+                  Open My Podcasts
+                </button>
+              </p>
+              {/* Secondary — browser extension, demoted beneath the primary action. */}
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 mt-4 text-xs text-stone-500">
+                <span>Prefer your browser? Add the free extension:</span>
+                <a href={CHROME_STORE_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:text-brand-800">
+                  <Chrome className="w-3.5 h-3.5" /> Chrome
+                </a>
+                <span className="text-stone-300">·</span>
+                <a href={FIREFOX_STORE_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:text-brand-800">
+                  <Puzzle className="w-3.5 h-3.5" /> Firefox
+                </a>
               </div>
             </div>
 
@@ -437,17 +495,6 @@ function App() {
                 </div>
               ))}
             </div>
-
-            {/* Upload — open to everyone, no sign-in required. Try it first,
-                then sign in only if you want to keep a personal library. */}
-            <UploadZone onUpload={handleUpload} onUploadText={handleUploadText} onUploadImage={handleUploadImage} isUploading={isUploading} />
-
-            <p className="text-center text-sm text-stone-400">
-              Want to keep your podcasts?{' '}
-              <button onClick={goToLibrary} className="text-brand-600 font-semibold hover:text-brand-700">
-                Open My Podcasts
-              </button>
-            </p>
 
             {/* How it works — 3 steps */}
             <div className="pt-10">
@@ -583,23 +630,7 @@ function App() {
 
         {/* PROCESSING VIEW */}
         {view === 'processing' && (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="relative mb-8">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center shadow-glow">
-                <Headphones className="w-10 h-10 text-white" />
-              </div>
-              <div className="absolute inset-0 w-20 h-20 rounded-full border-2 border-brand-400/40 animate-pulse-ring" />
-            </div>
-            <h2 className="font-display text-3xl font-semibold text-stone-900 mb-2">Composing your podcast</h2>
-            <p className="text-stone-500 max-w-md">
-              Our AI is reading your document, writing a dialogue script, and synthesizing audio.
-              This may take 1-3 minutes...
-            </p>
-            <div className="flex items-center gap-2 mt-6 text-brand-600">
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              <span className="text-sm font-medium">Checking status...</span>
-            </div>
-          </div>
+          <ProcessingView elapsedSeconds={processingElapsed} videoUrl={PROCESSING_VIDEO_URL} />
         )}
 
         {/* FAILED VIEW */}
@@ -608,13 +639,10 @@ function App() {
             <div className="w-20 h-20 rounded-full bg-red-100 flex items-center justify-center mb-8">
               <AlertCircle className="w-10 h-10 text-red-500" />
             </div>
-            <h2 className="font-display text-3xl font-semibold text-stone-900 mb-2">Generation Failed</h2>
-            <p className="text-stone-500 max-w-md mb-2">
-              Something went wrong while generating your podcast.
+            <h2 className="font-display text-3xl font-semibold text-stone-900 mb-2">We couldn't finish this one</h2>
+            <p className="text-stone-600 max-w-lg mb-6 leading-relaxed">
+              {errorMsg || 'Something went wrong while generating your podcast. Please try again.'}
             </p>
-            {errorMsg && (
-              <p className="text-red-500/80 text-sm max-w-lg mb-6 font-mono">{errorMsg}</p>
-            )}
             <button
               onClick={() => { setView('home'); setErrorMsg(null); }}
               className="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-semibold shadow-glow transition-colors"

@@ -26,6 +26,11 @@ LARGE_DOC_THRESHOLD = 15000
 # message in human terms (a 1-page PDF in our tests ≈ 1760 chars).
 CHARS_PER_PAGE = 1800
 MAX_SUMMARY_CHARS = 8000
+# Groq free tier meters input+output tokens in a rolling 1-minute window (8K TPM).
+# Two Groq calls for one podcast reliably trip that window, so we only send a
+# document straight to Groq when a SINGLE doc->transcript call fits the budget.
+# ~3.5 chars/token; this leaves room for a ~2K-token reply + the system prompt.
+GROQ_SINGLE_CALL_MAX_CHARS = 12000
 # Below this many real dialogue lines the script is considered degenerate
 # (e.g. the model returned empty/garbage on an oversized doc). We refuse to
 # ship a near-empty "thank you"-only podcast and surface a clear error instead.
@@ -60,7 +65,11 @@ LENGTH_TIERS = [
     (2000,  "10 exchanges (~20 lines, ~2 minutes)",         20, 22),
     (5000,  "14 exchanges (~28 lines, ~3 minutes)",         28, 30),
     (10000, "18 exchanges (~36 lines, ~4 minutes)",         36, 38),
-    (99999, "22 exchanges (~44 lines, ~5 minutes)",         44, 46),
+    (25000, "25 exchanges (~50 lines, ~6 minutes)",         50, 60),
+    (50000, "35 exchanges (~70 lines, ~8 minutes)",         70, 85),
+    (100000, "50 exchanges (~100 lines, ~12 minutes)",      100, 120),
+    (250000, "70 exchanges (~140 lines, ~17 minutes)",      140, 160),
+    (500000, "90 exchanges (~180 lines, ~22 minutes)",      180, 200),
 ]
 
 
@@ -402,6 +411,24 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
     raise RuntimeError(LLM_SERVICE_ERROR_MSG)
 
 
+def _generate_transcript(messages: list[dict], temperature: float, max_tokens: int, prefer_gemini: bool) -> str:
+    """Single transcript call routed to a chosen primary provider.
+
+    - prefer_gemini=True  -> Gemini first (doc too large for Groq's 8K TPM in one
+      shot), Groq as backup. Used for medium docs sent whole to Gemini.
+    - prefer_gemini=False -> Groq first (existing path) with automatic Gemini
+      fallback. Used for small docs and for the short summary of large docs.
+
+    Both paths degrade gracefully; a normal rate-limit never raises.
+    """
+    if prefer_gemini:
+        text = _try_gemini_fallback(messages, temperature, max_tokens)
+        if text and text.strip():
+            return text
+        logger.warning("[LLM] Gemini-preferred transcript failed; trying Groq...")
+    return _call_llm(messages, temperature, max_tokens)
+
+
 def _summarize_chunk(chunk: str) -> str:
     """Summarize a single chunk — preserve all important information."""
     return _call_llm([
@@ -432,17 +459,9 @@ def _summarize_large_document(document_text: str) -> str:
 
     merged = "\n\n".join(summaries)
 
-    # If merged summaries are still too large, consolidate
-    if len(merged) > MAX_SUMMARY_CHARS:
-        logger.info(f"[LLM] Merged summaries ({len(merged)} chars) too large, consolidating...")
-        merged = _call_llm([
-            {"role": "system", "content": """Consolidate these summaries into a single comprehensive summary.
-Preserve ALL important findings, arguments, data points, and conclusions.
-Remove only true redundancies (same fact stated twice). Do NOT drop important details.
-Target ~2500 words."""},
-            {"role": "user", "content": merged[:MAX_SUMMARY_CHARS]},
-        ], temperature=0.3, max_tokens=2048)
-
+    # No consolidation cap — let the full merged summary go through to script generation
+    # The script generation LLM can handle longer inputs and will produce better podcasts
+    # with more comprehensive source material
     logger.info(f"[LLM] Final summary: {len(merged)} chars (from {len(document_text)} original)")
     return merged
 
@@ -559,12 +578,16 @@ def _strip_trailing_signoff(script: str) -> str:
 def generate_podcast_script(document_text: str) -> str:
     """Generate a podcast-style dialogue from document text.
 
-    Strategy (by extracted-text size):
-    - Small (<15K chars): direct podcast generation on Groq
-    - Large (15K..MAX_DOC_CHARS): Groq chunked summary → podcast
-    - Very large (MAX_DOC_CHARS..MAX_DOC_CHARS_HARD): single-pass Gemini summary
-      (huge context, one call) → podcast on Groq
-    - Beyond MAX_DOC_CHARS_HARD: rejected with a clear "too long" message
+    Provider routing is size-based so we make AT MOST ONE Groq call per podcast
+    (Groq's 8K TPM meters input+output in a rolling minute, so two sequential
+    Groq calls reliably trip it):
+    - Small (<=GROQ_SINGLE_CALL_MAX_CHARS): single Groq call, doc -> transcript.
+    - Medium (..MAX_DOC_CHARS): single Gemini call, doc -> transcript (Gemini's
+      250K TPM + huge context swallow it whole for ~1 request/day of budget).
+    - Large (MAX_DOC_CHARS..MAX_DOC_CHARS_HARD): one Gemini summary pass (huge
+      context) -> single Groq transcript call on the short summary (cold Groq
+      window, comfortably under 8K TPM).
+    - Beyond MAX_DOC_CHARS_HARD: rejected with a clear "too long" message.
     """
     # Guard: empty document
     if not document_text or not document_text.strip():
@@ -598,29 +621,48 @@ def generate_podcast_script(document_text: str) -> str:
     _, target_lines, tier_max_lines = _get_length_tier(original_length)
     max_lines = tier_max_lines + (16 if procedural else 0)
 
-    # Large document strategy: summarize → podcast.
-    #  - Very large (soft cap .. hard cap): one-shot Gemini summary. Its huge
-    #    context digests the whole doc in a SINGLE call, so Groq's tight
-    #    free-tier limits are never drained by dozens of chunk-summaries.
-    #  - Moderately large (LARGE_DOC_THRESHOLD .. soft cap): Groq chunked summary.
-    if original_length > settings.MAX_DOC_CHARS:
-        document_text = _summarize_full_document_gemini(document_text, original_length)
-    elif len(document_text) > LARGE_DOC_THRESHOLD:
-        logger.info(f"[LLM] Large document detected ({len(document_text)} chars), using summarize-then-podcast strategy")
-        document_text = _summarize_large_document(document_text)
+    # ---- Size-based provider routing (see docstring) --------------------
+    # Guarantee: the happy path makes exactly ONE provider call, and Groq is
+    # never asked to run two calls inside the same TPM window for one podcast.
+    gemini_ok = bool(settings.GOOGLE_API_KEY and settings.LLM_FALLBACK_MODEL)
 
-    text_parts = []
-    for i in range(0, len(document_text), MAX_INPUT_CHARS):
-        text_parts.append(document_text[i:i + MAX_INPUT_CHARS])
+    if original_length <= GROQ_SINGLE_CALL_MAX_CHARS:
+        lane = "groq_direct"
+    elif original_length <= settings.MAX_DOC_CHARS:
+        lane = "gemini_direct" if gemini_ok else "groq_summarize"
+    else:
+        lane = "gemini_summarize"
+
+    logger.info(f"[LLM] Routing lane={lane} (original={original_length} chars, gemini_ok={gemini_ok})")
+
+    # Build the single source text the transcript call consumes, and pick which
+    # provider that call should prefer.
+    if lane == "gemini_summarize":
+        # One Gemini pass digests the whole doc; the short summary then goes to
+        # Groq (cold window, fits 8K TPM) so we spend only ONE Gemini request.
+        source_text = _summarize_full_document_gemini(document_text, original_length)
+        prefer_gemini = False
+    elif lane == "groq_summarize":
+        # No Gemini configured: fall back to Groq chunked summary, then a single
+        # Groq transcript call on the summary.
+        logger.info(f"[LLM] Large doc, Gemini unavailable — Groq chunked summary fallback")
+        source_text = _summarize_large_document(document_text)
+        prefer_gemini = False
+    elif lane == "gemini_direct":
+        # Too big for Groq's 8K TPM in one shot; send whole to Gemini.
+        source_text = document_text
+        prefer_gemini = True
+    else:  # groq_direct
+        source_text = document_text
+        prefer_gemini = False
 
     logger.info(
-        f"Document split into {len(text_parts)} part(s); "
+        f"[LLM] Transcript source={len(source_text)} chars, prefer_gemini={prefer_gemini}; "
         f"target={target_lines} lines, max={max_lines} lines (original={original_length} chars)"
     )
 
-    # First part: full intro with length-scaled prompt
+    # Length-scaled prompt + output budget (based on ORIGINAL doc size).
     system_prompt = _build_podcast_prompt(original_length, procedural=procedural)
-    # Scale max output tokens: small docs get shorter scripts
     max_out = 1024 if original_length < 3000 else 1536 if original_length < 8000 else 2048
     if procedural:
         max_out = max(max_out, 2048)
@@ -628,41 +670,31 @@ def generate_podcast_script(document_text: str) -> str:
     # Lower temperature = more consistent length across runs for the same document
     podcast_temp = 0.35
 
-    script_parts = []
+    # SINGLE transcript call — the whole source goes in one request (no chunk
+    # continuation), so neither provider is called twice for one podcast.
     first_messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Create a podcast conversation based on this document:\n\n{text_parts[0]}"},
+        {"role": "user", "content": f"Create a podcast conversation based on this document:\n\n{source_text}"},
     ]
-    script = _call_llm(first_messages, temperature=podcast_temp, max_tokens=max_out)
-    script_parts.append(script)
-
-    # Additional parts: continue the conversation
-    continue_prompt = PROCEDURAL_CONTINUE_PROMPT if procedural else CONTINUE_PROMPT
-    for idx, part in enumerate(text_parts[1:], start=2):
-        continuation = _call_llm([
-            {"role": "system", "content": continue_prompt},
-            {"role": "user", "content": f"Additional document content:\n\n{part}"},
-        ], temperature=podcast_temp, max_tokens=max_out)
-        script_parts.append(continuation)
-
-    full_script = "\n\n".join(script_parts)
+    full_script = _generate_transcript(first_messages, podcast_temp, max_out, prefer_gemini)
 
     dialogue_lines = _count_dialogue_lines(full_script)
 
-    # Minimum enforcement: retry once if too short (single-part docs only)
-    if len(dialogue_lines) < target_lines and len(text_parts) == 1:
+    # Minimum enforcement: retry once if too short. Reuses the same lane; if the
+    # (rare) Groq retry hits the window, _call_llm auto-falls back to Gemini.
+    if len(dialogue_lines) < target_lines:
         logger.warning(
             f"[LLM] Script too short ({len(dialogue_lines)} lines, target {target_lines}). Retrying..."
         )
         nudge_messages = first_messages + [
-            {"role": "assistant", "content": script},
+            {"role": "assistant", "content": full_script},
             {"role": "user", "content": (
                 f"That was too short — only {len(dialogue_lines)} lines. "
                 f"I need between {target_lines} and {max_lines} Host:/Guest: lines. "
                 f"Please rewrite the full conversation from the beginning."
             )},
         ]
-        retry_script = _call_llm(nudge_messages, temperature=podcast_temp, max_tokens=max_out)
+        retry_script = _generate_transcript(nudge_messages, podcast_temp, max_out, prefer_gemini)
         retry_lines = _count_dialogue_lines(retry_script)
         if len(retry_lines) >= len(dialogue_lines):
             full_script = retry_script

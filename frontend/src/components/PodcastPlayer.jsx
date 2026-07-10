@@ -470,12 +470,14 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         <div className="mt-6">
           <button
             onClick={() => setShowTranscript(!showTranscript)}
+            aria-expanded={showTranscript}
+            aria-controls="podcast-transcript"
             className="text-sm font-semibold text-brand-700 hover:text-brand-800 transition-colors"
           >
             {showTranscript ? 'Hide' : 'Show'} Transcript
           </button>
           {showTranscript && (
-            <div className="mt-3 max-h-64 overflow-y-auto bg-paper-50 rounded-xl p-4 text-sm border border-paper-200">
+            <div id="podcast-transcript" className="mt-3 max-h-64 overflow-y-auto bg-paper-50 rounded-xl p-4 text-sm border border-paper-200">
               {segments.length > 0 ? (
                 <p className="text-xs text-stone-400 mb-3">Click any line to jump in the audio</p>
               ) : null}
