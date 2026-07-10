@@ -35,6 +35,12 @@ GROQ_SINGLE_CALL_MAX_CHARS = 12000
 # (e.g. the model returned empty/garbage on an oversized doc). We refuse to
 # ship a near-empty "thank you"-only podcast and surface a clear error instead.
 MIN_VIABLE_DIALOGUE_LINES = 6
+# The hard line cap is only meant to catch pathological overshoots (a model
+# returning dozens of extra lines). Small overshoots (a line or two past the
+# tier max) make no audible difference, so we allow this much slack before
+# trimming — otherwise we'd needlessly chop a real closing line right before
+# the deterministic outro is appended.
+TRIM_GRACE_LINES = 4
 
 def _is_procedural(document_text: str) -> bool:
     """Detect documents whose core value is a sequence of steps/procedures.
@@ -701,8 +707,9 @@ def generate_podcast_script(document_text: str) -> str:
             dialogue_lines = retry_lines
             logger.info(f"[LLM] Retry produced {len(dialogue_lines)} lines")
 
-    # Hard cap: trim if LLM overshot — keeps duration consistent for the same doc tier
-    if len(dialogue_lines) > max_lines:
+    # Hard cap: only trim PATHOLOGICAL overshoots (well past the tier max). A
+    # line or two over is inaudible and not worth chopping the natural ending.
+    if len(dialogue_lines) > max_lines + TRIM_GRACE_LINES:
         logger.warning(f"[LLM] Script too long ({len(dialogue_lines)} lines), trimming to {max_lines}")
         full_script = _trim_script_to_max_lines(full_script, max_lines)
         dialogue_lines = _count_dialogue_lines(full_script)

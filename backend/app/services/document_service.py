@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -22,18 +23,38 @@ _VECTOR_DIAGRAM_THRESHOLD = 30
 _FIGURE_RENDER_DPI = 150
 
 
+# NUL and other C0 control chars that must never reach the DB or TTS. Postgres
+# text columns reject 0x00 outright ("invalid byte sequence for encoding UTF8:
+# 0x00"), and PyPDF2 / OCR routinely emit them for scanned or oddly-encoded
+# PDFs. We keep \t (0x09), \n (0x0a), and \r (0x0d); everything else in the C0
+# range plus the NUL byte is stripped.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def clean_extracted_text(text: str) -> str:
+    """Strip NUL/control bytes that break Postgres storage and downstream calls.
+
+    Applied to every source of ``raw_text`` (PDF/DOCX/TXT extraction, pasted
+    text, and image OCR) so a stray 0x00 can never crash the storage step.
+    """
+    if not text:
+        return text
+    return _CONTROL_CHARS_RE.sub("", text)
+
+
 def extract_text(file_path: str, content_type: str) -> str:
     """Extract text from PDF, DOCX, or TXT files."""
     if content_type == "application/pdf" or file_path.endswith(".pdf"):
-        return _extract_pdf(file_path)
+        text = _extract_pdf(file_path)
     elif content_type in (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/msword",
     ) or file_path.endswith(".docx"):
-        return _extract_docx(file_path)
+        text = _extract_docx(file_path)
     else:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
+            text = f.read()
+    return clean_extracted_text(text)
 
 
 def _extract_pdf(file_path: str) -> str:

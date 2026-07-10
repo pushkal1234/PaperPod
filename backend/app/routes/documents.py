@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import get_db, Document, AudioFile, QASession, User, _utcnow
 from app.security import get_current_user, get_optional_user
-from app.services.document_service import save_upload, extract_text, chunk_text
+from app.services.document_service import save_upload, extract_text, chunk_text, clean_extracted_text
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
@@ -278,6 +278,9 @@ async def upload_text(
     """Upload raw text directly (copy-paste)."""
     if not text.strip():
         raise HTTPException(status_code=400, detail="No text provided.")
+    # Strip NUL/control bytes before hashing or storing — pasted text can carry
+    # them (e.g. copied from a PDF) and Postgres rejects 0x00 in text columns.
+    text = clean_extracted_text(text)
     text_bytes = text.encode("utf-8")
     if len(text_bytes) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"Text too large. Maximum size is {settings.MAX_UPLOAD_MB} MB.")
@@ -358,6 +361,8 @@ async def _process_image_document(doc_id: str, image_bytes: bytes, mime_type: st
     try:
         t0 = time.perf_counter()
         raw_text = await run_in_threadpool(extract_text_from_image, image_bytes, mime_type)
+        # OCR output can contain NUL/control bytes that Postgres rejects.
+        raw_text = clean_extracted_text(raw_text)
         ocr_time = time.perf_counter() - t0
         logger.info(f"[{doc_id}] OCR extracted {len(raw_text)} chars in {ocr_time:.2f}s")
     except Exception as e:
