@@ -19,7 +19,7 @@ const FIREFOX_STORE_URL = 'https://addons.mozilla.org/en-US/firefox/addon/paperp
 // Optional muted product-demo video shown behind the generation loading screen.
 // Set to a hosted .webm/.mp4 URL to enable it; null falls back to a branded
 // animation so nothing 404s until the asset exists.
-const PROCESSING_VIDEO_URL = null;
+const PROCESSING_VIDEO_URL = '/processing-demo.mp4';
 
 // Footer video links — point straight to YouTube so views are counted in YT
 // analytics (no in-app route needed).
