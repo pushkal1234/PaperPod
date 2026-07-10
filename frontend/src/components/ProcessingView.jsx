@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Headphones, FileText, Wand2, AudioLines, Check, Loader2 } from 'lucide-react';
 
 // Ordered generation stages. `until` is the elapsed-seconds boundary we use to
@@ -20,6 +21,11 @@ const EST_TOTAL_SECONDS = 90;
  * instant cache-hits.
  */
 export default function ProcessingView({ elapsedSeconds = 0, videoUrl = null }) {
+  // If the video is missing/blocked/undecodable, fall back to the branded
+  // animation instead of showing a broken black box.
+  const [videoFailed, setVideoFailed] = useState(false);
+  const showVideo = Boolean(videoUrl) && !videoFailed;
+
   const activeIndex = STAGES.findIndex((s) => elapsedSeconds < s.until);
   const currentIndex = activeIndex === -1 ? STAGES.length - 1 : activeIndex;
   const pct = Math.min(95, Math.round((elapsedSeconds / EST_TOTAL_SECONDS) * 100));
@@ -28,14 +34,19 @@ export default function ProcessingView({ elapsedSeconds = 0, videoUrl = null }) 
     <div className="flex flex-col items-center justify-center py-16 md:py-20 text-center">
       {/* Ambient demo video (muted) OR branded animation */}
       <div className="relative mb-8 w-full max-w-xl">
-        {videoUrl ? (
+        {showVideo ? (
           <video
             className="w-full rounded-3xl border border-paper-300 shadow-soft aspect-video object-cover"
             src={videoUrl}
+            poster="/processing-poster.jpg"
             autoPlay
             muted
             loop
             playsInline
+            preload="metadata"
+            disablePictureInPicture
+            controls={false}
+            onError={() => setVideoFailed(true)}
             aria-hidden="true"
           />
         ) : (
