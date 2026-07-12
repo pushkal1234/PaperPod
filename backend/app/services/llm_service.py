@@ -40,7 +40,7 @@ MIN_VIABLE_DIALOGUE_LINES = 6
 # tier max) make no audible difference, so we allow this much slack before
 # trimming — otherwise we'd needlessly chop a real closing line right before
 # the deterministic outro is appended.
-TRIM_GRACE_LINES = 4
+TRIM_GRACE_LINES = 5
 
 def _is_procedural(document_text: str) -> bool:
     """Detect documents whose core value is a sequence of steps/procedures.
