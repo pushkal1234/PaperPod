@@ -15,10 +15,12 @@ TTS_RATE_LIMIT_MSG = "You've reached PaperPod's free-tier rate limit. Please try
 TTS_SERVICE_ERROR_MSG = "PaperPod's voice engine is temporarily busy. Please try again shortly."
 TTS_CONFIG_MSG = "Text-to-speech is not configured on this server. Please contact support."
 
-# Max concurrent TTS calls — keep low to avoid rate limits
-TTS_CONCURRENCY = 3
-# Hard cap on dialogue turns (must be >= longest LENGTH_TIERS max + procedural headroom)
-MAX_DIALOGUE_TURNS = 64
+# Sourced from settings so they're tunable per-environment without a redeploy.
+# TTS_CONCURRENCY: parallel edge-tts calls (speed vs throttle-risk tradeoff).
+# MAX_DIALOGUE_TURNS: runaway safety cap only — set >= the LLM's largest possible
+# script so legitimate long podcasts are never truncated at the TTS step.
+TTS_CONCURRENCY = settings.TTS_CONCURRENCY
+MAX_DIALOGUE_TURNS = settings.MAX_DIALOGUE_TURNS
 
 
 def _is_tts_rate_limit(err_msg: str) -> bool:

@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     TTS_PITCH_HOST: str = os.getenv("TTS_PITCH_HOST", "+0Hz")
     TTS_RATE_GUEST: str = os.getenv("TTS_RATE_GUEST", "+8%")
     TTS_PITCH_GUEST: str = os.getenv("TTS_PITCH_GUEST", "+2Hz")
+    # Max parallel edge-tts calls. edge-tts is free with no documented limit, but
+    # it can throttle/drop audio ("No audio received") under heavy concurrency —
+    # more so from datacenter IPs. 5 is a safe speed/reliability balance; lower to
+    # 3 if you see TTS rate-limit retries in the logs.
+    TTS_CONCURRENCY: int = int(os.getenv("TTS_CONCURRENCY", "5"))
+    # Runaway safety cap on dialogue turns fed to TTS. This is NOT a length knob —
+    # it must stay >= the LLM's largest possible script (LENGTH_TIERS max 200 +
+    # 16 procedural headroom + outro) so legitimate long podcasts are never
+    # truncated here. Control podcast length via the LLM tiers, not this cap.
+    MAX_DIALOGUE_TURNS: int = int(os.getenv("MAX_DIALOGUE_TURNS", "240"))
 
     # Reject oversized uploads before they are read fully into memory (OOM guard).
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "25"))
@@ -40,7 +50,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "5")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "6")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

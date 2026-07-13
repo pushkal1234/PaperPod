@@ -41,6 +41,13 @@ MIN_VIABLE_DIALOGUE_LINES = 6
 # trimming — otherwise we'd needlessly chop a real closing line right before
 # the deterministic outro is appended.
 TRIM_GRACE_LINES = 5
+# A transcript is "good enough" at this fraction of the tier's target line count.
+# target_lines is already the LOW end of each tier (max_lines sits above it), so
+# accepting 85% costs ~30s on a 12-min episode — inaudible — while avoiding a
+# retry that would burn one of Gemini's scarce 20 requests/day. Only genuinely
+# short scripts (< this ratio) trigger the (Gemini-routed) retry.
+SHORT_SCRIPT_ACCEPT_RATIO = 0.85
+
 
 def _is_procedural(document_text: str) -> bool:
     """Detect documents whose core value is a sequence of steps/procedures.
@@ -686,11 +693,21 @@ def generate_podcast_script(document_text: str) -> str:
 
     dialogue_lines = _count_dialogue_lines(full_script)
 
-    # Minimum enforcement: retry once if too short. Reuses the same lane; if the
-    # (rare) Groq retry hits the window, _call_llm auto-falls back to Gemini.
-    if len(dialogue_lines) < target_lines:
+    # Minimum enforcement: retry once only if the script is genuinely short
+    # (< SHORT_SCRIPT_ACCEPT_RATIO of target). A script at, say, 87/100 lines is
+    # accepted as-is — the ~30s difference is inaudible and a retry isn't worth a
+    # scarce Gemini request.
+    min_acceptable_lines = target_lines * SHORT_SCRIPT_ACCEPT_RATIO
+    if len(dialogue_lines) < min_acceptable_lines:
+        # Route the retry straight to Gemini. A single podcast's LLM work fits
+        # well inside one minute (even a 45-page doc took <60s of LLM time), so a
+        # second Groq call is still inside the 8K-TPM window and is GUARANTEED to
+        # 429. Skipping that doomed Groq attempt saves a round-trip and ~10s of
+        # latency. If Gemini isn't configured, fall back to the original provider.
+        retry_prefer_gemini = True if gemini_ok else prefer_gemini
         logger.warning(
-            f"[LLM] Script too short ({len(dialogue_lines)} lines, target {target_lines}). Retrying..."
+            f"[LLM] Script too short ({len(dialogue_lines)} lines, target {target_lines}, "
+            f"min {min_acceptable_lines:.0f}). Retrying (prefer_gemini={retry_prefer_gemini})..."
         )
         nudge_messages = first_messages + [
             {"role": "assistant", "content": full_script},
@@ -700,7 +717,7 @@ def generate_podcast_script(document_text: str) -> str:
                 f"Please rewrite the full conversation from the beginning."
             )},
         ]
-        retry_script = _generate_transcript(nudge_messages, podcast_temp, max_out, prefer_gemini)
+        retry_script = _generate_transcript(nudge_messages, podcast_temp, max_out, retry_prefer_gemini)
         retry_lines = _count_dialogue_lines(retry_script)
         if len(retry_lines) >= len(dialogue_lines):
             full_script = retry_script

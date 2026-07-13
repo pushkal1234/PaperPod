@@ -25,12 +25,12 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 |-------|-----------|
 | **Frontend** | React 18 + Vite + Tailwind CSS |
 | **Backend** | FastAPI (Python 3.10+) |
-| **LLM** | Groq GPT OSS 20B |
+| **LLM** | Groq GPT OSS 20B (primary) + Google Gemini 2.5 Flash (large-doc summarization & fallback) |
 | **STT** | Groq Whisper |
 | **TTS** | edge-tts v7.2+ |
-| **Image OCR** | Google Gemini Vision |
+| **Vision / OCR** | Google Gemini Vision (image OCR + PDF figure description) |
 | **Retrieval** | In-memory keyword search |
-| **Database** | SQLite (via SQLAlchemy async) |
+| **Database** | SQLite (local) / PostgreSQL (production) — SQLAlchemy async |
 
 ---
 
@@ -185,8 +185,8 @@ flowchart LR
     end
 
     subgraph TTS["🔊 edge-tts (Free, No Key)"]
-        HOST["Host: AriaNeural"]
-        GUEST["Guest: GuyNeural"]
+        HOST["Host: Andrew (Multilingual)"]
+        GUEST["Guest: Neerja (Expressive)"]
     end
 
     subgraph OCR["📷 Google AI Studio (Free)"]
@@ -214,10 +214,43 @@ flowchart LR
 
 | Model | Provider | Purpose | Cost |
 |-------|----------|---------|------|
-| **GPT OSS 20B** | Groq | Podcast script generation + Q&A | Free |
+| **GPT OSS 20B** | Groq | Podcast script + Q&A (primary, single-call) | Free |
+| **Gemini 2.5 Flash** | Google AI Studio | Large-doc summarization + transcript fallback | Free |
 | **Whisper** | Groq | Speech-to-text (voice questions) | Free |
-| **edge-tts** | Microsoft Edge TTS | TTS — Host (Aria) + Guest (Guy) | Free |
-| **Gemini Vision** | Google AI Studio | Image OCR (camera upload) | Free |
+| **edge-tts** | Microsoft Edge TTS | TTS — Host (Andrew) + Guest (Neerja) | Free |
+| **Gemini Vision** | Google AI Studio | Image OCR + PDF figure description | Free |
+
+## LLM Routing & Reliability
+
+PaperPod is tuned around two hard free-tier limits: **Groq's 8K TPM** (tokens/minute, input + output combined) and **Gemini's 20 RPD** (requests/day). The pipeline is built so a normal podcast makes **exactly one LLM call**, and Groq is never asked to run two calls inside the same TPM window.
+
+- **Size-based router** — the document is routed by character count:
+  - `groq_direct` (≤ 12K chars) — small docs go straight to Groq in a single call.
+  - `gemini_direct` (≤ `MAX_DOC_CHARS`) — mid docs go to Gemini in one pass.
+  - `gemini_summarize` (large docs) — one Gemini pass condenses the doc to an ~8K-char summary, which a single cold-window Groq call turns into the transcript.
+  - `groq_summarize` — fallback chunked summary when Gemini isn't configured.
+- **Length tiers** — target/max dialogue lines scale with doc size (`LENGTH_TIERS`), from ~12 lines (~1 min) up to ~200 lines (~22 min).
+- **"Good enough" acceptance** — a transcript is accepted at **≥ 85%** of the tier target (`SHORT_SCRIPT_ACCEPT_RATIO`), avoiding a retry that would burn a scarce Gemini request for an inaudible ~30s difference.
+- **Gemini-routed retry** — when a genuinely short script *does* need a retry, it goes **straight to Gemini** (a second Groq call in the same minute is guaranteed to 429), saving a doomed round-trip and ~10s.
+- **Trim grace** — only *pathological* overshoots (`> max_lines + TRIM_GRACE_LINES`) are trimmed, so a line or two over is left alone.
+- **Text sanitization** — all extracted text (PDF/DOCX/TXT/OCR/pasted) is stripped of NUL/control bytes before storage, preventing Postgres `UTF8 0x00` errors.
+
+## Configuration (environment variables)
+
+Sensible defaults ship in code; override any of these in `backend/.env`:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GROQ_API_KEY` | — | Groq LLM + Whisper STT (required) |
+| `GOOGLE_API_KEY` | — | Gemini summarization/fallback + vision OCR |
+| `MAX_DOC_CHARS` | `40000` | Router threshold for single-pass vs summarize |
+| `MAX_DOC_CHARS_HARD` | `270000` | Hard upload ceiling (chars) |
+| `PDF_VISION_EXTRACTION` | `1` | Describe PDF figures/diagrams via Gemini (`0` to disable) |
+| `TTS_CONCURRENCY` | `5` | Parallel edge-tts calls (lower to `3` if throttled) |
+| `MAX_DIALOGUE_TURNS` | `240` | Runaway safety cap on TTS turns (not a length knob) |
+| `MAX_CONCURRENT_JOBS` | `2` | Simultaneous podcast generations |
+| `MIN_PODCAST_DURATION_SECONDS` | `20` | Quality gate — shorter output is marked failed |
+| `GENERATION_VERSION` | `5` | Bump to bust dedup cache after pipeline changes |
 
 ## API Endpoints
 
