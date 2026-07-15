@@ -8,6 +8,9 @@ greenlet>=3.0.0
 pydantic==2.10.3
 pydantic-settings==2.7.0
 PyPDF2==3.0.1
+# Required by PyPDF2 to decrypt AES-encrypted PDFs (common for corporate PDFs
+# that carry an owner/permissions password with an empty user password).
+pycryptodome>=3.20.0
 # PDF page rendering + figure detection for Gemini vision descriptions
 PyMuPDF>=1.24.0
 python-docx==1.1.2

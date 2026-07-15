@@ -62,13 +62,18 @@ def _is_procedural(document_text: str) -> bool:
         1 for kw in (
             "procedure", "sop", "standard operating", "step ", "steps",
             "checklist", "pre-check", "precheck", "instructions", "sl. no",
-            "sl no", "responsibility", "activity",
+            "sl no", "responsibility", "activity", "how to", "recipe",
         )
         if kw in low
     )
     # Count lines that begin with a number (e.g. "1 | ..." or "1. ...")
     numbered_lines = len(re.findall(r"(?m)^\s*\d{1,3}\s*[\.\)\|]", document_text))
-    return numbered_lines >= 4 or keyword_hits >= 3
+    # Numbered lines ALONE are NOT procedural: topic outlines, tables of
+    # contents, exam-topic lists, and bibliographies are all numbered too (a
+    # numbered exam-outline previously false-tripped this). Require real
+    # procedural vocabulary alongside the numbering; a keyword-dense document
+    # (>=3 hits) still counts as procedural on its own.
+    return keyword_hits >= 3 or (numbered_lines >= 4 and keyword_hits >= 1)
 
 
 # ~1 min of audio ≈ 150 words ≈ 6-8 exchanges (~12 dialogue lines)
@@ -98,6 +103,11 @@ def _get_length_tier(doc_length: int) -> tuple[str, int, int]:
 def _build_podcast_prompt(doc_length: int, procedural: bool = False) -> str:
     """Build system prompt with length guidance scaled to document size."""
     target, target_lines, max_lines = _get_length_tier(doc_length)
+    # Only the smallest tiers are genuinely "short" documents that should stay
+    # brief. For anything larger, letting the model "stay short" is the #1 cause
+    # of under-length scripts — content-rich files need BREADTH of coverage to
+    # reach the target honestly (see the short-script incidents in the logs).
+    is_short_doc = target_lines <= 22
 
     if procedural:
         coverage_rule = (
@@ -109,19 +119,38 @@ def _build_podcast_prompt(doc_length: int, procedural: bool = False) -> str:
             "ensure EVERY step is mentioned with its key action and who is "
             "responsible."
         )
-        length_rule = (
-            f"6. You MUST produce between {target_lines} and {max_lines} dialogue lines "
-            f"(Host:/Guest: lines). Target: {target}. Count your lines before finishing."
+    elif is_short_doc:
+        coverage_rule = (
+            "5. Focus on the most important insights and keep it tight — this is "
+            "a short document, so do NOT pad it with filler."
         )
-        turn_rule = "7. Each speaker turn MUST be 2-3 sentences. Never just 1 sentence."
     else:
-        coverage_rule = "5. Focus on the TOP 3-5 most important insights — do NOT try to cover every single detail."
-        length_rule = (
-            f"6. You MUST produce between {target_lines} and {max_lines} dialogue lines "
-            f"(Host:/Guest: lines). Target: {target}. "
-            f"Do NOT produce fewer than {target_lines} or more than {max_lines} lines."
+        coverage_rule = (
+            "5. Cover the document BROADLY: give EACH major section, topic, or "
+            "item its own short exchange (a Host question + a Guest explanation), "
+            "working through them in the document's order. Do NOT reduce a "
+            "content-rich document to just 3-5 points — thorough breadth is how "
+            "you reach the required length honestly."
         )
-        turn_rule = "7. Each speaker turn MUST be 2-3 sentences. Never just 1 sentence. No long monologues either."
+
+    if is_short_doc and not procedural:
+        length_rule = (
+            f"6. Produce between {target_lines} and {max_lines} dialogue lines "
+            f"(Host:/Guest: lines). Target: {target}."
+        )
+    else:
+        length_rule = (
+            f"6. LENGTH IS MANDATORY: produce between {target_lines} and {max_lines} "
+            f"dialogue lines (Host:/Guest: lines). Target: {target}. Do NOT stop "
+            f"early. If you have fewer than {target_lines} lines, you have skipped "
+            f"material — return to the document, pick up more topics and details, "
+            f"and keep the conversation going until you reach the target. Count "
+            f"your lines before finishing."
+        )
+
+    turn_rule = "7. Each speaker turn MUST be 2-3 sentences. Never just 1 sentence."
+    if not is_short_doc:
+        turn_rule += " No long monologues either."
 
     return f"""You are a world-class podcast script writer.
 Given document content, create an engaging podcast-style conversation between two people:
@@ -130,7 +159,7 @@ Given document content, create an engaging podcast-style conversation between tw
 
 CRITICAL RULES — FOLLOW EXACTLY:
 1. STRICTLY use ONLY information from the provided document. Do NOT add facts, examples, or context from outside the document.
-2. Do NOT elaborate beyond what the document says. If the document is short, the podcast MUST be short.
+2. Never invent facts, names, numbers, or examples. To reach the required length, go DEEPER on the document's own points — their implications, comparisons, and the examples the document itself gives — never broader with outside knowledge.
 3. Make it conversational and engaging, but every insight must come from the document text.
 4. Use casual language and transitions like "That's fascinating!", "So what you're saying is..."
 {coverage_rule}
@@ -674,11 +703,13 @@ def generate_podcast_script(document_text: str) -> str:
         f"target={target_lines} lines, max={max_lines} lines (original={original_length} chars)"
     )
 
-    # Length-scaled prompt + output budget (based on ORIGINAL doc size).
+    # Length-scaled prompt + output budget. The budget MUST fit the requested
+    # line count or the model gets truncated mid-script (a 76-line script needs
+    # ~2.5K+ tokens, well past the old flat 2048 cap). ~60 tokens per 2-3
+    # sentence line + headroom, capped at 8192. Only tokens ACTUALLY generated
+    # count toward Groq's TPM, so a generous cap is effectively free.
     system_prompt = _build_podcast_prompt(original_length, procedural=procedural)
-    max_out = 1024 if original_length < 3000 else 1536 if original_length < 8000 else 2048
-    if procedural:
-        max_out = max(max_out, 2048)
+    max_out = min(8192, max(1024, max_lines * 60 + 256))
 
     # Lower temperature = more consistent length across runs for the same document
     podcast_temp = 0.35

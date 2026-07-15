@@ -61,6 +61,24 @@ def _extract_pdf(file_path: str) -> str:
     text_parts = []
     with open(file_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
+        # Many PDFs are encrypted with an owner/permissions password but an EMPTY
+        # user password — they open fine in any viewer. Decrypt with "" so we can
+        # read them; if that fails the PDF is genuinely password-protected.
+        if reader.is_encrypted:
+            try:
+                if reader.decrypt("") == PyPDF2.PasswordType.NOT_DECRYPTED:
+                    raise RuntimeError(
+                        "This PDF is password-protected. Please remove the password "
+                        "(open it and re-save/print to PDF) and upload it again."
+                    )
+            except RuntimeError:
+                raise
+            except Exception as e:  # noqa: BLE001 — surface a clear, user-facing message
+                logger.warning(f"[PDF] Could not decrypt encrypted PDF: {e}")
+                raise RuntimeError(
+                    "This PDF is encrypted and could not be opened. Please remove "
+                    "the password (open it and re-save/print to PDF) and try again."
+                )
         for page in reader.pages:
             page_text = page.extract_text()
             if page_text:
