@@ -1,6 +1,6 @@
 import logging
-import time
 import re
+import time
 
 from groq import Groq
 
@@ -25,7 +25,7 @@ LARGE_DOC_THRESHOLD = 15000
 # Rough extracted-text-per-page estimate, used only to phrase the "too long"
 # message in human terms (a 1-page PDF in our tests ≈ 1760 chars).
 CHARS_PER_PAGE = 1800
-MAX_SUMMARY_CHARS = 8000
+MAX_SUMMARY_CHARS = 10000
 # Groq free tier meters input+output tokens in a rolling 1-minute window (8K TPM).
 # Two Groq calls for one podcast reliably trip that window, so we only send a
 # document straight to Groq when a SINGLE doc->transcript call fits the budget.
@@ -47,6 +47,13 @@ TRIM_GRACE_LINES = 5
 # retry that would burn one of Gemini's scarce 20 requests/day. Only genuinely
 # short scripts (< this ratio) trigger the (Gemini-routed) retry.
 SHORT_SCRIPT_ACCEPT_RATIO = 0.85
+
+# Groq max output tokens per completion. With 2-3 short sentences per
+# Host:/Guest: line, a line consumes ~60 tokens. This lets us cap max_lines
+# so we never ask the model for a script that physically cannot fit.
+MAX_OUTPUT_TOKENS = 8192
+TOKENS_PER_LINE = 60
+MAX_FEASIBLE_LINES = (MAX_OUTPUT_TOKENS - 256) // TOKENS_PER_LINE  # 132
 
 
 def _is_procedural(document_text: str) -> bool:
@@ -76,6 +83,74 @@ def _is_procedural(document_text: str) -> bool:
     return keyword_hits >= 3 or (numbered_lines >= 4 and keyword_hits >= 1)
 
 
+def _compute_content_density(text: str) -> float:
+    """Return a scaling factor in [0.7, 1.3] reflecting how content-rich the text is.
+
+    A dense document (lists, many distinct concepts, technical terms, complex
+    sentences) can sustain a longer conversation; a sparse/boilerplate document
+    should be shorter. This factor is applied to the base LENGTH_TIER targets.
+    """
+    if not text or len(text) < 100:
+        return 1.0
+
+    words = re.findall(r"\w+", text)
+    total_words = len(words)
+    if total_words < 5:
+        return 1.0
+
+    unique_words = set(w.lower() for w in words)
+    vocab_richness = len(unique_words) / total_words
+
+    # Sentence-like segments (rough; we only need a relative signal)
+    sentences = [s for s in re.split(r"[.!?]+", text) if s.strip()]
+    words_per_sentence = total_words / max(1, len(sentences))
+
+    # Structural signals: numbered steps, list bullets, short uppercase headings
+    numbered = len(re.findall(r"(?m)^\s*\d{1,3}\s*[\.\)\|]", text))
+    bullets = len(re.findall(r"(?m)^\s*[-•*]", text))
+    # Heuristic heading: short line that starts with an uppercase letter and has
+    # no sentence-ending punctuation at the end (catches many plain headings).
+    headings = len(re.findall(r"(?m)^\s*[A-Z][^\.!?:\n]{2,40}$", text))
+    structural_hits = numbered + bullets + headings
+    structural_density = structural_hits / (len(text) / 1000.0)
+
+    # Normalize each metric to a 0-1 score relative to typical documents
+    vocab_score = max(0.0, min(1.0, (vocab_richness - 0.20) / 0.25))
+    wps_score = max(0.0, min(1.0, (words_per_sentence - 8) / 17))
+    struct_score = max(0.0, min(1.0, (structural_density - 2.0) / 10.0))
+
+    # Weighted composite; scale range 0.7x (sparse) to 1.3x (dense)
+    density = 0.35 * vocab_score + 0.35 * wps_score + 0.30 * struct_score
+    density_factor = round(0.7 + 0.6 * density, 2)
+    logger.info(
+        f"[LLM] Content density: vocab={vocab_score:.2f} wps={wps_score:.2f} "
+        f"struct={struct_score:.2f} raw_density={density:.2f} factor={density_factor} "
+        f"(chars={len(text)}, words={total_words}, unique={len(unique_words)}, "
+        f"sentences={len(sentences)}, struct_hits={structural_hits})"
+    )
+    return density_factor
+
+
+def _adjust_tier_for_density(
+    target_lines: int, max_lines: int, density_factor: float
+) -> tuple[int, int]:
+    """Scale tier targets by the computed density factor.
+
+    Returns adjusted (target_lines, max_lines) with max_lines clamped safely
+    below the TTS hard cap.
+    """
+    new_target = max(1, round(target_lines * density_factor))
+    new_max = max(new_target, round(max_lines * density_factor))
+    # Never let the ceiling exceed the TTS hard cap minus the deterministic outro.
+    hard_cap = settings.MAX_DIALOGUE_TURNS - 2
+    if new_max > hard_cap:
+        new_max = hard_cap
+    # Keep the target at least a couple of lines below the max so the budget is sane.
+    if new_target >= new_max:
+        new_target = max(1, new_max - 2)
+    return new_target, new_max
+
+
 # ~1 min of audio ≈ 150 words ≈ 6-8 exchanges (~12 dialogue lines)
 # Each tier: (char_threshold, target_description, target_lines, max_lines)
 LENGTH_TIERS = [
@@ -100,9 +175,10 @@ def _get_length_tier(doc_length: int) -> tuple[str, int, int]:
     return last[1], last[2], last[3]
 
 
-def _build_podcast_prompt(doc_length: int, procedural: bool = False) -> str:
-    """Build system prompt with length guidance scaled to document size."""
-    target, target_lines, max_lines = _get_length_tier(doc_length)
+def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = False) -> str:
+    """Build system prompt with content-aware line targets."""
+    # The density-adjusted target/max are already computed when this is called.
+    target = f"{target_lines} dialogue lines (about {target_lines // 2} speaker turns)"
     # Only the smallest tiers are genuinely "short" documents that should stay
     # brief. For anything larger, letting the model "stay short" is the #1 cause
     # of under-length scripts — content-rich files need BREADTH of coverage to
@@ -126,76 +202,58 @@ def _build_podcast_prompt(doc_length: int, procedural: bool = False) -> str:
         )
     else:
         coverage_rule = (
-            "5. Cover the document BROADLY: give EACH major section, topic, or "
-            "item its own short exchange (a Host question + a Guest explanation), "
-            "working through them in the document's order. Do NOT reduce a "
-            "content-rich document to just 3-5 points — thorough breadth is how "
-            "you reach the required length honestly."
+            "5. COVERAGE — cover the essentials, not every word. "
+            "Start with the main thesis/purpose and key takeaways. "
+            "For each major section, include its main point, important names, "
+            "terms, numbers, findings, methods, and conclusions. "
+            "Preserve the value of diagrams, tables, code blocks, captions, and "
+            "image descriptions by describing what they show. "
+            "If the material exceeds the line budget, group related points into a "
+            "single exchange, but do NOT drop the core insight of any major section. "
+            "Match your coverage to the line budget in rule 6, not to the document length."
         )
 
     if is_short_doc and not procedural:
         length_rule = (
-            f"6. Produce between {target_lines} and {max_lines} dialogue lines "
-            f"(Host:/Guest: lines). Target: {target}."
+            f"6. Aim for roughly {target_lines} to {max_lines} dialogue lines "
+            f"(Host:/Guest: lines). Target: {target}. Keep the conversation natural; "
+            f"do not pad to reach the target, but do not exceed {max_lines} by much."
         )
     else:
         length_rule = (
-            f"6. LENGTH IS MANDATORY: produce between {target_lines} and {max_lines} "
-            f"dialogue lines (Host:/Guest: lines). Target: {target}. Do NOT stop "
-            f"early. If you have fewer than {target_lines} lines, you have skipped "
-            f"material — return to the document, pick up more topics and details, "
-            f"and keep the conversation going until you reach the target. Count "
-            f"your lines before finishing."
+            f"6. Target: between {target_lines} and {max_lines} dialogue lines "
+            f"(Host:/Guest: lines). Target: {target}. The conversation should feel "
+            f"complete and natural, not cut off. Stay close to this range; a few "
+            f"lines over or under is fine, but avoid going far below {target_lines} "
+            f"or far above {max_lines}. If there's too much material, be selective; "
+            f"if too little, go deeper. Count your lines as you go."
         )
 
-    turn_rule = "7. Each speaker turn MUST be 2-3 sentences. Never just 1 sentence."
+    turn_rule = "7. Aim for 2-3 concise sentences per turn (roughly 30-50 words). Avoid just 1 sentence or long paragraphs."
     if not is_short_doc:
         turn_rule += " No long monologues either."
 
     return f"""You are a world-class podcast script writer.
-Given document content, create an engaging podcast-style conversation between two people:
+Given the document below, create an engaging, conversational podcast-style dialogue between two speakers:
 - **Host** (curious, asks great questions, keeps the conversation flowing)
 - **Guest** (the expert, explains concepts clearly)
 
 CRITICAL RULES — FOLLOW EXACTLY:
-1. STRICTLY use ONLY information from the provided document. Do NOT add facts, examples, or context from outside the document.
-2. Never invent facts, names, numbers, or examples. To reach the required length, go DEEPER on the document's own points — their implications, comparisons, and the examples the document itself gives — never broader with outside knowledge.
+1. Use ONLY information from the document. Do NOT add facts, examples, numbers, or context from outside the document.
+2. Never invent anything. Stay strictly inside the document: if it is dense, be selective and synthesize; if it is sparse, explore its own points more deeply — but never use outside knowledge to pad length.
 3. Make it conversational and engaging, but every insight must come from the document text.
-4. Use casual language and transitions like "That's fascinating!", "So what you're saying is..."
+4. Use casual transitions like "That's fascinating!", "So what you're saying is...".
 {coverage_rule}
 {length_rule}
 {turn_rule}
-8. Output ONLY the dialogue in this exact format (no stage directions, no other text):
+8. Output ONLY the dialogue in this exact format. No title, no headings, no numbered lists, no bullet points, no markdown, no emojis, no stage directions, no parentheticals, no sound effects, no labels other than "Host:" and "Guest:".
+9. Alternate turns strictly: Host, Guest, Host, Guest, ... and start with the Host.
+10. Start with the Host giving a brief, energetic intro to the topic (1 sentence).
+11. The final two lines MUST be:
+Guest: (a short, specific takeaway from the document, no questions, no generic phrases like "to wrap up" or "the big takeaway")
+Host: (a brief thank you + goodbye, no questions)
+Do not output anything after the final Host line."""
 
-Host: [dialogue]
-Guest: [dialogue]
-Host: [dialogue]
-Guest: [dialogue]
-...
-
-Start with the Host giving a brief, energetic intro to the topic (1 sentence).
-End with a warm sign-off. The final two lines MUST be:
-Guest: (a short closing / takeaway, no questions)
-Host: (a thank you + goodbye, no questions)"""
-
-
-CONTINUE_PROMPT = """Continue the podcast conversation covering these additional points from the document.
-Pick up naturally from where you left off — do NOT re-introduce the topic.
-Add at most 6-8 more Host:/Guest: lines — no more.
-End with a warm sign-off. The final two lines MUST be:
-Guest: (a short closing / takeaway, no questions)
-Host: (a thank you + goodbye, no questions)
-Output ONLY dialogue in Host:/Guest: format."""
-
-PROCEDURAL_CONTINUE_PROMPT = """Continue the podcast conversation covering these additional steps from the document.
-Pick up naturally from where you left off — do NOT re-introduce the topic.
-This content is part of a PROCEDURE. Walk through EVERY step IN ORDER with its key
-action and who is responsible. Group related steps into natural exchanges, but do not
-skip any step.
-End with a warm sign-off. The final two lines MUST be:
-Guest: (a short closing / takeaway, no questions)
-Host: (a thank you + goodbye, no questions)
-Output ONLY dialogue in Host:/Guest: format."""
 
 QA_SYSTEM_PROMPT = """You are a helpful assistant that answers questions about a document.
 You will be given relevant context from the document and a user question.
@@ -592,7 +650,7 @@ _SIGNOFF_MARKERS = (
     "thanks for listening", "thank you for listening", "thanks for tuning",
     "tuning in", "see you next", "see you in the next", "goodbye", "good bye",
     "signing off", "until next time", "that's all for", "that is all for",
-    "to wrap up", "wrapping up", "big takeaway", "thanks for joining",
+    "thanks for joining",
 )
 
 
@@ -661,7 +719,23 @@ def generate_podcast_script(document_text: str) -> str:
 
     # Tier targets based on ORIGINAL doc size so the same file always gets the same length band
     _, target_lines, tier_max_lines = _get_length_tier(original_length)
+    # Adjust up or down based on content density (lists, vocabulary, structure).
+    # Dense docs can sustain more lines; sparse/boilerplate docs should be shorter.
+    density_factor = _compute_content_density(document_text)
+    target_lines, tier_max_lines = _adjust_tier_for_density(
+        target_lines, tier_max_lines, density_factor
+    )
     max_lines = tier_max_lines + (16 if procedural else 0)
+    # Procedural headroom must not exceed the TTS hard cap.
+    hard_cap = settings.MAX_DIALOGUE_TURNS - 2
+    if max_lines > hard_cap:
+        max_lines = hard_cap
+    # Also bound by the output token budget so we never ask for a script that
+    # physically cannot fit in the model's max output tokens.
+    if max_lines > MAX_FEASIBLE_LINES:
+        max_lines = MAX_FEASIBLE_LINES
+    if target_lines > max_lines - 2:
+        target_lines = max(1, max_lines - 2)
 
     # ---- Size-based provider routing (see docstring) --------------------
     # Guarantee: the happy path makes exactly ONE provider call, and Groq is
@@ -700,16 +774,16 @@ def generate_podcast_script(document_text: str) -> str:
 
     logger.info(
         f"[LLM] Transcript source={len(source_text)} chars, prefer_gemini={prefer_gemini}; "
-        f"target={target_lines} lines, max={max_lines} lines (original={original_length} chars)"
+        f"target={target_lines} lines, max={max_lines} lines "
+        f"(original={original_length} chars, density_factor={density_factor})"
     )
 
-    # Length-scaled prompt + output budget. The budget MUST fit the requested
-    # line count or the model gets truncated mid-script (a 76-line script needs
-    # ~2.5K+ tokens, well past the old flat 2048 cap). ~60 tokens per 2-3
-    # sentence line + headroom, capped at 8192. Only tokens ACTUALLY generated
-    # count toward Groq's TPM, so a generous cap is effectively free.
-    system_prompt = _build_podcast_prompt(original_length, procedural=procedural)
-    max_out = min(8192, max(1024, max_lines * 60 + 256))
+    # Use the full model output budget for the transcript. The line count is
+    # enforced by the prompt and the pathological-overshoot trim guard. The old
+    # per-line token cap was artificially trimming the script when the model
+    # wrote slightly longer turns.
+    system_prompt = _build_podcast_prompt(target_lines, max_lines, procedural=procedural)
+    max_out = MAX_OUTPUT_TOKENS
 
     # Lower temperature = more consistent length across runs for the same document
     podcast_temp = 0.35
@@ -764,30 +838,8 @@ def generate_podcast_script(document_text: str) -> str:
 
     logger.info(f"Final script: {len(dialogue_lines)} dialogue lines (target {target_lines}-{max_lines}), {len(full_script)} chars")
 
-    # Guard against degenerate output: if the model returned an empty/garbage
-    # script (common when an oversized PDF blows the context budget), we must
-    # NOT ship a 2-line "thank you"-only podcast. Fail loudly so the pipeline
-    # marks the document failed and the user sees a real error instead.
-    if len(dialogue_lines) < MIN_VIABLE_DIALOGUE_LINES:
-        logger.error(
-            f"[LLM] Degenerate script — only {len(dialogue_lines)} dialogue lines "
-            f"(need >= {MIN_VIABLE_DIALOGUE_LINES}). original={original_length} chars. Failing."
-        )
-        # Long docs that starve the model map to the free-tier limit message the
-        # user expects; smaller docs get the generic service-busy message.
-        if original_length >= LARGE_DOC_THRESHOLD:
-            raise RuntimeError(LLM_RATE_LIMIT_MSG)
-        raise RuntimeError(LLM_SERVICE_ERROR_MSG)
-
     # Deterministic ending: always finish with a consistent outro.
-    # If the final line is a question (often after truncation), add a generic wrap-up line first.
-    outro = [
-        "Guest: To wrap up, the big takeaway is to focus on the key ideas and how you can apply them.",
-        "Host: Thanks for listening — see you in the next one!",
-    ]
-
-    # Strip any farewell lines the model already produced (each part of a
-    # multi-part script tends to add its own), so we don't stack goodbyes.
+    # Strip any farewell lines the model already produced so we don't stack goodbyes.
     trimmed = _strip_trailing_signoff(full_script)
 
     last_dialogue = ""
@@ -802,9 +854,31 @@ def generate_podcast_script(document_text: str) -> str:
         trimmed += "\n\nGuest: Great question — in short, it comes down to the main ideas we just covered."
 
     # Append exactly one deterministic outro.
+    outro = [
+        "Guest: To wrap up, the big takeaway is to focus on the key ideas and how you can apply them.",
+        "Host: Thanks for listening — see you in the next one!",
+    ]
     trimmed += "\n\n" + "\n".join(outro)
 
     full_script = trimmed
+
+    # Guard against degenerate output: if the model returned an empty/garbage
+    # script (common when an oversized PDF blows the context budget), we must
+    # NOT ship a 2-line "thank you"-only podcast. Fail loudly so the pipeline
+    # marks the document failed and the user sees a real error instead.
+    # This check is done AFTER the deterministic outro is appended so the
+    # outro itself doesn't mask a too-short script.
+    final_dialogue_lines = _count_dialogue_lines(full_script)
+    if len(final_dialogue_lines) < MIN_VIABLE_DIALOGUE_LINES:
+        logger.error(
+            f"[LLM] Degenerate script — only {len(final_dialogue_lines)} dialogue lines "
+            f"(need >= {MIN_VIABLE_DIALOGUE_LINES}). original={original_length} chars. Failing."
+        )
+        # Long docs that starve the model map to the free-tier limit message the
+        # user expects; smaller docs get the generic service-busy message.
+        if original_length >= LARGE_DOC_THRESHOLD:
+            raise RuntimeError(LLM_RATE_LIMIT_MSG)
+        raise RuntimeError(LLM_SERVICE_ERROR_MSG)
 
     return full_script
 
