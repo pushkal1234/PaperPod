@@ -702,7 +702,7 @@ function App() {
                   onShare={() => handleShare(currentDoc.doc_id)}
                 />
                 {!user && (
-                  <div className="flex items-center gap-3 rounded-2xl border border-brand-200 bg-gradient-to-r from-brand-50 to-accent-50/60 px-4 py-3 shadow-soft">
+                  <div className="flex items-center gap-3 rounded-2xl border border-brand-200 bg-gradient-to-r from-brand-50 to-accent-50/60 px-4 py-3 shadow-soft animate-pulse-slow">
                     <div className="w-9 h-9 shrink-0 rounded-full bg-white/80 text-brand-600 flex items-center justify-center shadow-soft">
                       <Bookmark className="w-4 h-4" />
                     </div>
