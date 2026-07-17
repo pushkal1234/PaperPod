@@ -344,11 +344,16 @@ def _is_context_relevant(question: str, context: str) -> bool:
 
 def _is_llm_rate_limit(err_str: str) -> bool:
     low = err_str.lower()
-    return any(k in low for k in ["rate_limit", "429", "quota", "too many requests", "limit exceeded"])
+    # Include 413 TPM rate limits (Groq returns 413 for TPM, not 429)
+    return any(k in low for k in ["rate_limit", "429", "quota", "too many requests", "limit exceeded"]) or ("413" in err_str and ("tokens per minute" in low or "rate_limit_exceeded" in low))
 
 
 def _is_payload_too_large(err_str: str) -> bool:
-    return "413" in err_str or "payload too large" in err_str.lower()
+    # Only treat as payload too large if it's explicitly a 413 HTTP error code
+    # EXCEPT for TPM (tokens per minute) rate limits - those should be handled
+    # by the normal rate limit retry logic, not fail-fast as "input too large"
+    low = err_str.lower()
+    return "413" in err_str and "rate_limit_exceeded" not in low and "tokens per minute" not in low
 
 
 # --- Gemini fallback (used when Groq is rate-limited / unavailable) ---------
@@ -778,12 +783,13 @@ def generate_podcast_script(document_text: str) -> str:
         f"(original={original_length} chars, density_factor={density_factor})"
     )
 
-    # Use the full model output budget for the transcript. The line count is
-    # enforced by the prompt and the pathological-overshoot trim guard. The old
-    # per-line token cap was artificially trimming the script when the model
-    # wrote slightly longer turns.
+    # Length-scaled prompt + output budget. The budget MUST fit the requested
+    # line count or the model gets truncated mid-script (a 76-line script needs
+    # ~2.5K+ tokens, well past the old flat 2048 cap). ~60 tokens per 2-3
+    # sentence line + headroom, capped at 8192. Only tokens ACTUALLY generated
+    # count toward Groq's TPM, so a generous cap is effectively free.
     system_prompt = _build_podcast_prompt(target_lines, max_lines, procedural=procedural)
-    max_out = MAX_OUTPUT_TOKENS
+    max_out = min(8192, max(1024, max_lines * 60 + 256))
 
     # Lower temperature = more consistent length across runs for the same document
     podcast_temp = 0.35
