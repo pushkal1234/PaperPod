@@ -56,12 +56,23 @@ TRIM_GRACE_LINES = 5
 # short scripts (< this ratio) trigger the (Gemini-routed) retry.
 SHORT_SCRIPT_ACCEPT_RATIO = 0.85
 
-# Groq max output tokens per completion. With 2-3 short sentences per
-# Host:/Guest: line, a line consumes ~60 tokens. This lets us cap max_lines
-# so we never ask the model for a script that physically cannot fit.
-MAX_OUTPUT_TOKENS = 8192
+# Max output tokens per completion, PER PROVIDER. With 2-3 short sentences per
+# Host:/Guest: line, a line consumes ~60 tokens. This lets us cap max_lines so
+# we never ask a model for a script that physically cannot fit in its output
+# budget. The cap is a CEILING, not a target — latency scales with tokens
+# ACTUALLY generated, so a higher cap costs nothing for docs that don't reach it.
 TOKENS_PER_LINE = 60
-MAX_FEASIBLE_LINES = (MAX_OUTPUT_TOKENS - 256) // TOKENS_PER_LINE  # 132
+# Groq's gpt-oss models cap completions at 8192 tokens (~132 lines). Only docs
+# <= GROQ_SINGLE_CALL_MAX_CHARS ever use Groq, and those never approach this.
+GROQ_MAX_OUTPUT_TOKENS = 8192
+# Gemini 2.5 Flash supports up to 65K output tokens. We allow enough for a
+# ~200-line (~20 min) episode so large/dense docs — which ALWAYS route to Gemini
+# (any doc big enough to want >132 lines is > GROQ_SINGLE_CALL_MAX_CHARS) — can
+# run long-form instead of being clamped to ~13 min. Small/medium docs never
+# reach this, so they are completely unaffected.
+GEMINI_MAX_OUTPUT_TOKENS = 12288
+MAX_FEASIBLE_LINES_GROQ = (GROQ_MAX_OUTPUT_TOKENS - 256) // TOKENS_PER_LINE      # 132
+MAX_FEASIBLE_LINES_GEMINI = (GEMINI_MAX_OUTPUT_TOKENS - 256) // TOKENS_PER_LINE  # 200
 
 
 def _is_procedural(document_text: str) -> bool:
@@ -116,12 +127,27 @@ def _compute_content_density(text: str) -> float:
     window = [w.lower() for w in words[:TTR_WINDOW]]
     vocab_richness = len(set(window)) / len(window)
 
-    # Sentence-like segments. PDF extraction frequently DROPS sentence-ending
-    # punctuation while preserving line breaks; splitting on punctuation alone
-    # would collapse a whole page into "one sentence" and wildly inflate
-    # words-per-sentence, making badly-extracted or table/figure-heavy docs look
-    # artificially dense. Splitting on newlines too keeps the signal honest.
-    segments = [s for s in re.split(r"[.!?\n]+", text) if s.strip()]
+    # Sentence-like segments. Two failure modes pull in opposite directions:
+    #   1) Some PDFs DROP sentence-ending punctuation but keep line breaks, so
+    #      punctuation-only splitting would collapse a page into "one sentence"
+    #      and wildly INFLATE words-per-sentence.
+    #   2) Well-extracted PDFs (papers, columnar layouts) keep punctuation but
+    #      ALSO wrap every line, so splitting on newlines SHATTERS real sentences
+    #      into ~4-word fragments and wrongly rates a dense paper as sparse (the
+    #      research-paper "wps=0.00" case in the logs).
+    # Resolve it by trusting punctuation when it's actually present: count real
+    # sentence terminators (a . ! ? followed by whitespace/end — so decimals like
+    # "0.5" and "Fig." mid-line don't count). If the doc has a plausible rate of
+    # them (>= ~1 per 40 words), split on punctuation ONLY and ignore layout
+    # newlines. Only when terminators are genuinely sparse (extraction stripped
+    # them) do we fall back to newlines as a sentence proxy.
+    terminators = len(re.findall(r"[.!?](?=\s|$)", text))
+    if terminators >= total_words / 40:
+        segments = [s for s in re.split(r"[.!?]+(?=\s|$)", text) if s.strip()]
+        wps_mode = "punct"
+    else:
+        segments = [s for s in re.split(r"[.!?\n]+", text) if s.strip()]
+        wps_mode = "newline"
     words_per_sentence = total_words / max(1, len(segments))
 
     # Structural signals: numbered steps, list bullets, short uppercase headings
@@ -148,6 +174,7 @@ def _compute_content_density(text: str) -> float:
         f"[LLM] Content density: vocab={vocab_score:.2f} wps={wps_score:.2f} "
         f"struct={struct_score:.2f} raw_density={density:.2f} factor={density_factor} "
         f"(chars={len(text)}, words={total_words}, ttr_window={len(window)}, "
+        f"wps_mode={wps_mode}, terminators={terminators}, wps={words_per_sentence:.1f}, "
         f"segments={len(segments)}, struct_hits={structural_hits})"
     )
     return density_factor
@@ -778,9 +805,13 @@ def generate_podcast_script(document_text: str) -> str:
     if max_lines > hard_cap:
         max_lines = hard_cap
     # Also bound by the output token budget so we never ask for a script that
-    # physically cannot fit in the model's max output tokens.
-    if max_lines > MAX_FEASIBLE_LINES:
-        max_lines = MAX_FEASIBLE_LINES
+    # physically cannot fit in the serving model's max output tokens. Any doc big
+    # enough to want > MAX_FEASIBLE_LINES_GROQ (132) is larger than
+    # GROQ_SINGLE_CALL_MAX_CHARS and therefore routes to Gemini, so gemini_ok is
+    # the right predictor of which ceiling applies.
+    feasible_lines = MAX_FEASIBLE_LINES_GEMINI if gemini_ok else MAX_FEASIBLE_LINES_GROQ
+    if max_lines > feasible_lines:
+        max_lines = feasible_lines
     if target_lines > max_lines - 2:
         target_lines = max(1, max_lines - 2)
 
@@ -844,10 +875,14 @@ def generate_podcast_script(document_text: str) -> str:
     # Length-scaled prompt + output budget. The budget MUST fit the requested
     # line count or the model gets truncated mid-script (a 76-line script needs
     # ~2.5K+ tokens, well past the old flat 2048 cap). ~60 tokens per 2-3
-    # sentence line + headroom, capped at 8192. Only tokens ACTUALLY generated
-    # count toward Groq's TPM, so a generous cap is effectively free.
+    # sentence line + headroom, capped at the serving provider's max. Only tokens
+    # ACTUALLY generated count toward latency/TPM, so a generous cap is free for
+    # docs that don't reach it.
     system_prompt = _build_podcast_prompt(target_lines, max_lines, procedural=procedural)
-    max_out = min(8192, max(1024, max_lines * 60 + 256))
+    # Budget must fit the requested line count. Cap by the SERVING model's limit:
+    # Gemini can go long-form; Groq is bounded by its 8192-token model max.
+    provider_token_cap = GEMINI_MAX_OUTPUT_TOKENS if prefer_gemini else GROQ_MAX_OUTPUT_TOKENS
+    max_out = min(provider_token_cap, max(1024, max_lines * TOKENS_PER_LINE + 256))
 
     # Skip a DOOMED Groq call. Groq's free tier rejects a request up-front (413)
     # when input + requested max_tokens exceeds its 8K TPM window. A large line

@@ -157,6 +157,29 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
 _PAUSE_MS = 400
 
 
+def _probe_duration_ms(clip_path: str) -> int:
+    """Return a clip's duration in ms, reading only metadata (no full decode).
+
+    edge-tts emits CBR MP3 (24 kHz, 48 kbit, mono), so ffprobe's header-derived
+    duration is EXACT — there's no drift risk to transcript timings. This avoids
+    decoding every clip to PCM (the old path spawned an ffmpeg decode per clip
+    and was a large share of merge time). Falls back to a full pydub decode if
+    ffprobe is unavailable or returns nothing, so timings can never break.
+    """
+    try:
+        from pydub.utils import mediainfo
+        info = mediainfo(clip_path)
+        dur = info.get("duration")
+        if dur:
+            ms = int(round(float(dur) * 1000))
+            if ms > 0:
+                return ms
+    except Exception as e:
+        logger.warning(f"[merge] ffprobe duration failed for {os.path.basename(clip_path)} ({e}); decoding")
+    # Exact fallback: full decode.
+    return len(AudioSegment.from_mp3(clip_path))
+
+
 def _merge_clips_to_mp3(
     clip_paths: list[str],
     dialogue: list[dict],
@@ -172,14 +195,12 @@ def _merge_clips_to_mp3(
     time. This keeps peak memory at ~a single clip instead of the entire
     uncompressed episode (which previously pushed idle RSS very high).
     """
-    # 1) Build transcript timings by decoding one clip at a time, freeing each
-    #    immediately so only a single clip's PCM is ever resident.
+    # 1) Build transcript timings by probing each clip's duration from metadata
+    #    (exact for edge-tts CBR MP3) instead of decoding it to PCM.
     transcript_segments: list[dict] = []
     cursor_ms = 0
     for i, clip_path in enumerate(clip_paths):
-        seg = AudioSegment.from_mp3(clip_path)
-        clip_ms = len(seg)
-        del seg  # release this clip's PCM before decoding the next
+        clip_ms = _probe_duration_ms(clip_path)
         start_seconds = cursor_ms / 1000.0
         end_seconds = start_seconds + clip_ms / 1000.0
         entry = dialogue[i]
@@ -224,10 +245,13 @@ def _merge_clips_to_mp3(
 def _concat_clips_ffmpeg(clip_paths: list[str], output_path: str, temp_dir: str):
     """Stitch clips + inter-clip pauses into one MP3 using ffmpeg (streaming).
 
-    edge-tts clips are uniform (24 kHz mono MP3), so a matching silence clip is
-    generated once and interleaved via the concat demuxer, then re-encoded to a
-    128k CBR MP3 with a Xing header (-write_xing 1) so mobile browsers read the
-    correct duration. ffmpeg decodes incrementally, so RAM stays flat.
+    edge-tts clips are uniform (24 kHz mono MP3, 48 kbit), so a matching silence
+    clip is generated once and interleaved via the concat demuxer, then re-encoded
+    to a 64k CBR MP3 with a Xing header (-write_xing 1) so mobile browsers read
+    the correct duration. 64k is transparent for 24 kHz mono speech and matches
+    the ~48k source (128k merely upscaled it, bloating the file for no gain), so
+    this halves output size and speeds up download. ffmpeg decodes incrementally,
+    so RAM stays flat.
     """
     import subprocess
 
@@ -252,7 +276,7 @@ def _concat_clips_ffmpeg(clip_paths: list[str], output_path: str, temp_dir: str)
 
     subprocess.run(
         [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", list_path,
-         "-c:a", "libmp3lame", "-b:a", "128k", "-write_xing", "1", output_path],
+         "-c:a", "libmp3lame", "-b:a", "64k", "-write_xing", "1", output_path],
         check=True, capture_output=True,
     )
 
@@ -266,7 +290,7 @@ def _concat_clips_pydub(clip_paths: list[str], output_path: str) -> float:
     combined.export(
         output_path,
         format="mp3",
-        bitrate="128k",
+        bitrate="64k",
         parameters=["-write_xing", "1"],
     )
     return len(combined) / 1000.0
