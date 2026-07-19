@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import re
+import time
 
 import edge_tts
 from fastapi.concurrency import run_in_threadpool
@@ -128,14 +129,26 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
         tasks.append(_synthesize_one(sem, entry["text"], voice, clip_path, i, rate=rate, pitch=pitch))
 
     logger.info(f"[{doc_id}] TTS: {len(tasks)} clips, concurrency={TTS_CONCURRENCY}")
+    _t_synth = time.perf_counter()
     await asyncio.gather(*tasks)
+    synth_secs = time.perf_counter() - _t_synth
 
     output_filename = f"{doc_id}_podcast.mp3"
     output_path = os.path.join(settings.AUDIO_DIR, output_filename)
     # pydub/ffmpeg are synchronous C calls — run the decode/concat/export off
     # the event loop so we don't block the async server during the merge.
+    _t_merge = time.perf_counter()
     duration, transcript_segments = await run_in_threadpool(
         _merge_clips_to_mp3, clip_paths, dialogue, output_path, temp_dir
+    )
+    merge_secs = time.perf_counter() - _t_merge
+
+    # Split the TTS cost so logs show whether time is spent on the edge-tts
+    # network fan-out (tune via TTS_CONCURRENCY) or the local ffmpeg/pydub merge
+    # (a CPU/IO concern) — otherwise the two are indistinguishable in timing.
+    logger.info(
+        f"[{doc_id}] TTS breakdown — synth={synth_secs:.2f}s ({len(tasks)} clips @ "
+        f"concurrency={TTS_CONCURRENCY}), merge={merge_secs:.2f}s"
     )
 
     return output_path, duration, transcript_segments

@@ -715,11 +715,11 @@ def generate_podcast_script(document_text: str) -> str:
     (Groq's 8K TPM meters input+output in a rolling minute, so two sequential
     Groq calls reliably trip it):
     - Small (<=GROQ_SINGLE_CALL_MAX_CHARS): single Groq call, doc -> transcript.
-    - Medium (..MAX_DOC_CHARS): single Gemini call, doc -> transcript (Gemini's
-      250K TPM + huge context swallow it whole for ~1 request/day of budget).
-    - Large (MAX_DOC_CHARS..MAX_DOC_CHARS_HARD): one Gemini summary pass (huge
-      context) -> single Groq transcript call on the short summary (cold Groq
-      window, comfortably under 8K TPM).
+    - Everything larger, up to MAX_DOC_CHARS: single Gemini call on the WHOLE doc
+      (Gemini's 250K TPM + ~1M-token context swallow it whole in one request), so
+      the transcript is built from full-fidelity material, not a lossy summary.
+    - Gemini NOT configured + doc > GROQ_SINGLE_CALL_MAX_CHARS: fall back to a
+      chunked Groq summary -> single Groq transcript call on the short summary.
     - Beyond MAX_DOC_CHARS_HARD: rejected with a clear "too long" message.
     """
     # Guard: empty document
