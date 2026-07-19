@@ -31,6 +31,14 @@ MAX_SUMMARY_CHARS = 10000
 # document straight to Groq when a SINGLE doc->transcript call fits the budget.
 # ~3.5 chars/token; this leaves room for a ~2K-token reply + the system prompt.
 GROQ_SINGLE_CALL_MAX_CHARS = 12000
+# Groq free tier meters input+output in an 8K-TPM window and rejects a request
+# UP FRONT (as a 413) when input + requested max_tokens exceeds it — it's the
+# declared budget, not actual usage, that trips it. A long script needs a big
+# max_out, so a Groq-first call for a large target is guaranteed to 413. We use
+# this budget (8K minus a safety margin) to decide when to skip Groq entirely.
+GROQ_TPM_BUDGET = 7500
+# Rough chars-per-token for estimating a request's token footprint.
+CHARS_PER_TOKEN = 3.5
 # Below this many real dialogue lines the script is considered degenerate
 # (e.g. the model returned empty/garbage on an oversized doc). We refuse to
 # ship a near-empty "thank you"-only podcast and surface a clear error instead.
@@ -810,6 +818,23 @@ def generate_podcast_script(document_text: str) -> str:
         source_text = document_text
         prefer_gemini = False
 
+    # Realign the target to the material the model ACTUALLY sees. On summarize
+    # lanes the target was sized to the ORIGINAL doc, but the transcript is built
+    # from a length-capped summary that can only sustain so many lines. Chasing
+    # the original target here just guarantees an "undershoot" and a retry that
+    # feeds the SAME summary (so it can never produce more). Re-derive the target
+    # from the summary size so the goal is actually reachable.
+    source_is_summary = lane in ("gemini_summarize", "groq_summarize")
+    if source_is_summary:
+        _, s_target, s_max = _get_length_tier(len(source_text))
+        if s_target < target_lines:
+            logger.info(
+                f"[LLM] Summary-bound material — realigning target {target_lines}->{s_target}, "
+                f"max {max_lines}->{max(s_max, s_target + 2)} (summary={len(source_text)} chars)"
+            )
+            target_lines = s_target
+            max_lines = max(s_max, s_target + 2)
+
     logger.info(
         f"[LLM] Transcript source={len(source_text)} chars, prefer_gemini={prefer_gemini}; "
         f"target={target_lines} lines, max={max_lines} lines "
@@ -823,6 +848,29 @@ def generate_podcast_script(document_text: str) -> str:
     # count toward Groq's TPM, so a generous cap is effectively free.
     system_prompt = _build_podcast_prompt(target_lines, max_lines, procedural=procedural)
     max_out = min(8192, max(1024, max_lines * 60 + 256))
+
+    # Skip a DOOMED Groq call. Groq's free tier rejects a request up-front (413)
+    # when input + requested max_tokens exceeds its 8K TPM window. A large line
+    # target needs a big max_out, so a Groq-first transcript call for a long
+    # script is guaranteed to 413 and waste a round-trip (this is exactly the
+    # "413 Payload Too Large -> fell back to Gemini" pattern in the logs). If the
+    # request can't fit Groq's budget, prefer Gemini directly (it has the
+    # headroom); only if Gemini is unavailable do we shrink max_out so Groq can
+    # at least attempt it rather than hard-failing.
+    if not prefer_gemini:
+        approx_request_tokens = len(source_text) / CHARS_PER_TOKEN + 600 + max_out
+        if approx_request_tokens > GROQ_TPM_BUDGET:
+            if gemini_ok:
+                logger.info(
+                    f"[LLM] Groq can't fit this request (~{approx_request_tokens:.0f} tok "
+                    f"> {GROQ_TPM_BUDGET} TPM) — routing transcript to Gemini directly"
+                )
+                prefer_gemini = True
+            else:
+                capped = int(max(1024, GROQ_TPM_BUDGET - len(source_text) / CHARS_PER_TOKEN - 600))
+                if capped < max_out:
+                    logger.info(f"[LLM] Groq-only lane — capping max_out {max_out}->{capped} to fit TPM")
+                    max_out = capped
 
     # Lower temperature = more consistent length across runs for the same document
     podcast_temp = 0.35
@@ -842,7 +890,13 @@ def generate_podcast_script(document_text: str) -> str:
     # accepted as-is — the ~30s difference is inaudible and a retry isn't worth a
     # scarce Gemini request.
     min_acceptable_lines = target_lines * SHORT_SCRIPT_ACCEPT_RATIO
-    if len(dialogue_lines) < min_acceptable_lines:
+    # Don't retry when the transcript was built from a length-capped SUMMARY: the
+    # shortfall is bound by how much material the summary contains, and the retry
+    # would feed the SAME summary, so it can only reproduce ~the same line count —
+    # a guaranteed-wasted round-trip and a scarce Gemini request (this is the
+    # "Retry produced 80 lines" no-op seen in the logs). Realigning the target to
+    # the summary size above already makes this branch rarely trigger.
+    if len(dialogue_lines) < min_acceptable_lines and not source_is_summary:
         # Route the retry straight to Gemini. A single podcast's LLM work fits
         # well inside one minute (even a 45-page doc took <60s of LLM time), so a
         # second Groq call is still inside the 8K-TPM window and is GUARANTEED to

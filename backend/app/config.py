@@ -39,7 +39,15 @@ class Settings(BaseSettings):
 
     # Reject oversized uploads before they are read fully into memory (OOM guard).
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "25"))
-    MAX_DOC_CHARS: int = int(os.getenv("MAX_DOC_CHARS", "40000"))
+    # Boundary between the "send the WHOLE doc straight to Gemini" lane and the
+    # lossy "summarize first" lane. Gemini 2.5 Flash has a ~1M-token context and
+    # 250K TPM, so ~120K chars (~34K tokens input + 8K output) fits comfortably
+    # in ONE direct call. Keeping this high means medium-large docs (e.g. a
+    # 28-page PDF) are podcasted from their FULL text — hitting the length target
+    # in one pass — instead of being compressed to a ~10K-char summary that can
+    # only sustain ~80 lines and then wastes a doomed retry. Only genuinely huge
+    # docs (> this) fall back to summarization.
+    MAX_DOC_CHARS: int = int(os.getenv("MAX_DOC_CHARS", "120000"))
     MAX_DOC_CHARS_HARD: int = int(os.getenv("MAX_DOC_CHARS_HARD", "270000"))
     # PDF vision: describe diagrams/charts/figures with Gemini so they're narrated
     # in the podcast (PyPDF2 reads text only). Set to "0" to disable.
@@ -50,7 +58,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "8")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "9")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.
