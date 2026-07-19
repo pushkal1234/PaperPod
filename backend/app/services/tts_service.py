@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import random
 import re
 import time
 
@@ -21,12 +22,37 @@ TTS_CONFIG_MSG = "Text-to-speech is not configured on this server. Please contac
 # MAX_DIALOGUE_TURNS: runaway safety cap only — set >= the LLM's largest possible
 # script so legitimate long podcasts are never truncated at the TTS step.
 TTS_CONCURRENCY = settings.TTS_CONCURRENCY
+TTS_CONCURRENCY_SMALL = settings.TTS_CONCURRENCY_SMALL
+TTS_SMALL_DOC_MAX_CLIPS = settings.TTS_SMALL_DOC_MAX_CLIPS
 MAX_DIALOGUE_TURNS = settings.MAX_DIALOGUE_TURNS
 
 
 def _is_tts_rate_limit(err_msg: str) -> bool:
     low = err_msg.lower()
     return any(k in low for k in ["no audio", "429", "rate", "quota", "too many requests", "limit exceeded"])
+
+
+def _has_speakable_content(text: str) -> bool:
+    """True if the text contains anything edge-tts can actually voice.
+
+    edge-tts returns "No audio was received" for text with no letters/digits
+    (e.g. a line that is only "...", "—", or stray symbols). That error is
+    INDISTINGUISHABLE from a throttle by message alone, so we check the text
+    up-front: retrying punctuation-only text just burns backoff cycles and then
+    fails the whole podcast, whereas a real throttle has speakable text.
+
+    Uses str.isalnum() (Unicode-aware) so non-Latin scripts (Devanagari, CJK,
+    accented Latin, etc.) still count as speakable — an ASCII-only check would
+    mis-flag legitimate foreign-language lines as silence.
+    """
+    return any(ch.isalnum() for ch in text)
+
+
+def _write_silence_mp3(output_path: str, ms: int = 350):
+    """Write a short silent MP3 matching edge-tts output params (24 kHz mono)."""
+    AudioSegment.silent(duration=ms, frame_rate=24000).export(
+        output_path, format="mp3", bitrate="48k"
+    )
 
 
 def parse_dialogue(script: str) -> list[dict]:
@@ -53,12 +79,28 @@ async def synthesize_speech(
     max_retries: int = 3,
     rate: str = "+0%",
     pitch: str = "+0Hz",
+    allow_silence_fallback: bool = False,
 ):
     """Generate speech audio with retry and brand-safe error wrapping.
 
     `rate` and `pitch` are edge-tts prosody controls (e.g. "+8%", "-2Hz") used
     to add energy/contrast and reduce the flat, monotone delivery.
+
+    `allow_silence_fallback`: when True, a line with no speakable content (only
+    punctuation/symbols) is rendered as a short silence instead of failing — this
+    keeps one degenerate line from sinking an entire multi-minute podcast. Q&A
+    (single-clip) callers leave it False so a bad answer surfaces as an error.
     """
+    # Non-speakable text (e.g. "...", "—") makes edge-tts return "No audio was
+    # received" on EVERY attempt, so don't waste the throttle-backoff budget on
+    # it — handle it deterministically up-front.
+    if not _has_speakable_content(text):
+        if allow_silence_fallback:
+            logger.warning(f"[TTS] Non-speakable clip text ({text[:40]!r}); writing silence, not retrying")
+            await run_in_threadpool(_write_silence_mp3, output_path)
+            return
+        raise RuntimeError(TTS_SERVICE_ERROR_MSG)
+
     last_error = None
     for attempt in range(max_retries):
         try:
@@ -69,9 +111,15 @@ async def synthesize_speech(
             last_error = e
             err_msg = str(e)
             if _is_tts_rate_limit(err_msg):
-                wait = 1.5 * (attempt + 1)
-                logger.warning(f"[TTS] Retry {attempt + 1}/{max_retries} for clip after {wait:.1f}s: {err_msg[:80]}")
-                await asyncio.sleep(wait)
+                # Don't sleep after the final attempt — the loop is about to exit
+                # and raise, so a trailing backoff is pure wasted wall-time.
+                if attempt < max_retries - 1:
+                    # Exponential backoff + jitter: a burst of throttled clips must
+                    # NOT all retry in lockstep (thundering herd), which just
+                    # re-trips the same throttle. Jitter spreads them out.
+                    wait = min(8.0, 1.5 * (2 ** attempt)) + random.uniform(0.0, 1.0)
+                    logger.warning(f"[TTS] Retry {attempt + 1}/{max_retries} for clip after {wait:.1f}s: {err_msg[:80]}")
+                    await asyncio.sleep(wait)
             else:
                 logger.error(f"[TTS] Unrecoverable error: {err_msg[:120]}")
                 raise RuntimeError(TTS_SERVICE_ERROR_MSG)
@@ -92,7 +140,9 @@ async def _synthesize_one(
 ):
     """Synthesize a single clip with concurrency limit. Propagates errors."""
     async with sem:
-        await synthesize_speech(text, voice, clip_path, rate=rate, pitch=pitch)
+        await synthesize_speech(
+            text, voice, clip_path, rate=rate, pitch=pitch, allow_silence_fallback=True
+        )
 
 
 async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, list[dict]]:
@@ -115,7 +165,15 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
     temp_dir = os.path.join(settings.AUDIO_DIR, f"temp_{doc_id}")
     os.makedirs(temp_dir, exist_ok=True)
 
-    sem = asyncio.Semaphore(TTS_CONCURRENCY)
+    # Adaptive concurrency: small scripts produce short clips that finish almost
+    # instantly and hit edge-tts in a tight burst — the case that trips "No audio
+    # received" throttling. Cap parallelism lower for them (reliability > the few
+    # seconds more parallelism would save on a tiny job); long episodes, whose
+    # longer clips stagger naturally, keep the full TTS_CONCURRENCY for speed.
+    concurrency = TTS_CONCURRENCY
+    if len(dialogue) <= TTS_SMALL_DOC_MAX_CLIPS:
+        concurrency = min(TTS_CONCURRENCY, TTS_CONCURRENCY_SMALL)
+    sem = asyncio.Semaphore(concurrency)
     tasks = []
     clip_paths = []
 
@@ -128,7 +186,7 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
         clip_paths.append(clip_path)
         tasks.append(_synthesize_one(sem, entry["text"], voice, clip_path, i, rate=rate, pitch=pitch))
 
-    logger.info(f"[{doc_id}] TTS: {len(tasks)} clips, concurrency={TTS_CONCURRENCY}")
+    logger.info(f"[{doc_id}] TTS: {len(tasks)} clips, concurrency={concurrency}")
     _t_synth = time.perf_counter()
     await asyncio.gather(*tasks)
     synth_secs = time.perf_counter() - _t_synth
@@ -148,7 +206,7 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
     # (a CPU/IO concern) — otherwise the two are indistinguishable in timing.
     logger.info(
         f"[{doc_id}] TTS breakdown — synth={synth_secs:.2f}s ({len(tasks)} clips @ "
-        f"concurrency={TTS_CONCURRENCY}), merge={merge_secs:.2f}s"
+        f"concurrency={concurrency}), merge={merge_secs:.2f}s"
     )
 
     return output_path, duration, transcript_segments

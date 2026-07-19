@@ -26,11 +26,18 @@ class Settings(BaseSettings):
     TTS_PITCH_HOST: str = os.getenv("TTS_PITCH_HOST", "+0Hz")
     TTS_RATE_GUEST: str = os.getenv("TTS_RATE_GUEST", "+8%")
     TTS_PITCH_GUEST: str = os.getenv("TTS_PITCH_GUEST", "+2Hz")
-    # Max parallel edge-tts calls. edge-tts is free with no documented limit, but
-    # it can throttle/drop audio ("No audio received") under heavy concurrency —
-    # more so from datacenter IPs. 5 is a safe speed/reliability balance; lower to
-    # 3 if you see TTS rate-limit retries in the logs.
+    # Max parallel edge-tts calls for LARGE podcasts. edge-tts is free with no
+    # documented limit, but it can throttle/drop audio ("No audio received") under
+    # heavy concurrency — more so from datacenter IPs. 8 is fast for long episodes
+    # whose longer clips stagger naturally.
     TTS_CONCURRENCY: int = int(os.getenv("TTS_CONCURRENCY", "8"))
+    # Concurrency for SMALL podcasts. Short docs produce short clips that all
+    # finish near-instantly and fire in a tight burst, which is far more likely to
+    # trip edge-tts throttling than a long episode. So we cap concurrency lower
+    # when a script has <= TTS_SMALL_DOC_MAX_CLIPS turns (reliability > raw speed
+    # on tiny jobs, where the absolute time saved by more parallelism is small).
+    TTS_CONCURRENCY_SMALL: int = int(os.getenv("TTS_CONCURRENCY_SMALL", "5"))
+    TTS_SMALL_DOC_MAX_CLIPS: int = int(os.getenv("TTS_SMALL_DOC_MAX_CLIPS", "40"))
     # Runaway safety cap on dialogue turns fed to TTS. This is NOT a length knob —
     # it must stay >= the LLM's largest possible script (LENGTH_TIERS max 200 +
     # 16 procedural headroom + outro) so legitimate long podcasts are never
@@ -60,7 +67,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "11")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "12")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.
