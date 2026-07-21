@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Share2, Check, Download } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Share2, Check, Download, FileText, Maximize2, Minimize2 } from 'lucide-react';
 
 const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2];
 const POSITION_KEY_PREFIX = 'paperpod:pos:';
@@ -43,9 +43,10 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     const saved = parseFloat(localStorage.getItem(RATE_KEY));
     return PLAYBACK_RATES.includes(saved) ? saved : 1;
   });
-  const [showTranscript, setShowTranscript] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(true);
   const [shareCopied, setShareCopied] = useState(false);
   const [downloadingAudio, setDownloadingAudio] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
 
   const restoredRef = useRef(false);
   const positionKey = audioUrl ? `${POSITION_KEY_PREFIX}${audioUrl}` : null;
@@ -182,6 +183,16 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     setDuration(0);
     setBuffered(0);
   }, [audioUrl]);
+
+  // Allow Esc to exit the maximized (fullscreen) transcript reader.
+  useEffect(() => {
+    if (!isMaximized) return;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setIsMaximized(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isMaximized]);
 
   // Apply playback rate to the audio element and persist the choice.
   useEffect(() => {
@@ -321,7 +332,20 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
   }, [audioUrl, title, downloadingAudio]);
 
   return (
-    <div className="bg-white rounded-2xl p-6 border border-paper-300 shadow-soft">
+    <>
+      {isMaximized && (
+        <div
+          className="fixed inset-0 z-40 bg-stone-900/40 backdrop-blur-sm animate-fade-in"
+          onClick={() => setIsMaximized(false)}
+          aria-hidden="true"
+        />
+      )}
+      <div
+        role={isMaximized ? 'dialog' : undefined}
+        aria-modal={isMaximized ? 'true' : undefined}
+        aria-label={isMaximized ? title || 'Podcast player' : undefined}
+        className={`bg-white rounded-2xl border border-paper-300 shadow-soft flex flex-col transition-all duration-300 ${isMaximized ? 'fixed inset-4 z-50 p-6 overflow-hidden' : 'p-6 lg:h-[500px]'}`}
+      >
       <audio ref={audioRef} src={audioUrl} preload="metadata" />
 
       <div className="flex items-center gap-3 mb-4">
@@ -332,65 +356,67 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
           <h3 className="font-display font-semibold text-stone-900 text-lg truncate">{title}</h3>
           <p className="text-sm text-stone-400">AI-generated podcast</p>
         </div>
-        {onShare && (
-          <button
-            onClick={async () => {
-              const link = await onShare();
-              if (link) {
-                try {
-                  await navigator.clipboard.writeText(link);
-                  setShareCopied(true);
-                  setTimeout(() => setShareCopied(false), 2000);
-                } catch {
-                  alert(`Share link:\n${link}`);
+        <div className="flex items-center gap-1.5 shrink-0">
+          {onShare && (
+            <button
+              onClick={async () => {
+                const link = await onShare();
+                if (link) {
+                  try {
+                    await navigator.clipboard.writeText(link);
+                    setShareCopied(true);
+                    setTimeout(() => setShareCopied(false), 2000);
+                  } catch {
+                    alert(`Share link:\n${link}`);
+                  }
                 }
-              }
-            }}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
-            title="Copy share link"
-          >
-            {shareCopied ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-brand-600" />
-                <span className="text-brand-600">Copied</span>
-              </>
-            ) : (
-              <>
-                <Share2 className="w-3.5 h-3.5" />
-                <span>Share</span>
-              </>
-            )}
-          </button>
-        )}
-        {audioUrl && (
+              }}
+              className="p-2 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
+              title="Copy share link"
+              aria-label="Copy share link"
+            >
+              {shareCopied ? <Check className="w-4 h-4 text-brand-600" /> : <Share2 className="w-4 h-4" />}
+            </button>
+          )}
+          {audioUrl && (
+            <button
+              onClick={handleDownloadAudio}
+              disabled={downloadingAudio}
+              className="p-2 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300 disabled:opacity-60 disabled:cursor-wait"
+              title={downloadingAudio ? 'Saving…' : 'Download podcast audio'}
+              aria-label="Download podcast audio"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+          )}
+          {dialogueScript && (
+            <button
+              onClick={() => {
+                const blob = new Blob([dialogueScript], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${title.replace(/[^a-z0-9]/gi, '_')}_transcript.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="p-2 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
+              title="Download transcript"
+              aria-label="Download transcript"
+            >
+              <FileText className="w-4 h-4" />
+            </button>
+          )}
           <button
-            onClick={handleDownloadAudio}
-            disabled={downloadingAudio}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300 disabled:opacity-60 disabled:cursor-wait"
-            title="Download podcast audio"
+            onClick={() => setIsMaximized(!isMaximized)}
+            className="p-2 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
+            title={isMaximized ? 'Minimize' : 'Expand'}
+            aria-label={isMaximized ? 'Minimize player' : 'Expand player'}
+            aria-expanded={isMaximized}
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>{downloadingAudio ? 'Saving…' : 'Audio'}</span>
+            {isMaximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
-        )}
-        {dialogueScript && (
-          <button
-            onClick={() => {
-              const blob = new Blob([dialogueScript], { type: 'text/plain' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `${title.replace(/[^a-z0-9]/gi, '_')}_transcript.txt`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
-            title="Download transcript"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Transcript</span>
-          </button>
-        )}
+        </div>
       </div>
 
       {(() => {
@@ -467,17 +493,17 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
       </div>
 
       {dialogueScript && (
-        <div className="mt-6">
+        <div className="mt-6 flex-1 flex flex-col min-h-0">
           <button
             onClick={() => setShowTranscript(!showTranscript)}
             aria-expanded={showTranscript}
             aria-controls="podcast-transcript"
-            className="text-sm font-semibold text-brand-700 hover:text-brand-800 transition-colors"
+            className="text-sm font-semibold text-brand-700 hover:text-brand-800 transition-colors shrink-0 self-start"
           >
             {showTranscript ? 'Hide' : 'Show'} Transcript
           </button>
           {showTranscript && (
-            <div id="podcast-transcript" className="mt-3 max-h-64 overflow-y-auto bg-paper-50 rounded-xl p-4 text-sm border border-paper-200">
+            <div id="podcast-transcript" className={`mt-3 overflow-y-auto bg-paper-50 rounded-xl p-4 text-sm border border-paper-200 ${isMaximized ? 'flex-1' : 'max-h-64 lg:max-h-none lg:flex-1'}`}>
               {segments.length > 0 ? (
                 <p className="text-xs text-stone-400 mb-3">Click any line to jump in the audio</p>
               ) : null}
@@ -523,6 +549,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
           )}
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
