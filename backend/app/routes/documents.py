@@ -118,12 +118,23 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
             await _run_document_pipeline(doc_id, file_path, content_type)
         finally:
             # The source upload is only needed for text extraction; raw_text is
-            # persisted in the DB. Remove it so the storage volume doesn't grow
-            # with every upload (audio is kept separately for playback).
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
+            # persisted in the DB. By default we now RETAIN the upload (renamed to
+            # the doc id, so it's easy to correlate with logs/DB) for inspecting
+            # failed/undershoot cases; set KEEP_UPLOADS=0 to purge it instead so
+            # the storage volume doesn't grow with every upload.
+            if settings.KEEP_UPLOADS:
+                try:
+                    ext = os.path.splitext(file_path)[1]
+                    kept_path = os.path.join(settings.UPLOAD_DIR, f"{doc_id}{ext}")
+                    if os.path.abspath(kept_path) != os.path.abspath(file_path):
+                        os.replace(file_path, kept_path)
+                except OSError:
+                    pass
+            else:
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
 
 
 async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str):

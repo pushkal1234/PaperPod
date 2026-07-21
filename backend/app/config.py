@@ -64,10 +64,15 @@ class Settings(BaseSettings):
     PDF_VISION_MAX_PAGES: int = int(os.getenv("PDF_VISION_MAX_PAGES", "60"))
     PDF_VISION_MAX_FIGURES: int = int(os.getenv("PDF_VISION_MAX_FIGURES", "12"))
     MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
+    # Retain the source upload (renamed to the document id) after processing
+    # instead of deleting it, so failed/undershoot cases can be inspected later.
+    # Set KEEP_UPLOADS=0 to purge on completion (the old behavior) if the storage
+    # volume becomes a concern. raw_text is always persisted in the DB regardless.
+    KEEP_UPLOADS: bool = os.getenv("KEEP_UPLOADS", "1") not in ("0", "false", "False")
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "12")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "13")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

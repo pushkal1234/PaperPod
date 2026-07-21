@@ -55,6 +55,11 @@ TRIM_GRACE_LINES = 5
 # retry that would burn one of Gemini's scarce 20 requests/day. Only genuinely
 # short scripts (< this ratio) trigger the (Gemini-routed) retry.
 SHORT_SCRIPT_ACCEPT_RATIO = 0.85
+# When a script comes back severely short (< SHORT_SCRIPT_ACCEPT_RATIO of target)
+# we retry with an EXPAND instruction. Bound the extra attempts so a stubborn
+# document can't burn the scarce Gemini daily quota: at most this many extra
+# calls, and we stop early the moment an attempt fails to grow the script.
+MAX_LENGTH_RETRIES = 2
 
 # Max output tokens per completion, PER PROVIDER. With 2-3 short sentences per
 # Host:/Guest: line, a line consumes ~60 tokens. This lets us cap max_lines so
@@ -251,15 +256,17 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
         )
     else:
         coverage_rule = (
-            "5. COVERAGE — cover the essentials, not every word. "
-            "Start with the main thesis/purpose and key takeaways. "
-            "For each major section, include its main point, important names, "
-            "terms, numbers, findings, methods, and conclusions. "
-            "Preserve the value of diagrams, tables, code blocks, captions, and "
-            "image descriptions by describing what they show. "
-            "If the material exceeds the line budget, group related points into a "
-            "single exchange, but do NOT drop the core insight of any major section. "
-            "Match your coverage to the line budget in rule 6, not to the document length."
+            "5. COVERAGE — this is a LONG-FORM, in-depth episode, so give the "
+            "document real airtime. Open with the main thesis/purpose and key "
+            "takeaways, then walk through the material section by section. For "
+            "EACH major section, unpack its main point, important names, terms, "
+            "numbers, findings, methods, examples, and conclusions — with follow-up "
+            "questions and genuine back-and-forth, not a single rushed line. "
+            "Describe what diagrams, tables, code blocks, captions, and image "
+            "descriptions show. Breadth AND depth are how you reach the required "
+            "length — do NOT compress the whole document into a quick overview or "
+            "wrap up early. Use ONLY what is in the document; never pad with outside "
+            "facts."
         )
 
     if is_short_doc and not procedural:
@@ -270,12 +277,14 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
         )
     else:
         length_rule = (
-            f"6. Target: between {target_lines} and {max_lines} dialogue lines "
-            f"(Host:/Guest: lines). Target: {target}. The conversation should feel "
-            f"complete and natural, not cut off. Stay close to this range; a few "
-            f"lines over or under is fine, but avoid going far below {target_lines} "
-            f"or far above {max_lines}. If there's too much material, be selective; "
-            f"if too little, go deeper. Count your lines as you go."
+            f"6. LENGTH IS A HARD REQUIREMENT. Produce AT LEAST {target_lines} and up "
+            f"to {max_lines} dialogue lines (Host:/Guest: lines). Target: {target}. A "
+            f"short summary or overview is a FAILURE. Going a little over {max_lines} "
+            f"is acceptable; falling below {target_lines} is NOT. Count your lines as "
+            f"you go, and if you near the end of the document before reaching "
+            f"{target_lines} lines, revisit earlier points in MORE depth rather than "
+            f"ending early. The conversation should feel complete and natural, never "
+            f"cut off."
         )
 
     turn_rule = "7. Aim for 2-3 concise sentences per turn (roughly 30-50 words). Avoid just 1 sentence or long paragraphs."
@@ -932,30 +941,50 @@ def generate_podcast_script(document_text: str) -> str:
     # "Retry produced 80 lines" no-op seen in the logs). Realigning the target to
     # the summary size above already makes this branch rarely trigger.
     if len(dialogue_lines) < min_acceptable_lines and not source_is_summary:
-        # Route the retry straight to Gemini. A single podcast's LLM work fits
-        # well inside one minute (even a 45-page doc took <60s of LLM time), so a
+        # Route retries straight to Gemini. A single podcast's LLM work fits well
+        # inside one minute (even a 45-page doc took <60s of LLM time), so a
         # second Groq call is still inside the 8K-TPM window and is GUARANTEED to
         # 429. Skipping that doomed Groq attempt saves a round-trip and ~10s of
         # latency. If Gemini isn't configured, fall back to the original provider.
         retry_prefer_gemini = True if gemini_ok else prefer_gemini
-        logger.warning(
-            f"[LLM] Script too short ({len(dialogue_lines)} lines, target {target_lines}, "
-            f"min {min_acceptable_lines:.0f}). Retrying (prefer_gemini={retry_prefer_gemini})..."
-        )
-        nudge_messages = first_messages + [
-            {"role": "assistant", "content": full_script},
-            {"role": "user", "content": (
-                f"That was too short — only {len(dialogue_lines)} lines. "
-                f"I need between {target_lines} and {max_lines} Host:/Guest: lines. "
-                f"Please rewrite the full conversation from the beginning."
-            )},
-        ]
-        retry_script = _generate_transcript(nudge_messages, podcast_temp, max_out, retry_prefer_gemini)
-        retry_lines = _count_dialogue_lines(retry_script)
-        if len(retry_lines) >= len(dialogue_lines):
-            full_script = retry_script
-            dialogue_lines = retry_lines
-            logger.info(f"[LLM] Retry produced {len(dialogue_lines)} lines")
+        # Loop up to MAX_LENGTH_RETRIES times while STILL severely short, keeping
+        # the LONGEST script seen. The previous one-shot retry said "rewrite from
+        # the beginning", which just reproduced the same compression (the 20->66
+        # line case in the logs). Instead we tell the model to KEEP its draft and
+        # EXPAND it — growing a script it already has is far more reliable than
+        # regenerating from scratch. We stop the moment an attempt fails to add
+        # lines so a stubborn document can't drain the scarce Gemini quota.
+        attempt = 0
+        while len(dialogue_lines) < min_acceptable_lines and attempt < MAX_LENGTH_RETRIES:
+            attempt += 1
+            logger.warning(
+                f"[LLM] Script too short ({len(dialogue_lines)} lines, target {target_lines}, "
+                f"min {min_acceptable_lines:.0f}). Expand retry {attempt}/{MAX_LENGTH_RETRIES} "
+                f"(prefer_gemini={retry_prefer_gemini})..."
+            )
+            expand_messages = first_messages + [
+                {"role": "assistant", "content": full_script},
+                {"role": "user", "content": (
+                    f"This is too short — only {len(dialogue_lines)} lines, but I need AT "
+                    f"LEAST {target_lines} and up to {max_lines} Host:/Guest: lines. Rewrite "
+                    f"the FULL conversation: keep everything good from the version above and "
+                    f"EXPAND it — cover more of the document, go deeper on each point with "
+                    f"follow-up questions, and add more exchanges. Do NOT summarize, shorten, "
+                    f"or wrap up early, and use only information from the document."
+                )},
+            ]
+            retry_script = _generate_transcript(expand_messages, podcast_temp, max_out, retry_prefer_gemini)
+            retry_lines = _count_dialogue_lines(retry_script)
+            if len(retry_lines) > len(dialogue_lines):
+                full_script = retry_script
+                dialogue_lines = retry_lines
+                logger.info(f"[LLM] Expand retry {attempt} produced {len(dialogue_lines)} lines")
+            else:
+                logger.info(
+                    f"[LLM] Expand retry {attempt} did not grow the script "
+                    f"({len(retry_lines)} lines); keeping best {len(dialogue_lines)} and stopping"
+                )
+                break
 
     # Hard cap: only trim PATHOLOGICAL overshoots (well past the tier max). A
     # line or two over is inaudible and not worth chopping the natural ending.
