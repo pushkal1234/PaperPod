@@ -1,34 +1,52 @@
-import { Cpu, Linkedin, BookOpen, ExternalLink, ArrowUpRight } from 'lucide-react';
+import { Cpu, Linkedin, BookOpen, Rocket, ArrowUpRight } from 'lucide-react';
 
+// Each link mirrors the VideoShowcase card anatomy: a branded visual header,
+// then title + description, then a CTA pinned to the bottom. `gradient` and
+// `accent` give each platform its own on-brand identity.
 const LINKS = [
   {
     id: 'linkedin',
     icon: Linkedin,
+    kind: 'Article',
+    wordmark: 'LinkedIn',
     label: 'Architecture deep dive',
+    desc: 'The full story on LLM routing, idempotent retries, and the production trade-offs behind the pipeline.',
+    cta: 'Read the deep dive',
     url: 'https://www.linkedin.com/pulse/building-production-grade-document-to-podcast-pipeline-pushkal-shukla-ebgjf',
-    desc: 'LLM routing, retries, and production trade-offs.',
+    gradient: 'from-[#0a66c2] to-[#004182]',
+    accent: 'text-[#0a66c2]',
   },
   {
     id: 'medium',
     icon: BookOpen,
+    kind: 'Blog',
+    wordmark: 'Medium',
     label: 'Engineering blog',
+    desc: 'Density heuristics, adaptive TTS concurrency, and the retrieval-augmented Q&A fallback, explained.',
+    cta: 'Read the blog',
     url: 'https://medium.com/@pushkalshuk/building-a-production-grade-document-to-podcast-pipeline-lessons-from-llm-routing-concurrency-88a7b064c279',
-    desc: 'Density heuristics, adaptive TTS, and Q&A fallback.',
+    gradient: 'from-stone-800 to-stone-950',
+    accent: 'text-stone-800',
   },
   {
     id: 'producthunt',
-    icon: ExternalLink,
-    label: 'Product Hunt',
+    icon: Rocket,
+    kind: 'Launch',
+    wordmark: 'Product Hunt',
+    label: 'Follow the launch',
+    desc: 'Track new features and the public changelog — and support PaperPod with an upvote.',
+    cta: 'View on Product Hunt',
     url: 'https://www.producthunt.com/products/paperpod-2',
-    desc: 'Follow updates and the public changelog.',
+    gradient: 'from-[#ff6154] to-[#da552f]',
+    accent: 'text-[#da552f]',
   },
 ];
 
 export default function EngineeringDeepDive() {
   return (
-    <section className="mx-auto max-w-3xl px-4 pt-8 text-center">
-      <div className="rounded-3xl border border-paper-300 bg-white p-5 shadow-soft md:p-6">
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-paper-300 bg-white/70 px-3 py-1 text-[11px] font-semibold text-stone-500">
+    <section className="mx-auto max-w-3xl pt-8 text-center">
+      <div className="flex flex-col rounded-3xl border border-paper-300 bg-white p-5 shadow-soft md:p-6 lg:min-h-[30rem]">
+        <span className="mx-auto inline-flex items-center gap-1.5 rounded-full border border-paper-300 bg-white/70 px-3 py-1 text-[11px] font-semibold text-stone-500">
           <Cpu className="h-3 w-3 text-brand-500" />
           For engineers
         </span>
@@ -39,23 +57,35 @@ export default function EngineeringDeepDive() {
           Idempotent processing, model-aware routing, adaptive concurrency, and retrieval-augmented Q&A.
         </p>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-3 text-left">
-          {LINKS.map(({ id, icon: Icon, label, url, desc }) => (
+        <div className="mt-6 grid flex-1 items-stretch gap-4 text-left sm:grid-cols-3">
+          {LINKS.map(({ id, icon: Icon, kind, wordmark, label, desc, cta, url, gradient, accent }) => (
             <a
               key={id}
               href={url}
               target="_blank"
               rel="noopener noreferrer"
-              className="group flex flex-col rounded-2xl border border-paper-200 bg-paper-50/50 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-200 hover:bg-white hover:shadow-glow"
+              className="group flex h-full flex-col overflow-hidden rounded-2xl border border-paper-300 bg-white p-2 shadow-soft transition duration-200 hover:-translate-y-0.5 hover:shadow-glow"
             >
-              <div className="flex items-start justify-between">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-500 shadow-sm">
-                  <Icon className="h-3 w-3" />
-                  {label}
+              {/* Branded header — echoes the video thumbnails above */}
+              <div className={`relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br ${gradient}`}>
+                <span className="absolute left-2.5 top-2.5 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-700 backdrop-blur">
+                  {kind}
                 </span>
-                <ArrowUpRight className="h-3.5 w-3.5 text-stone-300 transition-colors group-hover:text-brand-500" />
+                <div className="flex flex-col items-center gap-1.5 text-white">
+                  <Icon className="h-8 w-8 transition-transform duration-300 group-hover:scale-110" />
+                  <span className="text-xs font-semibold tracking-wide">{wordmark}</span>
+                </div>
               </div>
-              <p className="mt-2 text-xs leading-relaxed text-stone-500">{desc}</p>
+
+              {/* Text + CTA */}
+              <div className="flex flex-1 flex-col px-1.5 pb-1 pt-3">
+                <h3 className="font-display text-sm font-semibold text-stone-900">{label}</h3>
+                <p className="mt-1 flex-1 text-xs leading-relaxed text-stone-500">{desc}</p>
+                <span className={`mt-3 inline-flex items-center gap-1 text-xs font-semibold ${accent}`}>
+                  {cta}
+                  <ArrowUpRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                </span>
+              </div>
             </a>
           ))}
         </div>
