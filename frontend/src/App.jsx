@@ -7,6 +7,7 @@ import AuthModal from './components/AuthModal';
 import SignOutModal from './components/SignOutModal';
 import SampleEpisode from './components/SampleEpisode';
 import VideoShowcase from './components/VideoShowcase';
+import EngineeringDeepDive from './components/EngineeringDeepDive';
 import ProcessingView from './components/ProcessingView';
 import ConfirmModal from './components/ConfirmModal';
 import ToastContainer from './components/ToastContainer';
@@ -28,6 +29,7 @@ const FOOTER_VIDEOS = [
   { label: 'Product demo', url: 'https://www.youtube.com/watch?v=3UU8Ikde_2M' },
   { label: 'Feature deep dive', url: 'https://www.youtube.com/watch?v=KqSpaN2U7qM' },
 ];
+
 
 function App() {
   const [view, setView] = useState('home');
@@ -528,6 +530,9 @@ function App() {
 
             {/* Watch PaperPod — kept at the bottom, secondary to the product itself */}
             <VideoShowcase />
+
+            {/* Engineering & design decisions — compact dedicated card */}
+            <EngineeringDeepDive />
           </div>
         )}
 
