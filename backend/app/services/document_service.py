@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import uuid
+from collections import Counter
 from pathlib import Path
 
 import PyPDF2
@@ -40,6 +41,96 @@ def clean_extracted_text(text: str) -> str:
     if not text:
         return text
     return _CONTROL_CHARS_RE.sub("", text)
+
+
+# Standalone page-number / running-folio lines: "12", "- 12 -", "Page 12",
+# "Page 12 of 34", "12 / 34". These carry no semantic value in a podcast.
+_PAGE_NUM_RE = re.compile(
+    r"^\s*(?:[-–—]\s*)?(?:page\s+)?\d{1,4}(?:\s*/\s*\d{1,4}|\s+of\s+\d{1,4})?\s*(?:[-–—])?\s*$",
+    re.IGNORECASE,
+)
+# A word hyphenated across a line break in a PDF: "informa-\ntion" -> "information".
+# Includes the soft-hyphen (U+00AD) PDFs sometimes emit.
+_HYPHEN_BREAK_RE = re.compile(r"(\w)[-\u00ad]\n(\w)")
+# 3+ consecutive newlines collapse to exactly one blank line.
+_MULTI_BLANK_RE = re.compile(r"\n{3,}")
+# Below this size a doc has no meaningful boilerplate to reclaim and is cheap
+# already — skip compaction entirely to keep short docs 100% untouched.
+_COMPACTION_MIN_CHARS = 2000
+# If compaction removes more than this fraction, treat it as an anomaly (e.g. a
+# doc that is genuinely mostly repeated lines) and keep the original to be safe.
+_COMPACTION_MAX_REMOVAL = 0.40
+
+
+def compact_document_text(text: str) -> str:
+    """Conservatively remove NON-SEMANTIC extraction noise before the LLM call.
+
+    This is a *lossless-of-meaning* reduction — it only removes chrome that a
+    human reader ignores and that wastes input tokens:
+      - repeated running headers/footers (identical short lines on many pages)
+      - standalone page-number / folio lines
+      - hyphenation splits introduced by PDF line wrapping
+      - trailing per-line whitespace and runs of blank lines
+
+    It NEVER rewrites, summarizes, or drops prose. On any anomaly (empty result,
+    output larger than input, or >40% removed) it returns the ORIGINAL text so a
+    surprising input can never degrade the podcast. Disable via DOC_COMPACTION=0.
+    """
+    if not text or len(text) < _COMPACTION_MIN_CHARS:
+        return text
+    try:
+        original = text
+        # 1. Rejoin words split across a line break (lossless improvement — the
+        #    tokenizer would otherwise see two fragments instead of one word).
+        text = _HYPHEN_BREAK_RE.sub(r"\1\2", text)
+
+        raw_lines = text.split("\n")
+
+        # 2. Detect repeated running headers/footers: a short, non-sentence line
+        #    that recurs many times is almost always page chrome (title bar,
+        #    footer, section running-head), not content. Require >=4 repeats,
+        #    <=70 chars, at least one alphanumeric char, and NOT ending in
+        #    sentence punctuation (so real repeated sentences are never caught).
+        norm = [ln.strip() for ln in raw_lines]
+        counts = Counter(l for l in norm if l)
+        repeated_chrome = {
+            l
+            for l, c in counts.items()
+            if c >= 4 and len(l) <= 70 and l[-1] not in ".:!?" and any(ch.isalnum() for ch in l)
+        }
+
+        out: list[str] = []
+        seen_chrome: set[str] = set()
+        for ln in raw_lines:
+            s = ln.rstrip()
+            stripped = s.strip()
+            if stripped and _PAGE_NUM_RE.match(stripped):
+                continue  # drop standalone page-number lines
+            if stripped in repeated_chrome:
+                # Keep the FIRST occurrence (it may be the document title); drop
+                # every later repeat.
+                if stripped in seen_chrome:
+                    continue
+                seen_chrome.add(stripped)
+            out.append(s)
+
+        text = _MULTI_BLANK_RE.sub("\n\n", "\n".join(out)).strip()
+
+        # Safety gates — never let compaction surprise the pipeline.
+        if not text or len(text) > len(original):
+            return original
+        if len(text) < len(original) * (1 - _COMPACTION_MAX_REMOVAL):
+            logger.warning(
+                "[doc] compaction removed >%.0f%% (%d -> %d chars) — anomaly, keeping original",
+                _COMPACTION_MAX_REMOVAL * 100,
+                len(original),
+                len(text),
+            )
+            return original
+        return text
+    except Exception as e:  # never break generation over a cleanup step
+        logger.warning("[doc] compaction failed (%s) — using original text", e)
+        return text
 
 
 def extract_text(file_path: str, content_type: str) -> str:

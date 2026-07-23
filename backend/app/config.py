@@ -69,10 +69,28 @@ class Settings(BaseSettings):
     # Set KEEP_UPLOADS=0 to purge on completion (the old behavior) if the storage
     # volume becomes a concern. raw_text is always persisted in the DB regardless.
     KEEP_UPLOADS: bool = os.getenv("KEEP_UPLOADS", "1") not in ("0", "false", "False")
+    # --- Token / rate-limit optimizations ---
+    # (C) TPM-cooldown router: once a Groq call trips the free-tier 8K-TPM window
+    # (429/413 TPM), route the NEXT calls straight to Gemini for this many seconds
+    # instead of firing a second Groq call inside the same rolling minute (which is
+    # guaranteed to 429 again). Groq's window is ~60s. Set 0 to disable.
+    GROQ_TPM_COOLDOWN_SECONDS: float = float(os.getenv("GROQ_TPM_COOLDOWN_SECONDS", "60"))
+    # (B) Lossless document compaction: strip non-semantic extraction noise
+    # (repeated running headers/footers, standalone page numbers, PDF hyphenation
+    # line-break splits, runs of blank lines) before the LLM call. Never touches
+    # prose wording. Set "0" to disable if a regression is ever suspected.
+    DOC_COMPACTION: bool = os.getenv("DOC_COMPACTION", "1") not in ("0", "false", "False")
+    # (A) Prompt-cache optimization: hoist the per-document length numbers to a
+    # trailing spec so the podcast system prompt is a byte-stable prefix across
+    # documents (maximizes Groq/Gemini automatic prefix-cache hits). Identical
+    # content is sent to the model — zero output-quality impact. Set "0" to revert
+    # to the inline-number prompt.
+    PROMPT_CACHE_OPTIMIZE: bool = os.getenv("PROMPT_CACHE_OPTIMIZE", "1") not in ("0", "false", "False")
+
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "13")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "14")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

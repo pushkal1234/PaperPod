@@ -1,5 +1,6 @@
 import logging
 import re
+import threading
 import time
 
 from groq import Groq
@@ -17,6 +18,33 @@ if not settings.GROQ_API_KEY:
     logger.error("LLM API key is not set! LLM calls will fail.")
 # Disable Groq's built-in retry — we handle retries ourselves to avoid double backoff
 _client = Groq(api_key=settings.GROQ_API_KEY, max_retries=0) if settings.GROQ_API_KEY else None
+
+# --- Groq TPM-cooldown router state --------------------------------------
+# Groq's free tier meters input+output in a rolling ~60s window. Once we trip it,
+# every Groq call for the rest of that window 429s. Rather than fire (and waste)
+# those doomed calls, we record a monotonic "cooldown until" timestamp on the
+# first TPM error and route subsequent calls straight to Gemini until it passes.
+# Shared across the worker's threads (background jobs run in a threadpool), so a
+# lock guards the read/write even though a stale read is harmless.
+_groq_cooldown_lock = threading.Lock()
+_groq_cooldown_until = 0.0
+
+
+def _groq_in_cooldown() -> bool:
+    """True if a recent Groq TPM error means Groq should be skipped right now."""
+    with _groq_cooldown_lock:
+        return time.monotonic() < _groq_cooldown_until
+
+
+def _trip_groq_cooldown(reason: str = "") -> None:
+    """Start (or extend) the Groq skip window after a TPM rate-limit error."""
+    global _groq_cooldown_until
+    secs = settings.GROQ_TPM_COOLDOWN_SECONDS
+    if secs <= 0:
+        return
+    with _groq_cooldown_lock:
+        _groq_cooldown_until = time.monotonic() + secs
+    logger.warning(f"[LLM] Groq TPM cooldown active for {secs:.0f}s — routing to Gemini {reason}".rstrip())
 
 # Rate limits: keep reasonable chunk sizes
 MAX_INPUT_CHARS = 6000
@@ -269,27 +297,63 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
             "facts."
         )
 
+    # (A) Prompt-cache optimization: when enabled, the length_rule carries NO
+    # per-document numbers — the concrete target/max are appended once as a
+    # trailing TARGET LENGTH block. This keeps the whole rule list byte-identical
+    # across documents (a stable, cacheable prefix) while sending the model the
+    # exact same instruction. When disabled, the original inline-number wording is
+    # used verbatim so behavior can be reverted with a single env flag.
+    cache_opt = settings.PROMPT_CACHE_OPTIMIZE
     if is_short_doc and not procedural:
-        length_rule = (
-            f"6. Aim for roughly {target_lines} to {max_lines} dialogue lines "
-            f"(Host:/Guest: lines). Target: {target}. Keep the conversation natural; "
-            f"do not pad to reach the target, but do not exceed {max_lines} by much."
-        )
+        if cache_opt:
+            length_rule = (
+                "6. Keep it tight and natural. Aim for the dialogue-line range given "
+                "in TARGET LENGTH at the end of these rules (Host:/Guest: lines); do "
+                "not pad to reach it, and do not exceed the stated maximum by much."
+            )
+        else:
+            length_rule = (
+                f"6. Aim for roughly {target_lines} to {max_lines} dialogue lines "
+                f"(Host:/Guest: lines). Target: {target}. Keep the conversation natural; "
+                f"do not pad to reach the target, but do not exceed {max_lines} by much."
+            )
     else:
-        length_rule = (
-            f"6. LENGTH IS A HARD REQUIREMENT. Produce AT LEAST {target_lines} and up "
-            f"to {max_lines} dialogue lines (Host:/Guest: lines). Target: {target}. A "
-            f"short summary or overview is a FAILURE. Going a little over {max_lines} "
-            f"is acceptable; falling below {target_lines} is NOT. Count your lines as "
-            f"you go, and if you near the end of the document before reaching "
-            f"{target_lines} lines, revisit earlier points in MORE depth rather than "
-            f"ending early. The conversation should feel complete and natural, never "
-            f"cut off."
-        )
+        if cache_opt:
+            length_rule = (
+                "6. LENGTH IS A HARD REQUIREMENT. Produce AT LEAST the target number of "
+                "Host:/Guest: dialogue lines given in TARGET LENGTH at the end of these "
+                "rules, up to the stated maximum. A short summary or overview is a "
+                "FAILURE. Going a little over is acceptable; falling below the target is "
+                "NOT. Count your lines as you go, and if you near the end of the document "
+                "before reaching the target, revisit earlier points in MORE depth rather "
+                "than ending early. The conversation should feel complete and natural, "
+                "never cut off."
+            )
+        else:
+            length_rule = (
+                f"6. LENGTH IS A HARD REQUIREMENT. Produce AT LEAST {target_lines} and up "
+                f"to {max_lines} dialogue lines (Host:/Guest: lines). Target: {target}. A "
+                f"short summary or overview is a FAILURE. Going a little over {max_lines} "
+                f"is acceptable; falling below {target_lines} is NOT. Count your lines as "
+                f"you go, and if you near the end of the document before reaching "
+                f"{target_lines} lines, revisit earlier points in MORE depth rather than "
+                f"ending early. The conversation should feel complete and natural, never "
+                f"cut off."
+            )
 
     turn_rule = "7. Aim for 2-3 concise sentences per turn (roughly 30-50 words). Avoid just 1 sentence or long paragraphs."
     if not is_short_doc:
         turn_rule += " No long monologues either."
+
+    # (A) The ONLY per-document text in the prompt when cache_opt is on: a single
+    # trailing spec. Everything above it is byte-identical across documents of the
+    # same type, so the provider's automatic prefix cache can reuse it.
+    length_spec = (
+        f"\n\nTARGET LENGTH: at least {target_lines} and up to {max_lines} "
+        f"Host:/Guest: dialogue lines. Target: {target}."
+        if cache_opt
+        else ""
+    )
 
     return f"""You are a world-class podcast script writer.
 Given the document provided by the user, create an engaging, conversational podcast-style dialogue between two speakers:
@@ -311,7 +375,7 @@ CRITICAL RULES — FOLLOW EXACTLY:
 11. The final two lines MUST be:
 Guest: (a short, specific takeaway from the document, no questions, no generic phrases like "to wrap up" or "the big takeaway")
 Host: (a brief thank you + goodbye, no questions)
-Do not output anything after the final Host line."""
+Do not output anything after the final Host line.{length_spec}"""
 
 
 QA_SYSTEM_PROMPT = """You are a helpful assistant that answers questions about a document.
@@ -490,6 +554,32 @@ def _try_gemini_fallback(messages: list[dict], temperature: float, max_tokens: i
         return None
 
 
+def _log_groq_cache_usage(response) -> None:
+    """Best-effort visibility into Groq automatic prompt caching.
+
+    Groq (OpenAI-compatible) reports cached input tokens in
+    ``usage.prompt_tokens_details.cached_tokens``. Cached tokens are 50% cheaper
+    AND — per Groq's docs — do NOT count toward the free-tier TPM window, so a
+    high ratio here is the signal that the stable-prefix prompt (A) is paying off.
+    Never raises: pure telemetry.
+    """
+    try:
+        usage = getattr(response, "usage", None)
+        if not usage:
+            return
+        prompt_tokens = getattr(usage, "prompt_tokens", None)
+        details = getattr(usage, "prompt_tokens_details", None)
+        cached = getattr(details, "cached_tokens", None) if details else None
+        if cached:
+            pct = (100.0 * cached / prompt_tokens) if prompt_tokens else 0.0
+            logger.info(
+                f"[LLM] Groq prompt cache hit: {cached}/{prompt_tokens} input tokens "
+                f"cached ({pct:.0f}%) — cached tokens are free against TPM"
+            )
+    except Exception:
+        pass
+
+
 def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 2048) -> str:
     """Call LLM with retry on rate limit and connection errors.
 
@@ -502,6 +592,16 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
         if fb is not None:
             return fb
         raise RuntimeError(LLM_CONFIG_MSG)
+
+    # (C) TPM-cooldown router: a recent Groq call already tripped the free-tier
+    # 8K-TPM window, so a fresh Groq call inside it is guaranteed to 429. Skip
+    # the doomed round-trip and serve from Gemini directly. If Gemini is not
+    # configured we fall through and let Groq try anyway (nothing to lose).
+    if _groq_in_cooldown():
+        fb = _try_gemini_fallback(messages, temperature, max_tokens)
+        if fb is not None and fb.strip():
+            logger.info("[LLM] Groq skipped (TPM cooldown) — served via Gemini")
+            return fb
 
     # gpt-oss reasoning models can spend the ENTIRE max_tokens budget on hidden
     # reasoning and return empty content (finish_reason="length") — e.g. on noisy
@@ -525,6 +625,7 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
             )
             content = response.choices[0].message.content
             if content and content.strip():
+                _log_groq_cache_usage(response)
                 return content
             # Empty content despite no exception (reasoning ate the whole budget,
             # a refusal, etc.). Never return it silently — the caller would treat
@@ -548,7 +649,11 @@ def _call_llm(messages: list[dict], temperature: float = 0.8, max_tokens: int = 
                 logger.error(f"[LLM] Payload too large — failing fast")
                 raise RuntimeError("Input too large for processing. Please try a shorter document.")
             elif _is_llm_rate_limit(err_str.lower()):
-                # Groq is throttled — try Gemini right away rather than waiting.
+                # Groq is throttled — open the TPM cooldown so the NEXT call in
+                # this podcast (e.g. transcript after summary) skips Groq instead
+                # of firing another doomed request into the same 60s window, then
+                # try Gemini right away rather than waiting.
+                _trip_groq_cooldown("(rate limit)")
                 fb = _try_gemini_fallback(messages, temperature, max_tokens)
                 if fb is not None:
                     return fb
@@ -761,6 +866,23 @@ def generate_podcast_script(document_text: str) -> str:
     # Guard: empty document
     if not document_text or not document_text.strip():
         raise RuntimeError("The uploaded document appears to be empty or contains no readable text. Please try a different file.")
+
+    # (B) Lossless compaction: strip non-semantic extraction noise (repeated
+    # headers/footers, page numbers, PDF hyphenation splits, blank-line runs) so
+    # tokens are spent on content, not chrome. Meaning-preserving and self-guarded
+    # (returns the original on any anomaly). Runs BEFORE sizing/routing so the
+    # saved tokens can also promote the doc into a cheaper single-call lane.
+    if settings.DOC_COMPACTION:
+        from app.services.document_service import compact_document_text
+
+        _pre_chars = len(document_text)
+        document_text = compact_document_text(document_text)
+        if len(document_text) < _pre_chars:
+            _saved = _pre_chars - len(document_text)
+            logger.info(
+                f"[LLM] Doc compaction: {_pre_chars} -> {len(document_text)} chars "
+                f"(-{_saved}, ~{_saved / CHARS_PER_TOKEN:.0f} tok saved)"
+            )
 
     original_length = len(document_text)
 
