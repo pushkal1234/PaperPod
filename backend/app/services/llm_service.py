@@ -13,7 +13,7 @@ LLM_RATE_LIMIT_MSG = "PaperPod's AI service is temporarily unavailable — the p
 LLM_SERVICE_ERROR_MSG = "PaperPod's AI service is temporarily unavailable. Please try again shortly."
 LLM_CONFIG_MSG = "The AI service is not configured on this server. Please contact support."
 
-# Create client once
+# Create the client once
 if not settings.GROQ_API_KEY:
     logger.error("LLM API key is not set! LLM calls will fail.")
 # Disable Groq's built-in retry — we handle retries ourselves to avoid double backoff
