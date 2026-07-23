@@ -39,10 +39,12 @@ class Settings(BaseSettings):
     TTS_CONCURRENCY_SMALL: int = int(os.getenv("TTS_CONCURRENCY_SMALL", "5"))
     TTS_SMALL_DOC_MAX_CLIPS: int = int(os.getenv("TTS_SMALL_DOC_MAX_CLIPS", "40"))
     # Runaway safety cap on dialogue turns fed to TTS. This is NOT a length knob —
-    # it must stay >= the LLM's largest possible script (LENGTH_TIERS max 200 +
-    # 16 procedural headroom + outro) so legitimate long podcasts are never
+    # it must stay >= the LLM's largest possible FINISHED script, which is now the
+    # generous overshoot ceiling on the biggest tier: feasible max 200 lines ×
+    # HEAVY_OVERSHOOT_CEILING_FACTOR (1.35) ≈ 270, + the deterministic outro. So
+    # legitimate long podcasts (and preserved heavy-overshoot content) are never
     # truncated here. Control podcast length via the LLM tiers, not this cap.
-    MAX_DIALOGUE_TURNS: int = int(os.getenv("MAX_DIALOGUE_TURNS", "240"))
+    MAX_DIALOGUE_TURNS: int = int(os.getenv("MAX_DIALOGUE_TURNS", "280"))
 
     # Reject oversized uploads before they are read fully into memory (OOM guard).
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "25"))
@@ -86,11 +88,18 @@ class Settings(BaseSettings):
     # content is sent to the model — zero output-quality impact. Set "0" to revert
     # to the inline-number prompt.
     PROMPT_CACHE_OPTIMIZE: bool = os.getenv("PROMPT_CACHE_OPTIMIZE", "1") not in ("0", "false", "False")
+    # Content-preserving overshoot handling. When the model returns MORE dialogue
+    # lines than the tier max, we do NOT trim back to max_lines — underselling a
+    # rich document (chopping real information to hit a line number) is worse UX
+    # than a slightly longer episode. We keep everything up to a GENEROUS ceiling
+    # of max_lines × this factor, and only shave a heavy overshoot down to that
+    # ceiling (never below it). 1.35 ≈ keep up to +35% over max before any trim.
+    HEAVY_OVERSHOOT_CEILING_FACTOR: float = float(os.getenv("HEAVY_OVERSHOOT_CEILING_FACTOR", "1.35"))
 
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "14")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "15")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

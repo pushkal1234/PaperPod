@@ -71,12 +71,11 @@ CHARS_PER_TOKEN = 3.5
 # (e.g. the model returned empty/garbage on an oversized doc). We refuse to
 # ship a near-empty "thank you"-only podcast and surface a clear error instead.
 MIN_VIABLE_DIALOGUE_LINES = 6
-# The hard line cap is only meant to catch pathological overshoots (a model
-# returning dozens of extra lines). Small overshoots (a line or two past the
-# tier max) make no audible difference, so we allow this much slack before
-# trimming — otherwise we'd needlessly chop a real closing line right before
-# the deterministic outro is appended.
-TRIM_GRACE_LINES = 5
+# Overshoot handling is content-preserving (see _overshoot_ceiling). We keep a
+# script as-is until it exceeds a GENEROUS ceiling (max_lines × the configured
+# factor) and only then shave it down to that ceiling — never back to max_lines.
+# Chopping real information to hit a line number undersells a rich document and
+# is worse UX than a slightly longer episode.
 # A transcript is "good enough" at this fraction of the tier's target line count.
 # target_lines is already the LOW end of each tier (max_lines sits above it), so
 # accepting 85% costs ~30s on a 12-min episode — inaudible — while avoiding a
@@ -291,10 +290,12 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
             "numbers, findings, methods, examples, and conclusions — with follow-up "
             "questions and genuine back-and-forth, not a single rushed line. "
             "Describe what diagrams, tables, code blocks, captions, and image "
-            "descriptions show. Breadth AND depth are how you reach the required "
-            "length — do NOT compress the whole document into a quick overview or "
-            "wrap up early. Use ONLY what is in the document; never pad with outside "
-            "facts."
+            "descriptions show. Breadth AND depth are how you reach the target "
+            "length — but the maximum in rule 6 is a HARD ceiling: if the document "
+            "is too large to cover fully within it, prioritize the most important "
+            "sections rather than exceeding the maximum. Do NOT compress everything "
+            "into a quick overview or wrap up early, and use ONLY what is in the "
+            "document; never pad with outside facts."
         )
 
     # (A) Prompt-cache optimization: when enabled, the length_rule carries NO
@@ -307,50 +308,67 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
     if is_short_doc and not procedural:
         if cache_opt:
             length_rule = (
-                "6. Keep it tight and natural. Aim for the dialogue-line range given "
-                "in TARGET LENGTH at the end of these rules (Host:/Guest: lines); do "
-                "not pad to reach it, and do not exceed the stated maximum by much."
+                "6. Keep it tight and natural. Stay WITHIN the dialogue-line range "
+                "given in TARGET LENGTH at the end of these rules (Host:/Guest: lines): "
+                "do not pad to reach the minimum, and do NOT exceed the stated maximum."
             )
         else:
             length_rule = (
-                f"6. Aim for roughly {target_lines} to {max_lines} dialogue lines "
+                f"6. Stay WITHIN {target_lines} to {max_lines} dialogue lines "
                 f"(Host:/Guest: lines). Target: {target}. Keep the conversation natural; "
-                f"do not pad to reach the target, but do not exceed {max_lines} by much."
+                f"do not pad to reach the minimum, and do NOT exceed {max_lines}."
             )
     else:
         if cache_opt:
             length_rule = (
-                "6. LENGTH IS A HARD REQUIREMENT. Produce AT LEAST the target number of "
-                "Host:/Guest: dialogue lines given in TARGET LENGTH at the end of these "
-                "rules, up to the stated maximum. A short summary or overview is a "
-                "FAILURE. Going a little over is acceptable; falling below the target is "
-                "NOT. Count your lines as you go, and if you near the end of the document "
-                "before reaching the target, revisit earlier points in MORE depth rather "
-                "than ending early. The conversation should feel complete and natural, "
-                "never cut off."
+                "6. LENGTH IS A HARD REQUIREMENT — the minimum AND the maximum are both "
+                "strict. Produce AT LEAST the target number of Host:/Guest: dialogue "
+                "lines given in TARGET LENGTH at the end of these rules, and do NOT "
+                "exceed the stated maximum. A short summary or overview is a FAILURE; so "
+                "is running past the maximum. Count your lines as you go: as you approach "
+                "the maximum, steer the conversation toward its closing lines instead of "
+                "opening new threads; if you near the end of the document before reaching "
+                "the minimum, revisit earlier points in MORE depth rather than ending "
+                "early. Stay INSIDE the range and finish naturally — never cut off."
             )
         else:
             length_rule = (
-                f"6. LENGTH IS A HARD REQUIREMENT. Produce AT LEAST {target_lines} and up "
-                f"to {max_lines} dialogue lines (Host:/Guest: lines). Target: {target}. A "
-                f"short summary or overview is a FAILURE. Going a little over {max_lines} "
-                f"is acceptable; falling below {target_lines} is NOT. Count your lines as "
-                f"you go, and if you near the end of the document before reaching "
+                f"6. LENGTH IS A HARD REQUIREMENT — the minimum AND the maximum are both "
+                f"strict. Produce AT LEAST {target_lines} and up to {max_lines} dialogue "
+                f"lines (Host:/Guest: lines); do NOT exceed {max_lines}. Target: {target}. "
+                f"A short summary or overview is a FAILURE. Count your lines as you go: as "
+                f"you approach {max_lines}, steer toward the closing lines instead of "
+                f"opening new threads; if you near the end of the document before reaching "
                 f"{target_lines} lines, revisit earlier points in MORE depth rather than "
-                f"ending early. The conversation should feel complete and natural, never "
-                f"cut off."
+                f"ending early. Stay INSIDE the {target_lines}-{max_lines} range and finish "
+                f"naturally — never cut off."
             )
 
-    turn_rule = "7. Aim for 2-3 concise sentences per turn (roughly 30-50 words). Avoid just 1 sentence or long paragraphs."
-    if not is_short_doc:
-        turn_rule += " No long monologues either."
+    # Turn length controls line COUNT for a given amount of content: thin
+    # one-liners inflate the line count (many short lines) and drive overshoot,
+    # while fuller turns carry the same material in fewer lines that land nearer
+    # the target. Short docs stay snappy; larger docs get deliberately fuller
+    # turns so the script doesn't balloon into hundreds of thin lines.
+    if is_short_doc:
+        turn_rule = (
+            "7. Aim for 2-3 concise sentences per turn (roughly 30-50 words). "
+            "Avoid just 1 sentence or long paragraphs."
+        )
+    else:
+        turn_rule = (
+            "7. Make each turn substantial: 3-4 full sentences (roughly 45-70 words) "
+            "that develop a point with specifics — NOT a thin one-liner. Do not split "
+            "one idea across many tiny turns. Avoid both single-sentence turns and "
+            "long monologues."
+        )
 
     # (A) The ONLY per-document text in the prompt when cache_opt is on: a single
     # trailing spec. Everything above it is byte-identical across documents of the
     # same type, so the provider's automatic prefix cache can reuse it.
     length_spec = (
         f"\n\nTARGET LENGTH: at least {target_lines} and up to {max_lines} "
-        f"Host:/Guest: dialogue lines. Target: {target}."
+        f"Host:/Guest: dialogue lines — stay within this range and do NOT exceed "
+        f"{max_lines}. Target: {target}."
         if cache_opt
         else ""
     )
@@ -804,6 +822,19 @@ def _count_dialogue_lines(text: str) -> list[str]:
     ]
 
 
+def _overshoot_ceiling(max_lines: int) -> int:
+    """Generous, content-preserving upper bound for a FINISHED script.
+
+    We keep everything up to this ceiling and only shave beyond it, so a rich
+    document is never chopped back to max_lines just to hit a line number. The
+    ceiling is max_lines × HEAVY_OVERSHOOT_CEILING_FACTOR, clamped to the TTS
+    runaway cap (minus room for the deterministic outro) and never below max_lines.
+    """
+    ceiling = round(max_lines * settings.HEAVY_OVERSHOOT_CEILING_FACTOR)
+    ceiling = min(ceiling, settings.MAX_DIALOGUE_TURNS - 2)  # leave room for the outro
+    return max(ceiling, max_lines)
+
+
 def _trim_script_to_max_lines(script: str, max_lines: int) -> str:
     """Keep only the first max_lines Host/Guest lines (preserves non-dialogue spacing minimally)."""
     kept: list[str] = []
@@ -1108,12 +1139,29 @@ def generate_podcast_script(document_text: str) -> str:
                 )
                 break
 
-    # Hard cap: only trim PATHOLOGICAL overshoots (well past the tier max). A
-    # line or two over is inaudible and not worth chopping the natural ending.
-    if len(dialogue_lines) > max_lines + TRIM_GRACE_LINES:
-        logger.warning(f"[LLM] Script too long ({len(dialogue_lines)} lines), trimming to {max_lines}")
-        full_script = _trim_script_to_max_lines(full_script, max_lines)
+    # Content-preserving overshoot handling. We do NOT trim a script back to
+    # max_lines: underselling a rich document by chopping real information to hit
+    # a line number is worse UX than a slightly longer episode. We keep everything
+    # up to a GENEROUS ceiling (max_lines × HEAVY_OVERSHOOT_CEILING_FACTOR) and
+    # only shave a HEAVY overshoot down to that ceiling — so the listener still
+    # keeps the vast majority of the material. The deterministic outro is appended
+    # afterwards, so the ending stays clean regardless.
+    ceiling = _overshoot_ceiling(max_lines)
+    n = len(dialogue_lines)
+    if n > ceiling:
+        pct = round(100 * (n - max_lines) / max_lines)
+        logger.warning(
+            f"[LLM] Heavy overshoot: {n} lines (+{pct}% over max={max_lines}) — shaving to "
+            f"generous ceiling {ceiling} (keeping {ceiling - max_lines} lines above max, not trimming to max)"
+        )
+        full_script = _trim_script_to_max_lines(full_script, ceiling)
         dialogue_lines = _count_dialogue_lines(full_script)
+    elif n > max_lines:
+        pct = round(100 * (n - max_lines) / max_lines)
+        logger.info(
+            f"[LLM] Overshoot kept: {n} lines (+{pct}% over max={max_lines}, within ceiling "
+            f"{ceiling}) — preserving content, no trim"
+        )
 
     logger.info(f"Final script: {len(dialogue_lines)} dialogue lines (target {target_lines}-{max_lines}), {len(full_script)} chars")
 

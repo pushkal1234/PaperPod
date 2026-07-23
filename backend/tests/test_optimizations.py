@@ -192,6 +192,62 @@ class TestPromptCacheOptimize(unittest.TestCase):
         self.assertIn("TARGET LENGTH", short)
         self.assertIn("TARGET LENGTH", proc)
 
+    def test_length_rule_enforces_strict_ceiling(self):
+        # The max is now a HARD ceiling (symmetric with the floor), not the old
+        # "a little over is acceptable" loophole that caused the 314-line overshoot.
+        llm_service.settings.PROMPT_CACHE_OPTIMIZE = True
+        p = llm_service._build_podcast_prompt(140, 160, procedural=False)
+        self.assertIn("do NOT exceed", p)
+        self.assertNotIn("little over", p)
+        self.assertNotIn("by much", p)
+
+    def test_length_rule_strict_ceiling_when_cache_disabled(self):
+        llm_service.settings.PROMPT_CACHE_OPTIMIZE = False
+        p = llm_service._build_podcast_prompt(140, 160, procedural=False)
+        self.assertIn("do NOT exceed 160", p)
+        self.assertNotIn("little over", p)
+
+    def test_turn_rule_fuller_for_large_docs_snappy_for_short(self):
+        # Short docs keep snappy 30-50 word turns; larger docs get deliberately
+        # fuller turns so the line count doesn't balloon into thin one-liners.
+        short = llm_service._build_podcast_prompt(12, 14, procedural=False)  # is_short_doc
+        large = llm_service._build_podcast_prompt(140, 160, procedural=False)
+        self.assertIn("30-50 words", short)
+        self.assertIn("45-70 words", large)
+        self.assertNotIn("45-70 words", short)
+
+
+# --------------------------------------------------------------------------- #
+# Content-preserving overshoot ceiling
+# --------------------------------------------------------------------------- #
+class TestOvershootCeiling(unittest.TestCase):
+    def test_ceiling_is_generous_above_max_not_maxlines(self):
+        s = llm_service.settings
+        ml = 186
+        c = llm_service._overshoot_ceiling(ml)
+        # It keeps content ABOVE max_lines (never trims back to max_lines)...
+        self.assertGreater(c, ml)
+        # ...and equals max_lines × factor, clamped to the TTS runaway cap.
+        expected = min(round(ml * s.HEAVY_OVERSHOOT_CEILING_FACTOR), s.MAX_DIALOGUE_TURNS - 2)
+        self.assertEqual(c, expected)
+
+    def test_ceiling_clamped_to_tts_cap(self):
+        s = llm_service.settings
+        # A large max_lines whose ×factor would exceed the TTS cap is clamped.
+        c = llm_service._overshoot_ceiling(220)
+        self.assertLessEqual(c, s.MAX_DIALOGUE_TURNS - 2)
+
+    def test_ceiling_never_below_maxlines(self):
+        # Even if the clamp would pull it under, the ceiling is never < max_lines.
+        big = llm_service.settings.MAX_DIALOGUE_TURNS  # far above the cap
+        self.assertGreaterEqual(llm_service._overshoot_ceiling(big), big)
+
+    def test_typical_heavy_overshoot_keeps_250_plus(self):
+        # The motivating case: max≈186, model returns ~314. We must keep ~250+,
+        # NOT trim to 186.
+        c = llm_service._overshoot_ceiling(186)
+        self.assertGreaterEqual(c, 250)
+
 
 # --------------------------------------------------------------------------- #
 # (C) Groq TPM-cooldown router
