@@ -13,7 +13,7 @@ LLM_RATE_LIMIT_MSG = "PaperPod's AI service is temporarily unavailable — the p
 LLM_SERVICE_ERROR_MSG = "PaperPod's AI service is temporarily unavailable. Please try again shortly."
 LLM_CONFIG_MSG = "The AI service is not configured on this server. Please contact support."
 
-# Create the client once
+# Create client once
 if not settings.GROQ_API_KEY:
     logger.error("LLM API key is not set! LLM calls will fail.")
 # Disable Groq's built-in retry — we handle retries ourselves to avoid double backoff
@@ -555,6 +555,7 @@ def _call_gemini(messages: list[dict], temperature: float, max_tokens: int) -> s
     text = (response.text or "").strip()
     if not text:
         raise RuntimeError("Gemini returned empty response")
+    _log_gemini_cache_usage(response)
     return text
 
 
@@ -587,12 +588,49 @@ def _log_groq_cache_usage(response) -> None:
             return
         prompt_tokens = getattr(usage, "prompt_tokens", None)
         details = getattr(usage, "prompt_tokens_details", None)
-        cached = getattr(details, "cached_tokens", None) if details else None
+        cached = (getattr(details, "cached_tokens", None) if details else None) or 0
+        pct = (100.0 * cached / prompt_tokens) if prompt_tokens else 0.0
         if cached:
-            pct = (100.0 * cached / prompt_tokens) if prompt_tokens else 0.0
             logger.info(
-                f"[LLM] Groq prompt cache hit: {cached}/{prompt_tokens} input tokens "
+                f"[LLM] Groq prompt cache HIT: {cached}/{prompt_tokens} input tokens "
                 f"cached ({pct:.0f}%) — cached tokens are free against TPM"
+            )
+        else:
+            # Log misses too, otherwise "no line" is ambiguous (miss vs. no telemetry).
+            logger.info(
+                f"[LLM] Groq prompt cache MISS: 0/{prompt_tokens} input tokens cached "
+                f"(no shared prefix reused — first call for this prefix, or below Groq's "
+                f"~1K-token minimum)"
+            )
+    except Exception:
+        pass
+
+
+def _log_gemini_cache_usage(response) -> None:
+    """Best-effort visibility into Gemini implicit prompt caching.
+
+    Gemini 2.5 models cache a shared prompt PREFIX automatically and report the
+    reused tokens in ``usage_metadata.cached_content_token_count``. Cached input
+    tokens are billed at a large discount, so a non-zero count means the
+    stable-prefix prompt (A) — or the expand-retry re-sending the same
+    system+document prefix — is paying off. Never raises: pure telemetry.
+    """
+    try:
+        usage = getattr(response, "usage_metadata", None)
+        if not usage:
+            return
+        prompt_tokens = getattr(usage, "prompt_token_count", None)
+        cached = getattr(usage, "cached_content_token_count", None) or 0
+        pct = (100.0 * cached / prompt_tokens) if prompt_tokens else 0.0
+        if cached:
+            logger.info(
+                f"[LLM] Gemini prompt cache HIT: {cached}/{prompt_tokens} input tokens "
+                f"cached ({pct:.0f}%)"
+            )
+        else:
+            logger.info(
+                f"[LLM] Gemini prompt cache MISS: 0/{prompt_tokens} input tokens cached "
+                f"(implicit cache needs a shared prefix >= ~1K tokens from a recent call)"
             )
     except Exception:
         pass
