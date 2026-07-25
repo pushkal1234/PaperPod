@@ -6,6 +6,7 @@ import json
 import time
 import asyncio
 import hashlib
+import mimetypes
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
@@ -367,6 +368,18 @@ async def _process_image_document(doc_id: str, image_bytes: bytes, mime_type: st
     """Background task: OCR image, then chunks → LLM → TTS."""
     from app.services.image_service import extract_text_from_image
     from app.database import async_session
+
+    # Retain the source image for inspection (parity with the file-upload path in logs)
+    if settings.KEEP_UPLOADS:
+        try:
+            ext = mimetypes.guess_extension((mime_type or "").split(";")[0].strip() or "image/jpeg")
+            if ext in (None, ".jpe"):
+                ext = ".jpg"
+            os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+            with open(os.path.join(settings.UPLOAD_DIR, f"{doc_id}{ext}"), "wb") as f:
+                f.write(image_bytes)
+        except OSError:
+            pass
 
     # Step 1: OCR (can take 10-60s for large camera photos)
     try:
