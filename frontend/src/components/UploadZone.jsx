@@ -32,7 +32,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
     if (first.code === 'file-too-large') {
       setRejectionMsg(`That file is too large. Please keep uploads under ${MAX_UPLOAD_MB} MB.`);
     } else if (first.code === 'file-invalid-type') {
-      setRejectionMsg('Unsupported file type. Upload a PDF, DOCX, TXT, or image (PNG/JPG/WEBP).');
+      setRejectionMsg('Unsupported file type. Upload a PDF, DOCX, PPTX, TXT, or image (PNG/JPG/WEBP).');
     } else if (first.code === 'too-many-files') {
       setRejectionMsg('Please upload one file at a time.');
     } else {
@@ -46,6 +46,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
     accept: {
       'application/pdf': ['.pdf'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
       'text/plain': ['.txt'],
       'image/*': ['.png', '.jpg', '.jpeg', '.webp'],
     },
@@ -136,7 +137,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
                   {isDragActive ? 'Drop your document here' : 'Upload a Document'}
                 </p>
                 <p className="text-sm text-stone-400 mt-1">
-                  PDF, DOCX, TXT, or Image (PNG, JPG) · up to {MAX_UPLOAD_MB} MB
+                  PDF, DOCX, PPTX, TXT, or Image (PNG, JPG) · up to {MAX_UPLOAD_MB} MB
                 </p>
               </div>
             </div>

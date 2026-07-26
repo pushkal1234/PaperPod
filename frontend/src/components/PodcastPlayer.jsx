@@ -5,6 +5,55 @@ const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2];
 const POSITION_KEY_PREFIX = 'paperpod:pos:';
 const RATE_KEY = 'paperpod:rate';
 
+// iOS Safari (incl. iPadOS, which masquerades as macOS) largely IGNORES the
+// `<a download>` attribute: clicking a blob link opens it in the SAME tab
+// instead of saving, which navigates away from the app. Detect Apple touch
+// devices so we can route them to the native share sheet ("Save to Files").
+function isAppleTouchDevice() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod/.test(ua)) return true;
+  // iPadOS 13+ reports as "MacIntel" Safari; distinguish it by touch support.
+  return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+}
+
+// Save a Blob to the user's device across platforms.
+//  - Apple touch devices: use the Web Share API (files) so the user gets the
+//    native "Save to Files"/AirDrop sheet — the only reliable save path on iOS.
+//  - Everyone else (desktop, Android Chrome): the `<a download>` attribute works,
+//    so trigger a direct download. The anchor MUST be in the DOM and the object
+//    URL revoked on a delay, or mobile browsers cancel the download mid-flight.
+async function saveBlob(blob, filename, shareTitle) {
+  if (isAppleTouchDevice() && typeof navigator.canShare === 'function') {
+    try {
+      const file = new File([blob], filename, {
+        type: blob.type || 'application/octet-stream',
+      });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: shareTitle || filename });
+        return;
+      }
+    } catch (err) {
+      // User dismissed the share sheet — respect that, don't force a download.
+      if (err && err.name === 'AbortError') return;
+      // Any other failure (e.g. lost user activation) falls through to <a download>.
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+}
+
 function buildProportionalSegments(dialogueScript, duration) {
   const lines = dialogueScript
     .split('\n')
@@ -315,14 +364,9 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
       const res = await fetch(audioUrl, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      // saveBlob routes iOS to the native share sheet ("Save to Files") and
+      // everyone else to a direct <a download>.
+      await saveBlob(blob, filename, title || 'PaperPod podcast');
     } catch {
       // Last-resort fallback: open in a new tab so the user can save manually.
       window.open(audioUrl, '_blank', 'noopener');
@@ -393,12 +437,11 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
             <button
               onClick={() => {
                 const blob = new Blob([dialogueScript], { type: 'text/plain' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${title.replace(/[^a-z0-9]/gi, '_')}_transcript.txt`;
-                a.click();
-                URL.revokeObjectURL(url);
+                const filename = `${title.replace(/[^a-z0-9]/gi, '_')}_transcript.txt`;
+                // Same cross-platform saver as the audio button — fixes iOS
+                // Safari (which ignores <a download>) and the previous mobile
+                // bug of revoking the blob URL before the download started.
+                saveBlob(blob, filename, title || 'PaperPod transcript');
               }}
               className="p-2 rounded-lg bg-paper-100 text-stone-500 hover:text-brand-700 hover:bg-brand-50 transition-all border border-paper-300"
               title="Download transcript"

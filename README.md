@@ -11,7 +11,7 @@ Upload any document (PDF, DOCX, TXT) → AI generates a natural two-host podcast
 
 ## ✨ Features
 
-- **Document to Podcast** — Upload a PDF/DOCX/TXT, paste text, or snap a photo and get an engaging two-host podcast conversation
+- **Document to Podcast** — Upload a PDF/DOCX/PPTX/TXT, paste text, or snap a photo and get an engaging two-host podcast conversation
 - **Dual AI Voices** — Host + Guest with natural speech synthesis
 - **Real-time Q&A** — Ask questions via voice or text, get audio answers
 - **No GPU Required** — Runs entirely on CPU using cloud AI APIs (free tier)
@@ -114,7 +114,7 @@ You should see: `Local: http://localhost:5173/`
 ### Step 5: Use PaperPod
 
 1. Open **http://localhost:5173** in your browser
-2. Upload a PDF, DOCX, or TXT document
+2. Upload a PDF, DOCX, PPTX, or TXT document
 3. Wait ~2-3 minutes for podcast generation
 4. Listen to your AI-generated podcast
 5. Ask questions via voice or text in the Q&A panel

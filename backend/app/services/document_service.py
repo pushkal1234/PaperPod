@@ -142,6 +142,10 @@ def extract_text(file_path: str, content_type: str) -> str:
         "application/msword",
     ) or file_path.endswith(".docx"):
         text = _extract_docx(file_path)
+    elif content_type == (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    ) or file_path.endswith(".pptx"):
+        text = _extract_pptx(file_path)
     else:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             text = f.read()
@@ -329,6 +333,95 @@ def _extract_docx(file_path: str) -> str:
             if rendered.strip():
                 parts.append(rendered)
     return "\n\n".join(parts)
+
+
+def _extract_pptx(file_path: str) -> str:
+    # Lazy import so python-pptx only loads when a deck is actually uploaded.
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    prs = Presentation(file_path)
+    parts = []
+    images = []  # (slide_no, blob, content_type) for the vision pass
+
+    for i, slide in enumerate(prs.slides, start=1):
+        chunk = []
+        for shape in _walk_shapes(slide.shapes, MSO_SHAPE_TYPE):
+            if getattr(shape, "has_table", False):
+                chunk.append(_pptx_table(shape.table))
+            elif getattr(shape, "has_text_frame", False) and shape.text_frame.text.strip():
+                chunk.append(shape.text_frame.text.strip())
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                try:
+                    images.append((i, shape.image.blob, shape.image.content_type))
+                except Exception:
+                    pass
+        # Speaker notes are often where the real explanation lives.
+        if slide.has_notes_slide:
+            notes = slide.notes_slide.notes_text_frame.text.strip()
+            if notes:
+                chunk.append(f"Notes: {notes}")
+        if chunk:
+            parts.append(f"Slide {i}:\n" + "\n".join(chunk))
+
+    text = "\n\n".join(parts)
+
+    # Same Gemini vision path as PDFs; pictures come straight from the file so
+    # no page rendering is needed.
+    visuals = _describe_pptx_images(images)
+    if visuals:
+        text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
+    return text
+
+
+def _walk_shapes(shapes, mso_type):
+    # Flatten groups so nested text and pictures aren't missed.
+    for shape in shapes:
+        if shape.shape_type == mso_type.GROUP:
+            yield from _walk_shapes(shape.shapes, mso_type)
+        else:
+            yield shape
+
+
+def _pptx_table(table) -> str:
+    rows = []
+    for row in table.rows:
+        cells = [c.text.strip() for c in row.cells]
+        if any(cells):
+            rows.append(" | ".join(cells))
+    return "\n".join(rows)
+
+
+def _describe_pptx_images(images: list[tuple[int, bytes, str]]) -> str:
+    """Describe raster pictures embedded in slides via Gemini (best-effort)."""
+    if not settings.PDF_VISION_EXTRACTION or not settings.GOOGLE_API_KEY or not images:
+        return ""
+    from io import BytesIO
+    from PIL import Image
+
+    pages = []
+    for slide_no, blob, content_type in images:
+        if len(pages) >= settings.PDF_VISION_MAX_FIGURES:
+            break
+        if "emf" in content_type or "wmf" in content_type:
+            continue  # vector art Gemini can't read
+        try:
+            img = Image.open(BytesIO(blob))
+            if min(img.size) < _MIN_FIGURE_DIM:
+                continue  # skip logos/icons/bullets
+            img = img.convert("RGB")
+            if max(img.size) > 1280:
+                r = 1280 / max(img.size)
+                img = img.resize((int(img.width * r), int(img.height * r)))
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            pages.append((slide_no, buf.getvalue()))
+        except Exception:
+            continue
+    if not pages:
+        return ""
+    from app.services.image_service import describe_pdf_figures
+    return describe_pdf_figures(pages)
 
 
 def chunk_text(text: str, chunk_size: int = 1500, overlap: int = 200) -> list[str]:

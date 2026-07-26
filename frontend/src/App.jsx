@@ -427,7 +427,7 @@ function App() {
                 </span>
               </h1>
               <p className="text-stone-500 mt-5 max-w-xl mx-auto text-lg leading-relaxed">
-                Upload a PDF, DOCX, or TXT, paste text, or snap a photo — and get a
+                Upload a PDF, DOCX, PPTX, or TXT, paste text, or snap a photo — and get a
                 natural, two-host podcast in minutes. Then ask questions and hear instant answers.
               </p>
               {/* Decorative audio waveform — echoes the brand art */}
@@ -506,7 +506,7 @@ function App() {
               <p className="text-stone-500 text-center mt-2 mb-8">No setup. No sign-up. Just drop a document and press play.</p>
               <div className="grid md:grid-cols-3 gap-5 max-w-5xl mx-auto">
                 {[
-                  { icon: Upload, step: '01', title: 'Drop your document', body: 'Upload a PDF, DOCX, TXT, paste text, or snap a photo — anything you want to listen to.' },
+                  { icon: Upload, step: '01', title: 'Drop your document', body: 'Upload a PDF, DOCX, PPTX, TXT, paste text, or snap a photo — anything you want to listen to.' },
                   { icon: Wand2, step: '02', title: 'AI writes the show', body: 'Two lifelike hosts turn it into a natural, engaging conversation in about a minute.' },
                   { icon: Headphones, step: '03', title: 'Listen & ask anything', body: 'Play it anywhere and ask follow-up questions — hear instant answers from your document.' },
                 ].map(({ icon: Icon, step, title, body }, i) => (
