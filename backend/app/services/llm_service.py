@@ -321,27 +321,38 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
     else:
         if cache_opt:
             length_rule = (
-                "6. LENGTH IS A HARD REQUIREMENT — the minimum AND the maximum are both "
-                "strict. Produce AT LEAST the target number of Host:/Guest: dialogue "
-                "lines given in TARGET LENGTH at the end of these rules, and do NOT "
-                "exceed the stated maximum. A short summary or overview is a FAILURE; so "
-                "is running past the maximum. Count your lines as you go: as you approach "
-                "the maximum, steer the conversation toward its closing lines instead of "
-                "opening new threads; if you near the end of the document before reaching "
-                "the minimum, revisit earlier points in MORE depth rather than ending "
-                "early. Stay INSIDE the range and finish naturally — never cut off."
+                "6. LENGTH IS THE #1 REQUIREMENT — reaching the MINIMUM matters more than "
+                "anything else here. The minimum AND maximum in TARGET LENGTH (at the end "
+                "of these rules) are both strict. Produce AT LEAST the minimum number of "
+                "Host:/Guest: dialogue lines; falling short of the minimum is the single "
+                "biggest failure and is NOT acceptable — a short summary or overview is a "
+                "FAILURE, and so is running past the maximum. Plan the length from the "
+                "FIRST line: spread coverage across the WHOLE document and pace yourself so "
+                "you build UP to the minimum naturally — never race to a conclusion or wrap "
+                "up early. Count your Host:/Guest: lines as you go; if you reach the end of "
+                "the document before hitting the minimum you are NOT done — go back and "
+                "unpack earlier points in MORE depth with follow-up questions and examples "
+                "until you reach it. As you approach the maximum, steer toward the closing "
+                "lines instead of opening new threads. Before you finish, CHECK your line "
+                "count is at or above the minimum. Stay INSIDE the range and finish "
+                "naturally — never cut off."
             )
         else:
             length_rule = (
-                f"6. LENGTH IS A HARD REQUIREMENT — the minimum AND the maximum are both "
-                f"strict. Produce AT LEAST {target_lines} and up to {max_lines} dialogue "
-                f"lines (Host:/Guest: lines); do NOT exceed {max_lines}. Target: {target}. "
-                f"A short summary or overview is a FAILURE. Count your lines as you go: as "
-                f"you approach {max_lines}, steer toward the closing lines instead of "
-                f"opening new threads; if you near the end of the document before reaching "
-                f"{target_lines} lines, revisit earlier points in MORE depth rather than "
-                f"ending early. Stay INSIDE the {target_lines}-{max_lines} range and finish "
-                f"naturally — never cut off."
+                f"6. LENGTH IS THE #1 REQUIREMENT — reaching the MINIMUM matters more than "
+                f"anything else here. Produce AT LEAST {target_lines} and up to {max_lines} "
+                f"dialogue lines (Host:/Guest: lines); falling short of {target_lines} is the "
+                f"single biggest failure and is NOT acceptable, and do NOT exceed {max_lines}. "
+                f"Target: {target}. A short summary or overview is a FAILURE. Plan the length "
+                f"from the FIRST line: spread coverage across the WHOLE document and pace "
+                f"yourself so you build UP to {target_lines} lines naturally — never race to a "
+                f"conclusion or wrap up early. Count your lines as you go; if you reach the end "
+                f"of the document before hitting {target_lines} you are NOT done — revisit "
+                f"earlier points in MORE depth with follow-up questions and examples until you "
+                f"reach it. As you approach {max_lines}, steer toward the closing lines instead "
+                f"of opening new threads. Before you finish, CHECK your line count is at or "
+                f"above {target_lines}. Stay INSIDE the {target_lines}-{max_lines} range and "
+                f"finish naturally — never cut off."
             )
 
     # Turn length controls line COUNT for a given amount of content: thin
@@ -366,9 +377,10 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
     # trailing spec. Everything above it is byte-identical across documents of the
     # same type, so the provider's automatic prefix cache can reuse it.
     length_spec = (
-        f"\n\nTARGET LENGTH: at least {target_lines} and up to {max_lines} "
-        f"Host:/Guest: dialogue lines — stay within this range and do NOT exceed "
-        f"{max_lines}. Target: {target}."
+        f"\n\nTARGET LENGTH (the most important requirement): produce AT LEAST "
+        f"{target_lines} Host:/Guest: dialogue lines and no more than {max_lines}. "
+        f"The minimum of {target_lines} is mandatory — do NOT stop or wrap up before "
+        f"you have reached it. Target: {target}."
         if cache_opt
         else ""
     )
@@ -1112,9 +1124,17 @@ def generate_podcast_script(document_text: str) -> str:
 
     # SINGLE transcript call — the whole source goes in one request (no chunk
     # continuation), so neither provider is called twice for one podcast.
+    # Repeat the minimum AFTER the document: on long docs the system prompt sits
+    # far above the text, so a trailing reminder is the last thing the model reads
+    # before writing — this is what keeps the first pass above the retry floor.
+    length_reminder = (
+        f"\n\nReminder: write AT LEAST {target_lines} and up to {max_lines} "
+        f"Host:/Guest: lines. The minimum of {target_lines} is mandatory — do not "
+        f"stop or wrap up before you reach it."
+    )
     first_messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Create a podcast conversation based on this document:\n\n{source_text}"},
+        {"role": "user", "content": f"Create a podcast conversation based on this document:\n\n{source_text}{length_reminder}"},
     ]
     full_script = _generate_transcript(first_messages, podcast_temp, max_out, prefer_gemini)
 
