@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     # than a slightly longer episode. We keep everything up to a GENEROUS ceiling
     # of max_lines × this factor, and only shave a heavy overshoot down to that
     # ceiling (never below it). 1.35 ≈ keep up to +35% over max before any trim.
-    HEAVY_OVERSHOOT_CEILING_FACTOR: float = float(os.getenv("HEAVY_OVERSHOOT_CEILING_FACTOR", "1.35"))
+    HEAVY_OVERSHOOT_CEILING_FACTOR: float = float(os.getenv("HEAVY_OVERSHOOT_CEILING_FACTOR", "1.75"))
 
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
