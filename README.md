@@ -90,7 +90,7 @@ flowchart TB
 
 PaperPod meets you where you already read.
 
-**Web app** — [paper-pod-one.vercel.app](https://paper-pod-one.vercel.app)  
+**Web app** — [PaperPod](https://paper-pod-one.vercel.app)  
 Drop a file, paste text, or upload from camera. Sign in to keep a personal library, share episodes, and download audio + transcripts.
 
 **Browser extension** — [Chrome](https://chromewebstore.google.com/detail/paperpod-%E2%80%94-ai-podcast-for/oeppbenincbmdaomedjpjfegnfphdoeo) · [Firefox](https://addons.mozilla.org/en-US/firefox/addon/paperpod-ai-podcast/)  
@@ -191,7 +191,7 @@ The implementation details — LLM routing across Groq and Gemini, TPM-aware fal
 - [Architecture deep dive (LinkedIn)](https://www.linkedin.com/pulse/building-production-grade-document-to-podcast-pipeline-pushkal-shukla-ebgjf)
 - [Engineering blog (Medium)](https://medium.com/@pushkalshuk/building-a-production-grade-document-to-podcast-pipeline-lessons-from-llm-routing-concurrency-88a7b064c279)
 
-Interested in integrations, partnerships, or enterprise use? Reach out via [Product Hunt](https://www.producthunt.com/products/paperpod-2) or the contact links on [paper-pod-one.vercel.app](https://paper-pod-one.vercel.app).
+Interested in integrations, partnerships, or enterprise use? Reach out via [Product Hunt](https://www.producthunt.com/products/paperpod-2) or the contact links on [PaperPod](https://paper-pod-one.vercel.app) or pushkalshuk@gmail.com.
 
 ---
 
@@ -207,7 +207,7 @@ Interested in integrations, partnerships, or enterprise use? Reach out via [Prod
 
 ## License
 
-This repository is open source under the [MIT License](LICENSE). PaperPod as a **hosted service** at [paper-pod-one.vercel.app](https://paper-pod-one.vercel.app) is the supported product experience — maintained, monitored, and updated continuously.
+This repository is open source under the [MIT License](LICENSE). PaperPod as a **hosted service** at [PaperPod](https://paper-pod-one.vercel.app) is the supported product experience — maintained, monitored, and updated continuously.
 
 ---
 
