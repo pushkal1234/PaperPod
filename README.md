@@ -82,7 +82,7 @@ flowchart TB
     PLAY --> ASK --> ANSWER
 ```
 
-**Typical flow:** upload → ~2–3 minutes of processing → listen → ask follow-ups as you go.
+**Typical flow:** upload → ~1 minute of processing → listen → ask follow-ups as you go.
 
 ---
 

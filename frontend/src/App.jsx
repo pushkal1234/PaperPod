@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube } from 'lucide-react';
+import { Headphones, FileAudio, Sparkles, ArrowLeft, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube, Github, Mail } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
@@ -29,6 +29,8 @@ const FOOTER_VIDEOS = [
   { label: 'Product demo', url: 'https://www.youtube.com/watch?v=3UU8Ikde_2M' },
   { label: 'Feature deep dive', url: 'https://www.youtube.com/watch?v=KqSpaN2U7qM' },
 ];
+const GITHUB_REPO_URL = 'https://github.com/pushkal1234/PaperPod/';
+const CONTACT_EMAIL = 'pushkalshuk@gmail.com';
 
 
 function App() {
@@ -786,6 +788,24 @@ function App() {
           >
             <Puzzle className="w-3.5 h-3.5" />
             Free Download — Firefox
+          </a>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-4 mb-2">
+          <a
+            href={GITHUB_REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-stone-500 hover:text-brand-600 font-medium transition-colors"
+          >
+            <Github className="w-3.5 h-3.5" />
+            GitHub
+          </a>
+          <a
+            href={`mailto:${CONTACT_EMAIL}`}
+            className="inline-flex items-center gap-1.5 text-stone-500 hover:text-brand-600 font-medium transition-colors"
+          >
+            <Mail className="w-3.5 h-3.5" />
+            {CONTACT_EMAIL}
           </a>
         </div>
         <p className="text-brand-600 font-semibold mb-1">Free forever · No credit card required</p>
