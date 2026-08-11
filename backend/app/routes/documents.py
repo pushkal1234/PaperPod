@@ -21,6 +21,7 @@ from app.services.document_service import save_upload, extract_text, chunk_text,
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
+from app.mem_utils import trim_memory
 
 logger = logging.getLogger("paperpod")
 
@@ -136,6 +137,9 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
                     os.remove(file_path)
                 except OSError:
                     pass
+            # Hand freed heap (PDF/vision/TTS buffers) back to the OS so idle RSS
+            # falls instead of plateauing. Off the event loop — malloc_trim blocks.
+            await run_in_threadpool(trim_memory)
 
 
 async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str):
@@ -420,7 +424,11 @@ async def _process_image_document(doc_id: str, image_bytes: bytes, mime_type: st
 async def _process_text_document(doc_id: str, raw_text: str):
     """Background entrypoint (text/image) — concurrency-limited pipeline."""
     async with _job_semaphore:
-        await _run_text_pipeline(doc_id, raw_text)
+        try:
+            await _run_text_pipeline(doc_id, raw_text)
+        finally:
+            # Release freed heap back to the OS after the job (see _process_document).
+            await run_in_threadpool(trim_memory)
 
 
 async def _run_text_pipeline(doc_id: str, raw_text: str):
