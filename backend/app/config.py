@@ -38,12 +38,14 @@ class Settings(BaseSettings):
     # on tiny jobs, where the absolute time saved by more parallelism is small).
     TTS_CONCURRENCY_SMALL: int = int(os.getenv("TTS_CONCURRENCY_SMALL", "5"))
     TTS_SMALL_DOC_MAX_CLIPS: int = int(os.getenv("TTS_SMALL_DOC_MAX_CLIPS", "40"))
-    # Runaway safety cap on dialogue turns fed to TTS. This is NOT a length knob —
-    # it must stay >= the LLM's largest possible FINISHED script, which is now the
-    # generous overshoot ceiling on the biggest tier: feasible max 200 lines ×
-    # HEAVY_OVERSHOOT_CEILING_FACTOR (1.35) ≈ 270, + the deterministic outro. So
-    # legitimate long podcasts (and preserved heavy-overshoot content) are never
-    # truncated here. Control podcast length via the LLM tiers, not this cap.
+    # Hard cap on dialogue turns fed to TTS — and, in practice, the EFFECTIVE
+    # ceiling on episode length. The heavy-overshoot ceiling is
+    # max_lines × HEAVY_OVERSHOOT_CEILING_FACTOR (1.75), clamped to
+    # MAX_DIALOGUE_TURNS - 2 (see _overshoot_ceiling in llm_service). On the big
+    # tiers the 1.75x value exceeds this cap (e.g. max=189 -> 331, or feasible max
+    # 200 -> 350), so 280 - 2 = 278 lines (~40 min of audio) becomes the real
+    # upper bound. Small/medium docs never reach it, so their full 1.75x overshoot
+    # is preserved. Raise this only if you deliberately want longer episodes.
     MAX_DIALOGUE_TURNS: int = int(os.getenv("MAX_DIALOGUE_TURNS", "280"))
 
     # Reject oversized uploads before they are read fully into memory (OOM guard).
@@ -93,7 +95,10 @@ class Settings(BaseSettings):
     # rich document (chopping real information to hit a line number) is worse UX
     # than a slightly longer episode. We keep everything up to a GENEROUS ceiling
     # of max_lines × this factor, and only shave a heavy overshoot down to that
-    # ceiling (never below it). 1.35 ≈ keep up to +35% over max before any trim.
+    # ceiling (never below it). 1.75 ≈ keep up to +75% over max before any trim.
+    # NOTE: the ceiling is additionally clamped to MAX_DIALOGUE_TURNS - 2 (=278),
+    # so on the biggest tiers that cap binds BEFORE the full 1.75x is reached
+    # (e.g. max=189 -> 1.75x=331, clamped to 278). Small/medium docs are unaffected.
     HEAVY_OVERSHOOT_CEILING_FACTOR: float = float(os.getenv("HEAVY_OVERSHOOT_CEILING_FACTOR", "1.75"))
 
     # Bump this whenever the generation pipeline changes (extraction, prompts,
