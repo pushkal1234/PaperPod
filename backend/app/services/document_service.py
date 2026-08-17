@@ -147,11 +147,11 @@ def extract_text(file_path: str, content_type: str, on_figures=None) -> str:
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/msword",
     ) or file_path.endswith(".docx"):
-        text = _extract_docx(file_path)
+        text = _extract_docx(file_path, on_figures)
     elif content_type == (
         "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     ) or file_path.endswith(".pptx"):
-        text = _extract_pptx(file_path)
+        text = _extract_pptx(file_path, on_figures)
     else:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             text = f.read()
@@ -335,7 +335,7 @@ def _render_table(table: _DocxTable) -> str:
     return "\n".join(rows)
 
 
-def _extract_docx(file_path: str) -> str:
+def _extract_docx(file_path: str, on_figures=None) -> str:
     doc = DocxDocument(file_path)
     parts = []
     for block in _iter_block_items(doc):
@@ -346,10 +346,39 @@ def _extract_docx(file_path: str) -> str:
             rendered = _render_table(block)
             if rendered.strip():
                 parts.append(rendered)
-    return "\n\n".join(parts)
+    text = "\n\n".join(parts)
+
+    # Enrich with spoken descriptions of embedded images (same Gemini vision
+    # path as PDFs/PPTX), so diagrams/charts in Word docs are narrated too.
+    visuals = _describe_embedded_images(_docx_images(doc), on_figures)
+    if visuals:
+        text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
+    return text
 
 
-def _extract_pptx(file_path: str) -> str:
+def _docx_images(doc) -> list[tuple[int, bytes, str]]:
+    """Collect (index, blob, content_type) for every embedded raster image.
+
+    Iterates the document part's relationships (covers both inline and floating
+    images); external/linked images have no blob and are skipped.
+    """
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    images: list[tuple[int, bytes, str]] = []
+    idx = 1
+    for rel in doc.part.rels.values():
+        if rel.reltype != RT.IMAGE or rel.is_external:
+            continue
+        try:
+            part = rel.target_part
+            images.append((idx, part.blob, part.content_type))
+            idx += 1
+        except Exception:  # noqa: BLE001 — a bad relationship must never break extraction
+            continue
+    return images
+
+
+def _extract_pptx(file_path: str, on_figures=None) -> str:
     # Lazy import so python-pptx only loads when a deck is actually uploaded.
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -382,7 +411,7 @@ def _extract_pptx(file_path: str) -> str:
 
     # Same Gemini vision path as PDFs; pictures come straight from the file so
     # no page rendering is needed.
-    visuals = _describe_pptx_images(images)
+    visuals = _describe_embedded_images(images, on_figures)
     if visuals:
         text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
     return text
@@ -406,8 +435,15 @@ def _pptx_table(table) -> str:
     return "\n".join(rows)
 
 
-def _describe_pptx_images(images: list[tuple[int, bytes, str]]) -> str:
-    """Describe raster pictures embedded in slides via Gemini (best-effort)."""
+def _describe_embedded_images(images: list[tuple[int, bytes, str]], on_figures=None) -> str:
+    """Describe raster pictures embedded in a document via Gemini (best-effort).
+
+    Shared by the PPTX and DOCX paths — ``images`` is a list of
+    ``(index, blob, content_type)`` taken straight from the file (no page
+    rendering needed). ``on_figures`` (if given) is fired once, only when real
+    images survive filtering, right before the vision call — a progress hook,
+    never fatal.
+    """
     if not settings.PDF_VISION_EXTRACTION or not settings.GOOGLE_API_KEY or not images:
         return ""
     from io import BytesIO
@@ -434,6 +470,13 @@ def _describe_pptx_images(images: list[tuple[int, bytes, str]]) -> str:
             continue
     if not pages:
         return ""
+
+    if on_figures is not None:
+        try:
+            on_figures()
+        except Exception:  # noqa: BLE001 — a progress hook must never break extraction
+            pass
+
     from app.services.image_service import describe_pdf_figures
     return describe_pdf_figures(pages)
 

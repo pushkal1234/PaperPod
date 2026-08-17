@@ -416,7 +416,10 @@ async def _process_image_document(doc_id: str, image_bytes: bytes, mime_type: st
         except OSError:
             pass
 
-    # Step 1: OCR (can take 10-60s for large camera photos)
+    # Step 1: OCR (can take 10-60s for large camera photos). The upload IS an
+    # image, so surface this vision pass as the "Analyzing diagrams & figures"
+    # step — the same honest signal the PDF/PPTX/DOCX figure pass uses.
+    _set_stage(doc_id, _STAGE_ANALYZING_FIGURES)
     try:
         t0 = time.perf_counter()
         raw_text = await run_in_threadpool(extract_text_from_image, image_bytes, mime_type)
@@ -436,6 +439,7 @@ async def _process_image_document(doc_id: str, image_bytes: bytes, mime_type: st
                     await session.commit()
         except Exception:
             pass
+        _clear_stage(doc_id)
         return
 
     # Save extracted text to DB
