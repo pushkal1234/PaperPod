@@ -133,10 +133,16 @@ def compact_document_text(text: str) -> str:
         return text
 
 
-def extract_text(file_path: str, content_type: str) -> str:
-    """Extract text from PDF, DOCX, or TXT files."""
+def extract_text(file_path: str, content_type: str, on_figures=None) -> str:
+    """Extract text from PDF, DOCX, or TXT files.
+
+    ``on_figures`` is an optional zero-arg callback invoked only when a PDF is
+    found to contain real figures, right before the (~30-60s) vision call that
+    describes them — lets the caller surface an "Analyzing diagrams" progress
+    step exactly when that work happens (and never for figure-less docs).
+    """
     if content_type == "application/pdf" or file_path.endswith(".pdf"):
-        text = _extract_pdf(file_path)
+        text = _extract_pdf(file_path, on_figures)
     elif content_type in (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/msword",
@@ -152,7 +158,7 @@ def extract_text(file_path: str, content_type: str) -> str:
     return clean_extracted_text(text)
 
 
-def _extract_pdf(file_path: str) -> str:
+def _extract_pdf(file_path: str, on_figures=None) -> str:
     text_parts = []
     with open(file_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
@@ -182,17 +188,19 @@ def _extract_pdf(file_path: str) -> str:
 
     # Enrich with spoken-language descriptions of diagrams/charts/figures that
     # PyPDF2 (text layer only) cannot read, so the podcast can narrate visuals.
-    visuals = _describe_pdf_visuals(file_path)
+    visuals = _describe_pdf_visuals(file_path, on_figures)
     if visuals:
         text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
     return text
 
 
-def _describe_pdf_visuals(file_path: str) -> str:
+def _describe_pdf_visuals(file_path: str, on_figures=None) -> str:
     """Render figure-bearing PDF pages and get Gemini descriptions of them.
 
     Best-effort: returns "" (never raises) if vision is disabled/unconfigured,
     PyMuPDF is unavailable, the PDF has no real figures, or the call fails.
+    ``on_figures`` (if given) is fired once, only when real figures are found,
+    right before the vision call — a progress hook, never fatal if it raises.
     """
     if not settings.PDF_VISION_EXTRACTION or not settings.GOOGLE_API_KEY:
         return ""
@@ -210,6 +218,12 @@ def _describe_pdf_visuals(file_path: str) -> str:
 
     if not pages:
         return ""
+
+    if on_figures is not None:
+        try:
+            on_figures()
+        except Exception:  # noqa: BLE001 — a progress hook must never break extraction
+            pass
 
     from app.services.image_service import describe_pdf_figures
     return describe_pdf_figures(pages)

@@ -32,6 +32,29 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 # rate limits. (A dedicated Redis-backed worker is the production-grade step.)
 _job_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_JOBS)
 
+# Transient, in-process progress signal for the frontend's processing screen.
+# Maps doc_id -> current pipeline stage (see _STAGE_* below). This is deliberately
+# in-memory, NOT a DB column: it's an ephemeral UX hint polled via GET /{doc_id},
+# costs a few bytes per active job, and is cleared on completion. If the process
+# restarts mid-job the job dies anyway (orphan recovery marks it failed), so
+# losing the hint is harmless. Single-worker deployment assumed (see start cmd).
+_STAGE_READING = "reading"
+_STAGE_ANALYZING_FIGURES = "analyzing_figures"
+_STAGE_WRITING_SCRIPT = "writing_script"
+_STAGE_SYNTHESIZING = "synthesizing"
+_doc_stages: dict[str, str] = {}
+
+
+def _set_stage(doc_id: str, stage: str) -> None:
+    """Record the current pipeline stage. Safe to call from any thread (a plain
+    dict write is atomic under the GIL), so the sync extraction worker can report
+    the figure-description sub-step directly."""
+    _doc_stages[doc_id] = stage
+
+
+def _clear_stage(doc_id: str) -> None:
+    _doc_stages.pop(doc_id, None)
+
 
 def _content_hash(data: bytes) -> str:
     """sha256 of the source, salted with the generation pipeline version.
@@ -140,6 +163,7 @@ async def _process_document(doc_id: str, file_path: str, content_type: str):
             # Hand freed heap (PDF/vision/TTS buffers) back to the OS so idle RSS
             # falls instead of plateauing. Off the event loop — malloc_trim blocks.
             await run_in_threadpool(trim_memory)
+            _clear_stage(doc_id)
 
 
 async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str):
@@ -153,8 +177,13 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         current_step = "extracting text from PDF"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 1/4: Extracting text...")
+        _set_stage(doc_id, _STAGE_READING)
+        # Fires only if the PDF actually has figures worth describing, so the
+        # "Analyzing diagrams & figures" step surfaces to the user exactly when
+        # that (~30-60s) vision call runs — and never for figure-less docs.
+        on_figures = lambda: _set_stage(doc_id, _STAGE_ANALYZING_FIGURES)
         # Offload blocking PDF/DOCX parsing to a thread so the event loop stays free.
-        raw_text = await run_in_threadpool(extract_text, file_path, content_type)
+        raw_text = await run_in_threadpool(extract_text, file_path, content_type, on_figures)
         step_times['extract'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Extracted {len(raw_text)} chars in {step_times['extract']:.2f}s")
 
@@ -175,6 +204,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         current_step = "generating podcast script"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
+        _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
         # The Groq client is synchronous/blocking — run it off the event loop.
         script = await run_in_threadpool(generate_podcast_script, raw_text)
         step_times['llm'] = time.perf_counter() - t0
@@ -183,6 +213,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         current_step = "synthesizing audio"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
+        _set_stage(doc_id, _STAGE_SYNTHESIZING)
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
         step_times['tts'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path} in {step_times['tts']:.2f}s")
@@ -429,6 +460,7 @@ async def _process_text_document(doc_id: str, raw_text: str):
         finally:
             # Release freed heap back to the OS after the job (see _process_document).
             await run_in_threadpool(trim_memory)
+            _clear_stage(doc_id)
 
 
 async def _run_text_pipeline(doc_id: str, raw_text: str):
@@ -455,6 +487,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
         current_step = "generating podcast script"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
+        _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
         # The Groq client is synchronous/blocking — run it off the event loop.
         script = await run_in_threadpool(generate_podcast_script, raw_text)
         step_times['llm'] = time.perf_counter() - t0
@@ -463,6 +496,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
         current_step = "synthesizing audio"
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
+        _set_stage(doc_id, _STAGE_SYNTHESIZING)
         audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
         step_times['tts'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s in {step_times['tts']:.2f}s")
@@ -571,6 +605,10 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
         "num_chunks": doc.num_chunks,
         "created_at": doc.created_at.isoformat(),
         "status": status,
+        # Transient sub-step (reading | analyzing_figures | writing_script |
+        # synthesizing) for the processing screen; only meaningful while the job
+        # is still running, so null it out once we're no longer processing.
+        "stage": _doc_stages.get(doc_id) if status == "processing" else None,
         "error": doc.error_message if status == "failed" else None,
         "audio": {
             "audio_id": audio.id,

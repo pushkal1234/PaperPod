@@ -51,6 +51,7 @@ function App() {
   const [toasts, setToasts] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
   const [processingElapsed, setProcessingElapsed] = useState(0);
+  const [processingStage, setProcessingStage] = useState(null);
   const pollRef = useRef(null);
   const elapsedRef = useRef(null);
   const toastIdRef = useRef(0);
@@ -197,12 +198,16 @@ function App() {
     setErrorMsg(null);
     // Drive the ProcessingView's staged progress with a 1s wall-clock timer.
     setProcessingElapsed(0);
+    setProcessingStage(null);
     stopElapsedTimer();
     elapsedRef.current = setInterval(() => setProcessingElapsed((s) => s + 1), 1000);
     let elapsed = 0;
     const poll = async () => {
       try {
         const doc = await getDocument(docId);
+        // Real backend sub-step ("reading" | "analyzing_figures" |
+        // "writing_script" | "synthesizing"); drives the honest stage checklist.
+        if (doc.stage) setProcessingStage(doc.stage);
         if (doc.status === 'ready') {
           setIsPolling(false);
           stopElapsedTimer();
@@ -637,7 +642,7 @@ function App() {
 
         {/* PROCESSING VIEW */}
         {view === 'processing' && (
-          <ProcessingView elapsedSeconds={processingElapsed} videoUrl={PROCESSING_VIDEO_URL} />
+          <ProcessingView elapsedSeconds={processingElapsed} stage={processingStage} videoUrl={PROCESSING_VIDEO_URL} />
         )}
 
         {/* FAILED VIEW */}
