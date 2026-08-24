@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube, Github, Mail } from 'lucide-react';
+import { Headphones, FileAudio, Sparkles, ArrowLeft, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube, Github, Mail, Phone, X } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
@@ -31,6 +31,12 @@ const FOOTER_VIDEOS = [
 ];
 const GITHUB_REPO_URL = 'https://github.com/pushkal1234/PaperPod/';
 const CONTACT_EMAIL = 'pushkalshuk@gmail.com';
+// Support contacts surfaced in the navbar "Contact us" popover. Kept front and
+// centre so users can reach a human about their experience and — importantly —
+// about anything payment/billing related, for full transparency.
+const CONTACT_WHATSAPP_DISPLAY = '+91 97294 61168';
+const CONTACT_WHATSAPP_LINK = 'https://wa.me/919729461168';
+const CONTACT_EMAIL_LINK = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('PaperPod — support / feedback')}`;
 
 
 function App() {
@@ -52,9 +58,11 @@ function App() {
   const [confirmState, setConfirmState] = useState(null);
   const [processingElapsed, setProcessingElapsed] = useState(0);
   const [processingStage, setProcessingStage] = useState(null);
+  const [showContact, setShowContact] = useState(false);
   const pollRef = useRef(null);
   const elapsedRef = useRef(null);
   const toastIdRef = useRef(0);
+  const contactRef = useRef(null);
 
   const pushToast = (message, type = 'info', duration = 5000) => {
     const id = ++toastIdRef.current;
@@ -100,6 +108,25 @@ function App() {
         .finally(() => setSharedLoading(false));
     }
   }, []);
+
+  // Close the "Contact us" popover on outside click or Escape.
+  useEffect(() => {
+    if (!showContact) return;
+    const onPointerDown = (e) => {
+      if (contactRef.current && !contactRef.current.contains(e.target)) {
+        setShowContact(false);
+      }
+    };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setShowContact(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showContact]);
 
   const loadDocuments = async () => {
     try {
@@ -387,6 +414,74 @@ function App() {
                 <span>Sign in</span>
               </button>
             ))}
+            <div className="relative" ref={contactRef}>
+              <button
+                onClick={() => setShowContact((v) => !v)}
+                aria-haspopup="dialog"
+                aria-expanded={showContact}
+                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full border transition-all ${
+                  showContact
+                    ? 'bg-brand-50 text-brand-700 border-brand-200'
+                    : 'bg-white text-stone-600 border-paper-300 hover:text-brand-700 hover:border-brand-200'
+                }`}
+                title="Talk to us about your experience or anything payment related"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span className="hidden sm:inline">Contact us</span>
+              </button>
+              {showContact && (
+                <div
+                  role="dialog"
+                  aria-label="Contact PaperPod support"
+                  className="absolute right-0 mt-2 w-72 rounded-2xl border border-paper-300 bg-white shadow-soft p-4 z-50"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-bold text-stone-800">We'd love to hear from you</p>
+                      <p className="mt-1 text-xs text-stone-500 leading-relaxed">
+                        Tell us how generating podcasts feels — or reach out about anything
+                        payment related. We keep billing fully transparent.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowContact(false)}
+                      className="shrink-0 text-stone-400 hover:text-stone-700 transition-colors"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    <a
+                      href={CONTACT_WHATSAPP_LINK}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 rounded-xl border border-paper-300 bg-paper-50 px-3 py-2.5 hover:border-brand-200 hover:bg-brand-50 transition-all group"
+                    >
+                      <span className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                        <Phone className="w-4 h-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-xs font-semibold text-stone-800 group-hover:text-brand-700">WhatsApp</span>
+                        <span className="block text-xs text-stone-500 truncate">{CONTACT_WHATSAPP_DISPLAY}</span>
+                      </span>
+                    </a>
+                    <a
+                      href={CONTACT_EMAIL_LINK}
+                      className="flex items-center gap-3 rounded-xl border border-paper-300 bg-paper-50 px-3 py-2.5 hover:border-brand-200 hover:bg-brand-50 transition-all group"
+                    >
+                      <span className="w-8 h-8 rounded-lg bg-brand-100 text-brand-700 flex items-center justify-center shrink-0">
+                        <Mail className="w-4 h-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-xs font-semibold text-stone-800 group-hover:text-brand-700">Email</span>
+                        <span className="block text-xs text-stone-500 truncate">{CONTACT_EMAIL}</span>
+                      </span>
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </nav>
