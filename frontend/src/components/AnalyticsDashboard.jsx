@@ -12,7 +12,7 @@ import {
   Cell,
   Legend,
 } from 'recharts';
-import { Headphones, Clock, FileAudio, Type, Loader2, BarChart3 } from 'lucide-react';
+import { Headphones, Clock, FileAudio, Type, Loader2, BarChart3, CalendarDays, Award } from 'lucide-react';
 import { getStats } from '../api';
 
 // Brand-aligned palette for the source donut segments.
@@ -94,6 +94,16 @@ export default function AnalyticsDashboard() {
 
   const { totals, by_source = [], status_breakdown = [], over_time = [] } = stats;
 
+  // "Reading time reclaimed": an honest, compelling hero stat — the estimated
+  // reading time of everything the user turned into hands-free audio.
+  const READING_WPM = 200;
+  const readingSeconds = totals.words ? (totals.words / READING_WPM) * 60 : 0;
+
+  // This month's activity, pulled from the monthly buckets the API returns.
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const thisMonth = over_time.find((d) => d.month === monthKey) || { count: 0, seconds: 0 };
+
   const sourceData = by_source.map((d) => ({
     name: SOURCE_LABELS[d.source] || d.source,
     value: d.count,
@@ -108,12 +118,29 @@ export default function AnalyticsDashboard() {
         <h3 className="font-display text-lg font-semibold">Your listening stats</h3>
       </div>
 
+      {/* Hero — reading time reclaimed. The single most motivating number. */}
+      {readingSeconds >= 60 && (
+        <div className="rounded-2xl bg-gradient-to-r from-brand-600 to-accent-500 text-white p-5 shadow-glow flex items-center gap-4">
+          <div className="w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+            <Clock className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-2xl font-bold leading-tight">{formatDuration(readingSeconds)} of reading, now listenable</p>
+            <p className="text-sm text-white/85 mt-0.5">
+              You've turned {totals.words.toLocaleString()} words into podcasts you can enjoy hands-free.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPI cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <KpiCard icon={Headphones} label="Podcasts" value={totals.podcasts} hint={`${totals.ready} ready`} />
         <KpiCard icon={Clock} label="Listening time" value={formatDuration(totals.listening_seconds)} hint="total generated" />
         <KpiCard icon={FileAudio} label="Avg length" value={formatDuration(totals.avg_seconds)} hint="per podcast" />
         <KpiCard icon={Type} label="Words" value={totals.words.toLocaleString()} hint="turned into audio" />
+        <KpiCard icon={CalendarDays} label="This month" value={thisMonth.count} hint={`${formatDuration(thisMonth.seconds)} generated`} />
+        <KpiCard icon={Award} label="Longest" value={formatDuration(totals.longest_seconds || 0)} hint="single podcast" />
       </div>
 
       {/* Charts */}

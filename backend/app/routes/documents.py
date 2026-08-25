@@ -654,8 +654,10 @@ async def document_stats(
     total_seconds = 0.0
     total_chars = 0
     ready_count = 0
+    longest_seconds = 0.0
     by_source: dict[str, int] = {}
     by_month: dict[str, int] = {}
+    by_month_seconds: dict[str, float] = {}
 
     for status_, source, filename, created_at, char_len, duration in result.all():
         total += 1
@@ -675,17 +677,25 @@ async def document_stats(
         if created_at:
             key = created_at.strftime("%Y-%m")
             by_month[key] = by_month.get(key, 0) + 1
+            if st == "ready":
+                by_month_seconds[key] = by_month_seconds.get(key, 0.0) + float(duration or 0.0)
 
         if st == "ready":
             ready_count += 1
-            total_seconds += float(duration or 0.0)
+            dur = float(duration or 0.0)
+            total_seconds += dur
             total_chars += int(char_len or 0)
+            if dur > longest_seconds:
+                longest_seconds = dur
 
     avg_seconds = (total_seconds / ready_count) if ready_count else 0.0
     # ~5.7 chars/word is a decent English estimate; avoids loading raw_text.
     total_words = int(total_chars / 5.7) if total_chars else 0
 
-    over_time = [{"month": m, "count": c} for m, c in sorted(by_month.items())]
+    over_time = [
+        {"month": m, "count": c, "seconds": round(by_month_seconds.get(m, 0.0))}
+        for m, c in sorted(by_month.items())
+    ]
     source_breakdown = [
         {"source": s, "count": c}
         for s, c in sorted(by_source.items(), key=lambda kv: kv[1], reverse=True)
@@ -699,6 +709,7 @@ async def document_stats(
             "processing": processing,
             "listening_seconds": round(total_seconds),
             "avg_seconds": round(avg_seconds),
+            "longest_seconds": round(longest_seconds),
             "words": total_words,
         },
         "by_source": source_breakdown,
