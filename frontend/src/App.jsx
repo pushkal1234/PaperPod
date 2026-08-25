@@ -423,7 +423,7 @@ function App() {
       {/* Navbar */}
       <nav className="border-b border-paper-300/70 bg-paper-50/80 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <button onClick={() => { setView('home'); setCurrentDoc(null); }} className="flex items-center gap-2.5 group">
+          <button onClick={() => { setView('home'); setCurrentDoc(null); }} className="flex items-center gap-2.5 group shrink-0">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center shadow-glow">
               <Headphones className="w-5 h-5 text-white" />
             </div>
@@ -431,10 +431,10 @@ function App() {
               Paper<span className="text-brand-600">Pod</span>
             </span>
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
             <button
               onClick={goToLibrary}
-              className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full border transition-all ${
+              className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full border transition-all ${
                 view === 'library'
                   ? 'bg-brand-50 text-brand-700 border-brand-200'
                   : 'bg-white text-stone-600 border-paper-300 hover:text-brand-700 hover:border-brand-200'
@@ -442,13 +442,13 @@ function App() {
               title="Your personal podcast library"
             >
               <FileAudio className="w-4 h-4" />
-              <span>My Podcasts</span>
+              <span className="hidden sm:inline">My Podcasts</span>
             </button>
             <a
               href={CHROME_STORE_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden md:inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-brand-600 text-white hover:bg-brand-700 shadow-glow transition-all"
+              className={`${user ? 'hidden 2xl:inline-flex' : 'hidden lg:inline-flex'} shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-brand-600 text-white hover:bg-brand-700 shadow-glow transition-all`}
               title="Download PaperPod for Chrome — free forever, no credit card"
             >
               <Download className="w-4 h-4" />
@@ -459,7 +459,7 @@ function App() {
               href={FIREFOX_STORE_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden md:inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-white text-brand-700 border border-brand-200 hover:bg-brand-50 shadow-soft transition-all"
+              className={`${user ? 'hidden 2xl:inline-flex' : 'hidden lg:inline-flex'} shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-white text-brand-700 border border-brand-200 hover:bg-brand-50 shadow-soft transition-all`}
               title="Download PaperPod for Firefox — free forever, no credit card"
             >
               <Puzzle className="w-4 h-4" />
@@ -467,8 +467,8 @@ function App() {
             </a>
 
             {authChecked && (user ? (
-              <div className="flex items-center gap-2 pl-1">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 pl-1 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                   {user.avatar_url ? (
                     <img src={user.avatar_url} alt="" className="w-8 h-8 rounded-full border border-paper-300" referrerPolicy="no-referrer" />
                   ) : (
@@ -476,7 +476,7 @@ function App() {
                       {(user.name || user.email || '?').trim().charAt(0).toUpperCase()}
                     </div>
                   )}
-                  <span className="hidden sm:block text-sm font-medium text-stone-700 max-w-[10rem] truncate">
+                  <span className="hidden lg:block text-sm font-medium text-stone-700 max-w-[8rem] truncate">
                     {user.name || user.email}
                   </span>
                 </div>
@@ -484,13 +484,13 @@ function App() {
                 {/* Billing UI — hidden entirely until BILLING_ENABLED is on. */}
                 {billingOn && (isPremium ? (
                   <div className="flex items-center gap-2">
-                    <span className="hidden sm:inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1.5 rounded-full bg-gradient-to-r from-brand-100 to-accent-100 text-brand-700 border border-brand-200">
+                    <span className="hidden sm:inline-flex shrink-0 whitespace-nowrap items-center gap-1 text-xs font-bold px-2.5 py-1.5 rounded-full bg-gradient-to-r from-brand-100 to-accent-100 text-brand-700 border border-brand-200">
                       <Star className="w-3.5 h-3.5" /> Premium
                     </span>
                     <button
                       onClick={handleManageBilling}
                       disabled={portalLoading}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full bg-white text-stone-600 border border-paper-300 hover:text-brand-700 hover:border-brand-200 transition-all disabled:opacity-60"
+                      className="inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full bg-white text-stone-600 border border-paper-300 hover:text-brand-700 hover:border-brand-200 transition-all disabled:opacity-60"
                       title="Manage your subscription"
                     >
                       {portalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
@@ -500,13 +500,13 @@ function App() {
                 ) : (
                   <div className="flex items-center gap-2">
                     {user?.usage?.podcasts_remaining != null && (
-                      <span className="hidden md:inline text-xs font-medium text-stone-500" title="Free podcasts remaining">
+                      <span className="hidden lg:inline whitespace-nowrap text-xs font-medium text-stone-500" title="Free podcasts remaining">
                         {user.usage.podcasts_remaining} of {user.usage.podcasts_limit} left
                       </span>
                     )}
                     <button
                       onClick={openUpgrade}
-                      className="inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-gradient-to-r from-brand-600 to-accent-500 text-white hover:opacity-90 shadow-glow transition-all"
+                      className="inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-gradient-to-r from-brand-600 to-accent-500 text-white hover:opacity-90 shadow-glow transition-all"
                       title="Upgrade to Premium"
                     >
                       <Star className="w-4 h-4" />
@@ -517,7 +517,7 @@ function App() {
 
                 <button
                   onClick={() => setShowSignOut(true)}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full bg-paper-100 text-stone-500 hover:text-stone-800 border border-paper-300 transition-all"
+                  className="inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full bg-paper-100 text-stone-500 hover:text-stone-800 border border-paper-300 transition-all"
                   title="Sign out"
                 >
                   <LogOut className="w-4 h-4 -scale-x-100" />
@@ -527,7 +527,7 @@ function App() {
             ) : (
               <button
                 onClick={() => setShowAuth(true)}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-full bg-stone-900 text-white hover:bg-stone-800 shadow-soft transition-all"
+                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-full bg-stone-900 text-white hover:bg-stone-800 shadow-soft transition-all"
               >
                 <LogIn className="w-4 h-4" />
                 <span>Sign in</span>
@@ -538,7 +538,7 @@ function App() {
                 onClick={() => setShowContact((v) => !v)}
                 aria-haspopup="dialog"
                 aria-expanded={showContact}
-                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full border transition-all ${
+                className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full border transition-all ${
                   showContact
                     ? 'bg-brand-50 text-brand-700 border-brand-200'
                     : 'bg-white text-stone-600 border-paper-300 hover:text-brand-700 hover:border-brand-200'
@@ -635,6 +635,12 @@ function App() {
           message={paywall.message}
           onClose={() => setPaywall(null)}
           onError={(msg) => pushToast(msg, 'error')}
+          contact={{
+            whatsappLink: CONTACT_WHATSAPP_LINK,
+            whatsappDisplay: CONTACT_WHATSAPP_DISPLAY,
+            emailLink: CONTACT_EMAIL_LINK,
+            email: CONTACT_EMAIL,
+          }}
         />
       )}
 
@@ -682,7 +688,7 @@ function App() {
                     <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs font-medium text-stone-500">
                       <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> 2 free podcasts to start</span>
                       <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No credit card to try it</span>
-                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> Unlimited on Premium — $5/mo</span>
+                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> Unlimited Podcasts on Premium — $5/mo</span>
                     </div>
                   </>
                 ) : (
@@ -729,7 +735,7 @@ function App() {
                 { icon: Zap, stat: '~60 sec', label: 'to your first podcast' },
                 { icon: Headphones, stat: '2 AI hosts', label: 'natural back-and-forth' },
                 { icon: MessageCircle, stat: 'Live Q&A', label: 'ask the doc anything' },
-                { icon: Star, stat: '$0 forever', label: 'no credit card, ever' },
+                { icon: Star, stat: '$0 for your podcasts', label: 'no credit card to try it' },
               ].map(({ icon: Icon, stat, label }, i) => (
                 <div
                   key={i}

@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { X, Sparkles, Check, Infinity as InfinityIcon, FileText, MessageCircle, Loader2 } from 'lucide-react';
+import { X, Sparkles, Check, Infinity as InfinityIcon, FileText, MessageCircle, Loader2, Phone, Mail } from 'lucide-react';
 import { createCheckout } from '../api';
 
 const PREMIUM_PERKS = [
   { icon: InfinityIcon, text: 'Unlimited podcasts — no lifetime cap' },
+  { icon: MessageCircle, text: 'Live Q&A — ask your document anything, with Doc-only & Web modes', highlight: true },
   { icon: FileText, text: 'Full-length documents & podcasts, always' },
   { icon: Sparkles, text: 'Priority support & new features first' },
 ];
@@ -11,13 +12,14 @@ const PREMIUM_PERKS = [
 // Shown when the backend returns HTTP 402 (quota_exceeded) or when a free user
 // taps "Upgrade". Kicks off a Dodo Payments checkout and redirects the browser
 // to the hosted checkout URL.
-export default function PaywallModal({ reason, message, onClose, onError }) {
+export default function PaywallModal({ reason, message, onClose, onError, contact }) {
   const [loading, setLoading] = useState(false);
+  const [showContact, setShowContact] = useState(false);
 
   const title =
     reason === 'quota_exceeded'
       ? "You've used your free podcasts"
-      : 'Go unlimited with Premium';
+      : 'Go unlimited Podcasts with Premium';
 
   const handleUpgrade = async () => {
     setLoading(true);
@@ -76,10 +78,19 @@ export default function PaywallModal({ reason, message, onClose, onError }) {
             <span className="ml-auto text-xs text-stone-400">Cancel anytime</span>
           </div>
 
-          <ul className="space-y-3 mb-6">
-            {PREMIUM_PERKS.map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-3">
-                <span className="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">
+          <ul className="space-y-2.5 mb-6">
+            {PREMIUM_PERKS.map(({ icon: Icon, text, highlight }) => (
+              <li
+                key={text}
+                className={`flex items-center gap-3 ${
+                  highlight ? 'rounded-xl bg-brand-50/70 border border-brand-100 px-2.5 py-2 -mx-0.5' : ''
+                }`}
+              >
+                <span
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    highlight ? 'bg-brand-600 text-white' : 'bg-brand-50 text-brand-600'
+                  }`}
+                >
                   <Icon className="w-4 h-4" />
                 </span>
                 <span className="text-sm text-stone-700 font-medium">{text}</span>
@@ -117,10 +128,46 @@ export default function PaywallModal({ reason, message, onClose, onError }) {
           <p className="mt-4 text-center text-xs text-stone-400 leading-relaxed">
             Billed securely by Dodo Payments (Merchant of Record). Questions about
             billing?{' '}
-            <span className="inline-flex items-center gap-1 text-brand-600 font-medium">
-              <MessageCircle className="w-3 h-3" /> Use “Contact us”
-            </span>
+            <button
+              type="button"
+              onClick={() => setShowContact((v) => !v)}
+              className="inline-flex items-center gap-1 text-brand-600 font-semibold hover:text-brand-700 hover:underline transition-colors align-baseline"
+              aria-expanded={showContact}
+            >
+              <MessageCircle className="w-3 h-3" /> Contact us
+            </button>
           </p>
+
+          {showContact && contact && (
+            <div className="mt-3 space-y-2">
+              <a
+                href={contact.whatsappLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 rounded-xl border border-paper-300 bg-paper-50 px-3 py-2.5 hover:border-brand-200 hover:bg-brand-50 transition-all group"
+              >
+                <span className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                  <Phone className="w-4 h-4" />
+                </span>
+                <span className="min-w-0 text-left">
+                  <span className="block text-xs font-semibold text-stone-800 group-hover:text-brand-700">WhatsApp</span>
+                  <span className="block text-xs text-stone-500 truncate">{contact.whatsappDisplay}</span>
+                </span>
+              </a>
+              <a
+                href={contact.emailLink}
+                className="flex items-center gap-3 rounded-xl border border-paper-300 bg-paper-50 px-3 py-2.5 hover:border-brand-200 hover:bg-brand-50 transition-all group"
+              >
+                <span className="w-8 h-8 rounded-lg bg-brand-100 text-brand-700 flex items-center justify-center shrink-0">
+                  <Mail className="w-4 h-4" />
+                </span>
+                <span className="min-w-0 text-left">
+                  <span className="block text-xs font-semibold text-stone-800 group-hover:text-brand-700">Email</span>
+                  <span className="block text-xs text-stone-500 truncate">{contact.email}</span>
+                </span>
+              </a>
+            </div>
+          )}
 
           <button
             onClick={onClose}
