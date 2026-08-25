@@ -69,16 +69,28 @@ function App() {
   // Prefill for the text composer when opened via an extension/context-menu
   // handoff (?type=text&text=...). Empty by default.
   const [handoff, setHandoff] = useState({ text: '', title: '' });
+  // When an action needs sign-in (e.g. an anonymous upload hits the auth gate),
+  // this briefly bounces/highlights the navbar "Sign in" button so it's obvious.
+  const [authNudge, setAuthNudge] = useState(false);
   const pollRef = useRef(null);
   const elapsedRef = useRef(null);
   const toastIdRef = useRef(0);
   const contactRef = useRef(null);
+  const authNudgeTimer = useRef(null);
 
   const pushToast = (message, type = 'info', duration = 5000) => {
     const id = ++toastIdRef.current;
     setToasts((prev) => [...prev, { id, message, type, duration }]);
   };
   const dismissToast = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
+
+  // Draw attention to the navbar "Sign in" button, then auto-settle after a few
+  // seconds so it never bounces forever.
+  const triggerAuthNudge = () => {
+    setAuthNudge(true);
+    if (authNudgeTimer.current) clearTimeout(authNudgeTimer.current);
+    authNudgeTimer.current = setTimeout(() => setAuthNudge(false), 6000);
+  };
 
   useEffect(() => {
     // If a token expires mid-session, drop the user back to logged-out state.
@@ -197,11 +209,23 @@ function App() {
   // Detect a 402 (Payment Required) from an upload and open the paywall with the
   // backend's reason/message; otherwise show a normal error toast.
   const handleUploadError = (err, fallbackMsg) => {
-    if (err?.response?.status === 402) {
+    const status = err?.response?.status;
+    if (status === 402) {
       const detail = err?.response?.data?.detail;
       const reason = (detail && detail.code) || 'quota_exceeded';
       const message = (detail && detail.message) || null;
       setPaywall({ reason, message });
+      return true;
+    }
+    if (status === 401) {
+      // Anonymous caller hit the "sign in to create a podcast" gate. Make it
+      // unmistakable: a warm message + a bouncing Sign in button to click.
+      pushToast(
+        "Hey! You're not signed in yet \u2014 please sign in to create your podcast. It's completely free! \uD83C\uDFA7",
+        'info',
+        8000,
+      );
+      triggerAuthNudge();
       return true;
     }
     pushToast(fallbackMsg, 'error');
@@ -526,8 +550,11 @@ function App() {
               </div>
             ) : (
               <button
-                onClick={() => setShowAuth(true)}
-                className="inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-full bg-stone-900 text-white hover:bg-stone-800 shadow-soft transition-all"
+                onClick={() => { setShowAuth(true); setAuthNudge(false); }}
+                className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-full bg-stone-900 text-white hover:bg-stone-800 shadow-soft transition-all ${
+                  authNudge ? 'animate-bounce ring-4 ring-brand-400/60 ring-offset-2 ring-offset-paper-50' : ''
+                }`}
+                title={authNudge ? 'Sign in here \u2014 it\u2019s free!' : 'Sign in'}
               >
                 <LogIn className="w-4 h-4" />
                 <span>Sign in</span>
@@ -735,7 +762,7 @@ function App() {
                 { icon: Zap, stat: '~60 sec', label: 'to your first podcast' },
                 { icon: Headphones, stat: '2 AI hosts', label: 'natural back-and-forth' },
                 { icon: MessageCircle, stat: 'Live Q&A', label: 'ask the doc anything' },
-                { icon: Star, stat: '$0 for your podcasts', label: 'no credit card to try it' },
+                { icon: Star, stat: '$0 forever', label: 'no credit card to try it' },
               ].map(({ icon: Icon, stat, label }, i) => (
                 <div
                   key={i}
