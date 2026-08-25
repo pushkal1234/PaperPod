@@ -49,7 +49,7 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-md rounded-3xl bg-white shadow-glow border border-paper-300 overflow-hidden"
+        className="relative w-full max-w-md rounded-3xl bg-white shadow-glow border border-paper-300 overflow-y-auto max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         <button

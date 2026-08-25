@@ -221,7 +221,7 @@ function App() {
       // Anonymous caller hit the "sign in to create a podcast" gate. Make it
       // unmistakable: a warm message + a bouncing Sign in button to click.
       pushToast(
-        "Hey! You're not signed in yet \u2014 please sign in to create your podcast. It's completely free! \uD83C\uDFA7",
+        "You're not signed in yet \u2014 please sign in to create your podcast. It's completely free! \uD83C\uDFA7",
         'info',
         8000,
       );
@@ -285,6 +285,9 @@ function App() {
       const res = isImage ? await uploadImage(file) : await uploadDocument(file);
       setView('processing');
       startPolling(res.doc_id);
+      // Podcast just created — pull the authoritative usage so the navbar
+      // counter decrements immediately (server counts non-failed docs).
+      if (getToken()) refreshUser();
     } catch (err) {
       console.error('Upload failed:', err);
       handleUploadError(err, 'Upload failed. Please check the file and try again.');
@@ -299,6 +302,9 @@ function App() {
       const res = await uploadText(text, title);
       setView('processing');
       startPolling(res.doc_id);
+      // Podcast just created — pull the authoritative usage so the navbar
+      // counter decrements immediately (server counts non-failed docs).
+      if (getToken()) refreshUser();
     } catch (err) {
       console.error('Text upload failed:', err);
       handleUploadError(err, 'Upload failed. Please try again.');
@@ -313,6 +319,9 @@ function App() {
       const res = await uploadImage(file);
       setView('processing');
       startPolling(res.doc_id);
+      // Podcast just created — pull the authoritative usage so the navbar
+      // counter decrements immediately (server counts non-failed docs).
+      if (getToken()) refreshUser();
     } catch (err) {
       console.error('Image upload failed:', err);
       handleUploadError(err, 'Image upload failed. Please try again.');
@@ -349,6 +358,7 @@ function App() {
           setCurrentDoc(doc);
           setView('player');
           loadDocuments();
+          if (getToken()) refreshUser();
           return;
         } else if (doc.status === 'failed') {
           setIsPolling(false);
@@ -356,6 +366,9 @@ function App() {
           setErrorMsg(doc.error || 'Podcast generation failed. Please try again.');
           setView('failed');
           loadDocuments();
+          // Failed generations are excluded from usage — reconcile the meter so
+          // the refunded credit shows up.
+          if (getToken()) refreshUser();
           return;
         }
       } catch (err) {
@@ -446,7 +459,7 @@ function App() {
     <div className="min-h-screen">
       {/* Navbar */}
       <nav className="border-b border-paper-300/70 bg-paper-50/80 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 flex items-center justify-between gap-2">
           <button onClick={() => { setView('home'); setCurrentDoc(null); }} className="flex items-center gap-2.5 group shrink-0">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center shadow-glow">
               <Headphones className="w-5 h-5 text-white" />
@@ -455,7 +468,7 @@ function App() {
               Paper<span className="text-brand-600">Pod</span>
             </span>
           </button>
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex flex-wrap justify-end items-center gap-1 sm:gap-1.5 min-w-0">
             <button
               onClick={goToLibrary}
               className={`inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full border transition-all ${
@@ -534,7 +547,7 @@ function App() {
                       title="Upgrade to Premium"
                     >
                       <Star className="w-4 h-4" />
-                      <span>Upgrade</span>
+                      <span className="hidden sm:inline">Upgrade</span>
                     </button>
                   </div>
                 ))}
