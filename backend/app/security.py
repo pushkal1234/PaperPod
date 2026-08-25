@@ -130,3 +130,25 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
+
+
+async def get_upload_user(
+    user: User | None = Depends(get_optional_user),
+) -> User | None:
+    """Resolve the uploader, honoring the REQUIRE_AUTH_UPLOAD switch.
+
+    This is the SINGLE place that turns the "sign in to create a podcast" model
+    on or off. When the flag is off (default) it behaves exactly like
+    ``get_optional_user`` so uploads stay open to anonymous callers and the
+    browser extension keeps working. When on, anonymous callers are rejected
+    with 401 — closing the incognito/cookie-clear loophole — while still
+    returning the ``User`` object for signed-in callers so endpoints don't
+    change their signature.
+    """
+    if settings.REQUIRE_AUTH_UPLOAD and user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Please sign in to create a podcast.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user

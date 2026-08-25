@@ -31,6 +31,21 @@ class User(Base):
     avatar_url = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
+    # --- Monetization (Phase 0: columns exist but nothing enforces them yet) ---
+    # Current entitlement tier. "free" | "premium". Flipped ONLY by the billing
+    # webhook (the single source of truth); never trust the client.
+    plan = Column(String, nullable=False, default="free", server_default="free")
+    # Raw provider subscription status ("active", "on_trial", "past_due",
+    # "cancelled", "expired", ...) for display/debugging; entitlement decisions
+    # use `plan`, not this.
+    plan_status = Column(String, nullable=True)
+    # When the current paid period ends/renews (from the subscription).
+    plan_renews_at = Column(DateTime(timezone=True), nullable=True)
+    # Provider linkage (Lemon Squeezy) so we can open the customer portal and
+    # reconcile webhooks. Named provider-neutrally on purpose.
+    billing_customer_id = Column(String, nullable=True, index=True)
+    billing_subscription_id = Column(String, nullable=True, index=True)
+
 
 class Document(Base):
     __tablename__ = "documents"
@@ -49,6 +64,12 @@ class Document(Base):
     # sha256 of the source bytes/text — used to dedupe re-uploads and skip
     # paying for the same LLM+TTS generation twice.
     content_hash = Column(String, nullable=True, index=True)
+    # Explicit input source for exact analytics breakdowns:
+    # pdf | docx | pptx | txt | image | pasted | other. Recorded at upload time
+    # because content_type alone is ambiguous (image + pasted text both persist
+    # as "text/plain"). Nullable for pre-existing rows; the analytics endpoint
+    # falls back to filename-extension inference when it's NULL.
+    source = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     audio_file = relationship("AudioFile", back_populates="document", uselist=False)
@@ -147,6 +168,36 @@ if _IS_SQLITE:
         cur.close()
 
 
+# Best-effort backfill of Document.source for rows created before the column
+# existed, inferred from the filename extension. Standard SQL (lower + LIKE) so
+# it runs identically on SQLite and Postgres. Note: old text/plain rows are
+# ambiguous — an uploaded ".txt" file and pasted text look identical here, so
+# ".txt" is mapped to 'pasted' (the far more common origin). New rows are
+# classified precisely at upload time and never hit this path.
+_BACKFILL_SOURCE_SQL = """
+UPDATE documents
+SET source = CASE
+    WHEN lower(filename) LIKE '%.pdf'  THEN 'pdf'
+    WHEN lower(filename) LIKE '%.docx' THEN 'docx'
+    WHEN lower(filename) LIKE '%.doc'  THEN 'docx'
+    WHEN lower(filename) LIKE '%.pptx' THEN 'pptx'
+    WHEN lower(filename) LIKE '%.ppt'  THEN 'pptx'
+    WHEN lower(filename) LIKE '%.png'  THEN 'image'
+    WHEN lower(filename) LIKE '%.jpg'  THEN 'image'
+    WHEN lower(filename) LIKE '%.jpeg' THEN 'image'
+    WHEN lower(filename) LIKE '%.webp' THEN 'image'
+    WHEN lower(filename) LIKE '%.gif'  THEN 'image'
+    WHEN lower(filename) LIKE '%.heic' THEN 'image'
+    WHEN lower(filename) LIKE '%.heif' THEN 'image'
+    WHEN lower(filename) LIKE '%.bmp'  THEN 'image'
+    WHEN lower(filename) LIKE '%.tiff' THEN 'image'
+    WHEN lower(filename) LIKE '%.txt'  THEN 'pasted'
+    ELSE 'other'
+END
+WHERE source IS NULL
+"""
+
+
 async def _migrate_schema_sqlite(conn):
     """Backfill SQLite columns added after the initial deploy.
 
@@ -183,6 +234,35 @@ async def _migrate_schema_sqlite(conn):
             sync_conn.execute(
                 text("CREATE INDEX IF NOT EXISTS ix_documents_user_id ON documents (user_id)")
             )
+        if "source" not in doc_cols:
+            sync_conn.execute(text("ALTER TABLE documents ADD COLUMN source TEXT"))
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_documents_source ON documents (source)")
+            )
+            # Best-effort backfill of pre-existing rows from the filename extension.
+            sync_conn.execute(text(_BACKFILL_SOURCE_SQL))
+
+        # Monetization columns on a pre-existing users table (Phase 0).
+        user_rows = sync_conn.execute(text("PRAGMA table_info(users)")).fetchall()
+        user_cols = {row[1] for row in user_rows}
+        if "plan" not in user_cols:
+            sync_conn.execute(
+                text("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'")
+            )
+        if "plan_status" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN plan_status TEXT"))
+        if "plan_renews_at" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN plan_renews_at TIMESTAMP"))
+        if "billing_customer_id" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN billing_customer_id TEXT"))
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_users_billing_customer_id ON users (billing_customer_id)")
+            )
+        if "billing_subscription_id" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN billing_subscription_id TEXT"))
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_users_billing_subscription_id ON users (billing_subscription_id)")
+            )
 
     await conn.run_sync(_migrate)
 
@@ -201,6 +281,37 @@ async def _migrate_schema_postgres(conn):
     )
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_documents_user_id ON documents (user_id)")
+    )
+    await conn.execute(
+        text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS source VARCHAR")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_documents_source ON documents (source)")
+    )
+    # Best-effort backfill of pre-existing rows from the filename extension.
+    await conn.execute(text(_BACKFILL_SOURCE_SQL))
+
+    # Monetization columns on a pre-existing users table (Phase 0).
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR NOT NULL DEFAULT 'free'")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_status VARCHAR")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_renews_at TIMESTAMPTZ")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_customer_id VARCHAR")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_users_billing_customer_id ON users (billing_customer_id)")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_subscription_id VARCHAR")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_users_billing_subscription_id ON users (billing_subscription_id)")
     )
 
 

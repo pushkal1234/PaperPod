@@ -157,3 +157,28 @@ export async function getSharedPodcast(token) {
   const res = await api.get(`/share/${token}`);
   return res.data;
 }
+
+// ── Billing (Dodo Payments) ──
+// Public flags so the app knows whether to show any upgrade/paywall UI at all.
+export async function getBillingConfig() {
+  const res = await api.get('/billing/config');
+  return res.data;
+}
+
+// Create a hosted Dodo checkout session; returns { url } to redirect to.
+export async function createCheckout() {
+  const res = await api.post('/billing/checkout');
+  return res.data;
+}
+
+// Self-service customer portal (manage/cancel subscription); returns { url }.
+export async function getBillingPortal() {
+  const res = await api.get('/billing/portal');
+  return res.data;
+}
+
+// ── Analytics (My Podcasts dashboard) ──
+export async function getStats() {
+  const res = await api.get('/documents/stats');
+  return res.data;
+}

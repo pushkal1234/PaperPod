@@ -119,9 +119,63 @@ class Settings(BaseSettings):
     JWT_EXPIRE_DAYS: int = int(os.getenv("JWT_EXPIRE_DAYS", "30"))
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
 
+    # --- Monetization / entitlements ---
+    # Master kill-switch for the whole paywall. Phase 0 ships with this OFF, so
+    # entitlements are computed and surfaced (via /me) but NEVER enforced — the
+    # product behaves exactly as today. Flip to "1" only in Phase 2 once Stripe
+    # is wired and tested; the enforcement gates read this flag so the paywall
+    # can be disabled instantly without a code redeploy.
+    BILLING_ENABLED: bool = os.getenv("BILLING_ENABLED", "0") not in ("0", "false", "False")
+    # Require a signed-in account to upload/generate at all (closes the anonymous
+    # loophole where incognito/cookie-clear grants unlimited free podcasts). When
+    # OFF (default), uploads stay open to anonymous callers exactly as today, so
+    # this ships dark. Flip to "1" in Phase 2 — but ONLY after the browser
+    # extensions are updated to authenticate and the "no sign-up to try" landing
+    # copy is updated, otherwise the extensions 401 and the copy misleads.
+    REQUIRE_AUTH_UPLOAD: bool = os.getenv("REQUIRE_AUTH_UPLOAD", "0") not in ("0", "false", "False")
+    # Lifetime podcasts a FREE (signed-in) account may generate before the
+    # paywall. With REQUIRE_AUTH_UPLOAD on there is no anonymous tier — every
+    # generation is tied to an account and counted server-side. Failed
+    # generations do NOT count toward this.
+    FREE_LIFETIME_PODCASTS: int = int(os.getenv("FREE_LIFETIME_PODCASTS", "2"))
+    # NOTE: there is intentionally NO free doc-length cap. Free users get the
+    # same full-length ceiling as premium (MAX_DOC_CHARS_HARD) so their first
+    # ~45-min podcast is a real, full experience that builds trust before paying.
+    # Premium's only edge is quantity (unlimited podcasts), not document length.
+
+    # --- Billing provider: Dodo Payments (Merchant of Record) ---
+    # MoR chosen because the founder is in India selling to mostly US/UK
+    # customers, and Stripe/Lemon Squeezy are invite-only there. Dodo is the
+    # merchant of record: it collects global sales tax/VAT and settles to an
+    # Indian bank. Only these values differ between test and live.
+    DODO_API_KEY: str = os.getenv("DODO_API_KEY", "")
+    # Signing secret for the webhook endpoint (Standard Webhooks spec).
+    DODO_WEBHOOK_KEY: str = os.getenv("DODO_WEBHOOK_KEY", "")
+    # Product id of the $5/mo Premium subscription (Dodo dashboard -> Products).
+    DODO_PRODUCT_ID: str = os.getenv("DODO_PRODUCT_ID", "")
+    # "test_mode" (default) or "live_mode" — selects the API base URL.
+    DODO_ENVIRONMENT: str = os.getenv("DODO_ENVIRONMENT", "test_mode")
+    # Where Dodo returns the buyer after checkout, and the base for portal
+    # return links. Defaults to the prod frontend; override per environment.
+    FRONTEND_BASE_URL: str = os.getenv("FRONTEND_BASE_URL", "https://paper-pod-one.vercel.app")
+
     @property
     def MAX_UPLOAD_BYTES(self) -> int:
         return self.MAX_UPLOAD_MB * 1024 * 1024
+
+    @property
+    def DODO_API_BASE(self) -> str:
+        """Dodo REST base URL for the configured environment."""
+        return (
+            "https://live.dodopayments.com"
+            if self.DODO_ENVIRONMENT == "live_mode"
+            else "https://test.dodopayments.com"
+        )
+
+    @property
+    def DODO_CONFIGURED(self) -> bool:
+        """True only when everything needed to create a checkout is present."""
+        return bool(self.DODO_API_KEY.strip() and self.DODO_PRODUCT_ID.strip())
 
 
 settings = Settings()

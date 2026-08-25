@@ -11,12 +11,13 @@ import mimetypes
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_db, Document, AudioFile, QASession, User, _utcnow
-from app.security import get_current_user, get_optional_user
+from app.security import get_current_user, get_upload_user
+from app.entitlements import enforce_can_create_podcast
 from app.services.document_service import save_upload, extract_text, chunk_text, clean_extracted_text
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
@@ -54,6 +55,31 @@ def _set_stage(doc_id: str, stage: str) -> None:
 
 def _clear_stage(doc_id: str) -> None:
     _doc_stages.pop(doc_id, None)
+
+
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".heif", ".bmp", ".tiff")
+
+
+def _source_from_filename(filename: str) -> str:
+    """Classify a file upload into an analytics source bucket by extension.
+
+    Returns one of: pdf | docx | pptx | txt | image | other. Kept in sync with
+    the backfill CASE in database._BACKFILL_SOURCE_SQL so historical and new
+    rows use the same vocabulary. The /text (paste) and /image endpoints set
+    their source explicitly and don't call this.
+    """
+    name = (filename or "").lower()
+    if name.endswith(".pdf"):
+        return "pdf"
+    if name.endswith((".docx", ".doc")):
+        return "docx"
+    if name.endswith((".pptx", ".ppt")):
+        return "pptx"
+    if name.endswith(".txt"):
+        return "txt"
+    if name.endswith(_IMAGE_EXTS):
+        return "image"
+    return "other"
 
 
 def _content_hash(data: bytes) -> str:
@@ -275,7 +301,7 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    user: User | None = Depends(get_optional_user),
+    user: User | None = Depends(get_upload_user),
 ):
     """Upload a document and start podcast generation in background."""
     content_type = file.content_type or "text/plain"
@@ -293,6 +319,8 @@ async def upload_document(
         logger.info(f"[{existing.id}] Dedup hit for re-upload of {file.filename}")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
 
+    await enforce_can_create_podcast(db, user)
+
     file_path = save_upload(file_bytes, file.filename)
 
     doc_id = str(uuid.uuid4())
@@ -304,6 +332,7 @@ async def upload_document(
         raw_text="",
         num_chunks=0,
         content_hash=content_hash,
+        source=_source_from_filename(file.filename),
         created_at=_utcnow(),
     )
     db.add(doc)
@@ -320,7 +349,7 @@ async def upload_text(
     text: str = Form(...),
     title: str = Form("Pasted text"),
     db: AsyncSession = Depends(get_db),
-    user: User | None = Depends(get_optional_user),
+    user: User | None = Depends(get_upload_user),
 ):
     """Upload raw text directly (copy-paste)."""
     if not text.strip():
@@ -339,6 +368,8 @@ async def upload_text(
         logger.info(f"[{existing.id}] Dedup hit for re-submitted text")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
 
+    await enforce_can_create_podcast(db, user)
+
     doc_id = str(uuid.uuid4())
     doc = Document(
         id=doc_id,
@@ -348,6 +379,7 @@ async def upload_text(
         raw_text=text,
         num_chunks=0,
         content_hash=content_hash,
+        source="pasted",
         created_at=_utcnow(),
     )
     db.add(doc)
@@ -363,7 +395,7 @@ async def upload_image(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    user: User | None = Depends(get_optional_user),
+    user: User | None = Depends(get_upload_user),
 ):
     """Upload an image — OCR extracts text in background, then generates podcast."""
     image_bytes = await file.read()
@@ -380,6 +412,8 @@ async def upload_image(
         logger.info(f"[{existing.id}] Dedup hit for re-uploaded image {file.filename}")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
 
+    await enforce_can_create_podcast(db, user)
+
     doc_id = str(uuid.uuid4())
     doc = Document(
         id=doc_id,
@@ -389,6 +423,7 @@ async def upload_image(
         raw_text="",
         num_chunks=0,
         content_hash=content_hash,
+        source="image",
         created_at=_utcnow(),
     )
     db.add(doc)
@@ -587,6 +622,93 @@ async def list_documents(
         })
 
     return {"documents": items}
+
+
+@router.get("/stats")
+async def document_stats(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Aggregate analytics for the signed-in user's library (My Podcasts view).
+
+    Registered BEFORE ``/{doc_id}`` so it isn't swallowed by that catch-all.
+    Everything is computed from a single lightweight column-only query (no
+    ``raw_text`` payloads) and bucketed in Python to stay portable across
+    SQLite (local/dev) and Postgres (prod) without DB-specific date functions.
+    """
+    result = await db.execute(
+        select(
+            Document.status,
+            Document.source,
+            Document.filename,
+            Document.created_at,
+            func.length(Document.raw_text),
+            AudioFile.duration_seconds,
+        )
+        .select_from(Document)
+        .outerjoin(AudioFile, AudioFile.document_id == Document.id)
+        .where(Document.user_id == user.id)
+    )
+
+    total = ready = failed = processing = 0
+    total_seconds = 0.0
+    total_chars = 0
+    ready_count = 0
+    by_source: dict[str, int] = {}
+    by_month: dict[str, int] = {}
+
+    for status_, source, filename, created_at, char_len, duration in result.all():
+        total += 1
+        st = status_ or "processing"
+        if st == "ready":
+            ready += 1
+        elif st == "failed":
+            failed += 1
+        else:
+            processing += 1
+
+        # Exact source when recorded; fall back to filename inference for
+        # pre-source rows (mirrors the backfill logic).
+        src = source or _source_from_filename(filename or "")
+        by_source[src] = by_source.get(src, 0) + 1
+
+        if created_at:
+            key = created_at.strftime("%Y-%m")
+            by_month[key] = by_month.get(key, 0) + 1
+
+        if st == "ready":
+            ready_count += 1
+            total_seconds += float(duration or 0.0)
+            total_chars += int(char_len or 0)
+
+    avg_seconds = (total_seconds / ready_count) if ready_count else 0.0
+    # ~5.7 chars/word is a decent English estimate; avoids loading raw_text.
+    total_words = int(total_chars / 5.7) if total_chars else 0
+
+    over_time = [{"month": m, "count": c} for m, c in sorted(by_month.items())]
+    source_breakdown = [
+        {"source": s, "count": c}
+        for s, c in sorted(by_source.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+    return {
+        "totals": {
+            "podcasts": total,
+            "ready": ready,
+            "failed": failed,
+            "processing": processing,
+            "listening_seconds": round(total_seconds),
+            "avg_seconds": round(avg_seconds),
+            "words": total_words,
+        },
+        "by_source": source_breakdown,
+        "status_breakdown": [
+            {"status": "ready", "count": ready},
+            {"status": "failed", "count": failed},
+            {"status": "processing", "count": processing},
+        ],
+        "over_time": over_time,
+    }
 
 
 @router.get("/{doc_id}")

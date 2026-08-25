@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useState, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileText, Clipboard, Camera, Type, AlertCircle } from 'lucide-react';
 
@@ -11,12 +11,23 @@ const TABS = [
 // Keep in sync with backend MAX_UPLOAD_MB (config.py).
 const MAX_UPLOAD_MB = 25;
 
-export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUploading }) {
-  const [activeTab, setActiveTab] = useState('file');
-  const [pastedText, setPastedText] = useState('');
-  const [title, setTitle] = useState('');
+export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUploading, initialText = '', initialTitle = '' }) {
+  const [activeTab, setActiveTab] = useState(initialText ? 'text' : 'file');
+  const [pastedText, setPastedText] = useState(initialText);
+  const [title, setTitle] = useState(initialTitle);
   const [rejectionMsg, setRejectionMsg] = useState(null);
   const cameraInputRef = useRef(null);
+
+  // Prefill the text composer when the app is opened via an extension /
+  // context-menu handoff (e.g. ?type=text&text=...). Runs when the params
+  // arrive after mount.
+  useEffect(() => {
+    if (initialText) {
+      setPastedText(initialText);
+      setTitle(initialTitle || '');
+      setActiveTab('text');
+    }
+  }, [initialText, initialTitle]);
 
   const onDrop = useCallback((acceptedFiles) => {
     if (acceptedFiles.length > 0) {

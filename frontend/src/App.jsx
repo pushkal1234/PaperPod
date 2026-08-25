@@ -11,7 +11,9 @@ import EngineeringDeepDive from './components/EngineeringDeepDive';
 import ProcessingView from './components/ProcessingView';
 import ConfirmModal from './components/ConfirmModal';
 import ToastContainer from './components/ToastContainer';
-import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler } from './api';
+import PaywallModal from './components/PaywallModal';
+import AnalyticsDashboard from './components/AnalyticsDashboard';
+import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler, getBillingConfig, createCheckout, getBillingPortal } from './api';
 
 // Browser extension store listings — surfaced in the navbar, hero, and footer.
 const CHROME_STORE_URL = 'https://chromewebstore.google.com/detail/paperpod-%E2%80%94-ai-podcast-for/oeppbenincbmdaomedjpjfegnfphdoeo';
@@ -59,6 +61,14 @@ function App() {
   const [processingElapsed, setProcessingElapsed] = useState(0);
   const [processingStage, setProcessingStage] = useState(null);
   const [showContact, setShowContact] = useState(false);
+  // Billing: public flags (drives whether any upgrade UI shows at all) and the
+  // paywall modal state ({ reason, message } when open, null when closed).
+  const [billingConfig, setBillingConfig] = useState(null);
+  const [paywall, setPaywall] = useState(null);
+  const [portalLoading, setPortalLoading] = useState(false);
+  // Prefill for the text composer when opened via an extension/context-menu
+  // handoff (?type=text&text=...). Empty by default.
+  const [handoff, setHandoff] = useState({ text: '', title: '' });
   const pollRef = useRef(null);
   const elapsedRef = useRef(null);
   const toastIdRef = useRef(0);
@@ -90,8 +100,38 @@ function App() {
       setAuthChecked(true);
     }
 
+    // Public billing flags — decides whether any upgrade/paywall UI shows.
+    getBillingConfig()
+      .then(setBillingConfig)
+      .catch(() => setBillingConfig(null));
+
     // Handle shared podcast via ?share=TOKEN (public, no auth needed)
     const params = new URLSearchParams(window.location.search);
+
+    // Returned from a successful Dodo checkout (?upgrade=success): the webhook is
+    // the source of truth, so just refresh the user, celebrate, and clean the URL.
+    if (params.get('upgrade') === 'success') {
+      pushToast('Welcome to Premium! Your account has been upgraded. 🎉', 'success', 7000);
+      if (getToken()) {
+        // Poll a couple of times in case the webhook lands a moment after redirect.
+        refreshUser();
+        setTimeout(refreshUser, 3000);
+      }
+      params.delete('upgrade');
+      const clean = window.location.pathname + (params.toString() ? `?${params}` : '');
+      window.history.replaceState({}, '', clean);
+    }
+
+    // Extension "Paste text" / context-menu text handoff: prefill the composer.
+    if (params.get('type') === 'text' && params.get('text')) {
+      setHandoff({ text: params.get('text'), title: params.get('title') || '' });
+      params.delete('type');
+      params.delete('text');
+      params.delete('title');
+      const clean = window.location.pathname + (params.toString() ? `?${params}` : '');
+      window.history.replaceState({}, '', clean);
+    }
+
     const shareToken = params.get('share');
     if (shareToken) {
       setSharedLoading(true);
@@ -138,6 +178,50 @@ function App() {
     }
   };
 
+  // Re-fetch the signed-in user's plan/usage (e.g. after returning from checkout).
+  const refreshUser = async () => {
+    try {
+      const me = await getMe();
+      setUser(me);
+      return me;
+    } catch {
+      return null;
+    }
+  };
+
+  // Whether any upgrade/paywall UI should be visible. Sourced from the public
+  // /billing/config flag so the whole feature stays dark until BILLING_ENABLED.
+  const billingOn = !!billingConfig?.billing_enabled;
+  const isPremium = user?.plan === 'premium';
+
+  // Detect a 402 (Payment Required) from an upload and open the paywall with the
+  // backend's reason/message; otherwise show a normal error toast.
+  const handleUploadError = (err, fallbackMsg) => {
+    if (err?.response?.status === 402) {
+      const detail = err?.response?.data?.detail;
+      const reason = (detail && detail.code) || 'quota_exceeded';
+      const message = (detail && detail.message) || null;
+      setPaywall({ reason, message });
+      return true;
+    }
+    pushToast(fallbackMsg, 'error');
+    return false;
+  };
+
+  const openUpgrade = () => setPaywall({ reason: 'upgrade', message: null });
+
+  const handleManageBilling = async () => {
+    setPortalLoading(true);
+    try {
+      const { url } = await getBillingPortal();
+      if (url) window.location.href = url;
+      else pushToast('Could not open the billing portal. Please try again.', 'error');
+    } catch {
+      pushToast('Could not open the billing portal. Please try again.', 'error');
+      setPortalLoading(false);
+    }
+  };
+
   const handleAuthSuccess = (loggedInUser) => {
     setUser(loggedInUser);
     setShowAuth(false);
@@ -179,7 +263,7 @@ function App() {
       startPolling(res.doc_id);
     } catch (err) {
       console.error('Upload failed:', err);
-      pushToast('Upload failed. Please check the file and try again.', 'error');
+      handleUploadError(err, 'Upload failed. Please check the file and try again.');
     } finally {
       setIsUploading(false);
     }
@@ -193,7 +277,7 @@ function App() {
       startPolling(res.doc_id);
     } catch (err) {
       console.error('Text upload failed:', err);
-      pushToast('Upload failed. Please try again.', 'error');
+      handleUploadError(err, 'Upload failed. Please try again.');
     } finally {
       setIsUploading(false);
     }
@@ -207,7 +291,7 @@ function App() {
       startPolling(res.doc_id);
     } catch (err) {
       console.error('Image upload failed:', err);
-      pushToast('Image upload failed. Please try again.', 'error');
+      handleUploadError(err, 'Image upload failed. Please try again.');
     } finally {
       setIsUploading(false);
     }
@@ -396,6 +480,41 @@ function App() {
                     {user.name || user.email}
                   </span>
                 </div>
+
+                {/* Billing UI — hidden entirely until BILLING_ENABLED is on. */}
+                {billingOn && (isPremium ? (
+                  <div className="flex items-center gap-2">
+                    <span className="hidden sm:inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1.5 rounded-full bg-gradient-to-r from-brand-100 to-accent-100 text-brand-700 border border-brand-200">
+                      <Star className="w-3.5 h-3.5" /> Premium
+                    </span>
+                    <button
+                      onClick={handleManageBilling}
+                      disabled={portalLoading}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full bg-white text-stone-600 border border-paper-300 hover:text-brand-700 hover:border-brand-200 transition-all disabled:opacity-60"
+                      title="Manage your subscription"
+                    >
+                      {portalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      <span className="hidden sm:inline">Manage</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    {user?.usage?.podcasts_remaining != null && (
+                      <span className="hidden md:inline text-xs font-medium text-stone-500" title="Free podcasts remaining">
+                        {user.usage.podcasts_remaining} of {user.usage.podcasts_limit} left
+                      </span>
+                    )}
+                    <button
+                      onClick={openUpgrade}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-full bg-gradient-to-r from-brand-600 to-accent-500 text-white hover:opacity-90 shadow-glow transition-all"
+                      title="Upgrade to Premium"
+                    >
+                      <Star className="w-4 h-4" />
+                      <span>Upgrade</span>
+                    </button>
+                  </div>
+                ))}
+
                 <button
                   onClick={() => setShowSignOut(true)}
                   className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full bg-paper-100 text-stone-500 hover:text-stone-800 border border-paper-300 transition-all"
@@ -510,6 +629,15 @@ function App() {
         />
       )}
 
+      {paywall && (
+        <PaywallModal
+          reason={paywall.reason}
+          message={paywall.message}
+          onClose={() => setPaywall(null)}
+          onError={(msg) => pushToast(msg, 'error')}
+        />
+      )}
+
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       <main className="max-w-6xl mx-auto px-6 py-8">
@@ -545,21 +673,37 @@ function App() {
 
               {/* Trust line — free-forever emphasis (extension demoted below) */}
               <div className="flex flex-col items-center gap-3 mt-8">
-                <span className="inline-flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.12em] text-accent-600 bg-accent-50 border border-accent-200 px-3 py-1 rounded-full shadow-soft animate-pulse-slow">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  100% Free forever
-                </span>
-                <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs font-medium text-stone-500">
-                  <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> Free lifetime access</span>
-                  <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No credit card required</span>
-                  <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No sign-up to try it</span>
-                </div>
+                {billingOn ? (
+                  <>
+                    <span className="inline-flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.12em] text-accent-600 bg-accent-50 border border-accent-200 px-3 py-1 rounded-full shadow-soft animate-pulse-slow">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Start free — no card required
+                    </span>
+                    <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs font-medium text-stone-500">
+                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> 2 free podcasts to start</span>
+                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No credit card to try it</span>
+                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> Unlimited on Premium — $5/mo</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <span className="inline-flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.12em] text-accent-600 bg-accent-50 border border-accent-200 px-3 py-1 rounded-full shadow-soft animate-pulse-slow">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      100% Free forever
+                    </span>
+                    <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs font-medium text-stone-500">
+                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> Free lifetime access</span>
+                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No credit card required</span>
+                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No sign-up to try it</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
             {/* PRIMARY ACTION — upload is the hero CTA for the web app. */}
             <div className="max-w-2xl mx-auto w-full">
-              <UploadZone onUpload={handleUpload} onUploadText={handleUploadText} onUploadImage={handleUploadImage} isUploading={isUploading} />
+              <UploadZone onUpload={handleUpload} onUploadText={handleUploadText} onUploadImage={handleUploadImage} isUploading={isUploading} initialText={handoff.text} initialTitle={handoff.title} />
               <p className="text-center text-sm text-stone-400 mt-4">
                 Want to keep your podcasts?{' '}
                 <button onClick={goToLibrary} className="text-brand-600 font-semibold hover:text-brand-700">
@@ -656,6 +800,9 @@ function App() {
                 Create a new one
               </button>
             </div>
+
+            {/* Usage/analytics dashboard — self-hides when there are 0 podcasts. */}
+            <AnalyticsDashboard />
 
             {documents.length > 0 ? (
               <div className="grid gap-3">

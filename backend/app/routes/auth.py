@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import User, get_db, _utcnow
+from app.entitlements import get_entitlements, get_usage
 from app.security import (
     create_access_token,
     get_current_user,
@@ -42,11 +43,26 @@ def _user_public(user: User) -> dict:
         "email": user.email,
         "name": user.name,
         "avatar_url": user.avatar_url,
+        "plan": getattr(user, "plan", "free"),
     }
 
 
-def _auth_response(user: User) -> dict:
-    return {"token": create_access_token(user.id), "user": _user_public(user)}
+async def _user_full(user: User, db: AsyncSession) -> dict:
+    """Public profile enriched with entitlements + live usage for the frontend.
+
+    This is the single shape returned by /me AND every auth response, so the
+    client always has plan/entitlements/usage regardless of how the session
+    started.
+    """
+    return {
+        **_user_public(user),
+        "entitlements": get_entitlements(user).to_dict(),
+        "usage": await get_usage(db, user),
+    }
+
+
+async def _auth_response(user: User, db: AsyncSession) -> dict:
+    return {"token": create_access_token(user.id), "user": await _user_full(user, db)}
 
 
 @router.post("/register")
@@ -70,7 +86,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     logger.info(f"[auth] Registered new user {user.id}")
-    return _auth_response(user)
+    return await _auth_response(user, db)
 
 
 @router.post("/login")
@@ -80,7 +96,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
-    return _auth_response(user)
+    return await _auth_response(user, db)
 
 
 @router.post("/google")
@@ -119,9 +135,9 @@ async def google_sign_in(body: GoogleRequest, db: AsyncSession = Depends(get_db)
 
     await db.commit()
     logger.info(f"[auth] Google sign-in for user {user.id}")
-    return _auth_response(user)
+    return await _auth_response(user, db)
 
 
 @router.get("/me")
-async def me(user: User = Depends(get_current_user)):
-    return _user_public(user)
+async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return await _user_full(user, db)
