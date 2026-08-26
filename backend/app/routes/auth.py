@@ -1,19 +1,28 @@
 import logging
 import re
+from datetime import timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import User, get_db, _utcnow
 from app.entitlements import get_entitlements, get_usage
 from app.security import (
+    client_ip,
     create_access_token,
     get_current_user,
     hash_password,
     verify_google_id_token,
     verify_password,
+)
+from app.services.email_service import (
+    generate_code,
+    hash_code,
+    normalize_email,
+    send_verification_email,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -39,14 +48,46 @@ class GoogleRequest(BaseModel):
     id_token: str
 
 
+class VerifyEmailRequest(BaseModel):
+    code: str
+
+
 def _user_public(user: User) -> dict:
+    verified = bool(getattr(user, "email_verified", True))
     return {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "avatar_url": user.avatar_url,
         "plan": getattr(user, "plan", "free"),
+        "email_verified": verified,
+        # True only when the server will actually block unverified users, so the
+        # frontend knows whether to show the "enter your code" step.
+        "verification_required": bool(settings.EMAIL_VERIFICATION_ENABLED and not verified),
     }
+
+
+def _as_utc(dt):
+    """Coerce a possibly-naive stored datetime to timezone-aware UTC.
+
+    SQLite round-trips ``DateTime`` values as naive; comparing them to an aware
+    ``_utcnow()`` would raise, so normalize before arithmetic.
+    """
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+async def _issue_verification(user: User, db: AsyncSession) -> None:
+    """Generate, store (hashed), and email a fresh verification code."""
+    code = generate_code()
+    user.verification_code_hash = hash_code(code)
+    user.verification_sent_at = _utcnow()
+    user.verification_attempts = 0
+    await db.commit()
+    sent = await send_verification_email(user.email, code, user.name)
+    if not sent and settings.EMAIL_PROVIDER_CONFIGURED:
+        logger.error("[auth] Verification email FAILED to send to %s", user.email)
 
 
 async def _user_full(user: User, db: AsyncSession) -> dict:
@@ -68,33 +109,54 @@ async def _auth_response(user: User, db: AsyncSession) -> dict:
 
 
 @router.post("/register")
-async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     email = body.email.strip().lower()
     if not _EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Please enter a valid email address.")
     if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
 
-    existing = await db.execute(select(User).where(User.email == email))
+    # Duplicate detection uses the CANONICAL email so alias tricks
+    # (a.b+x@gmail.com == ab@gmail.com) can't spawn a second free account.
+    norm = normalize_email(email)
+    existing = await db.execute(
+        select(User).where((User.normalized_email == norm) | (User.email == email))
+    )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="An account with this email already exists.")
 
+    # When verification is enabled, new accounts start UNVERIFIED and must
+    # confirm a code before they can create podcasts. When disabled, behave as
+    # before (accounts are usable immediately).
+    verified = not settings.EMAIL_VERIFICATION_ENABLED
     user = User(
         email=email,
+        normalized_email=norm,
         name=(body.name or "").strip() or None,
         password_hash=hash_password(body.password),
+        email_verified=verified,
+        signup_ip=client_ip(request),
         created_at=_utcnow(),
     )
     db.add(user)
     await db.commit()
-    logger.info(f"[auth] Registered new user {user.id}")
+    logger.info(f"[auth] Registered new user {user.id} (verified={verified})")
+
+    if settings.EMAIL_VERIFICATION_ENABLED:
+        await _issue_verification(user, db)
+
     return await _auth_response(user, db)
 
 
 @router.post("/login")
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     email = body.email.strip().lower()
-    result = await db.execute(select(User).where(User.email == email))
+    norm = normalize_email(email)
+    # Match on the canonical email first (so alias variants resolve to the one
+    # real account), then fall back to the exact address for legacy rows.
+    result = await db.execute(
+        select(User).where((User.normalized_email == norm) | (User.email == email))
+    )
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
@@ -102,19 +164,22 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/google")
-async def google_sign_in(body: GoogleRequest, db: AsyncSession = Depends(get_db)):
+async def google_sign_in(body: GoogleRequest, request: Request, db: AsyncSession = Depends(get_db)):
     claims = verify_google_id_token(body.id_token)
     google_sub = claims["sub"]
     email = claims["email"].strip().lower()
     name = claims.get("name")
     avatar = claims.get("picture")
+    norm = normalize_email(email)
 
-    # Match by Google sub first, then fall back to email so an existing
-    # password account can link to Google sign-in.
+    # Match by Google sub first, then fall back to the canonical email so an
+    # existing password account can link to Google sign-in.
     result = await db.execute(select(User).where(User.google_sub == google_sub))
     user = result.scalar_one_or_none()
     if not user:
-        result = await db.execute(select(User).where(User.email == email))
+        result = await db.execute(
+            select(User).where((User.normalized_email == norm) | (User.email == email))
+        )
         user = result.scalar_one_or_none()
 
     if user:
@@ -125,12 +190,19 @@ async def google_sign_in(body: GoogleRequest, db: AsyncSession = Depends(get_db)
             user.name = name
         if not user.avatar_url and avatar:
             user.avatar_url = avatar
+        if not getattr(user, "normalized_email", None):
+            user.normalized_email = norm
+        # Google has already verified this address — trust it.
+        user.email_verified = True
     else:
         user = User(
             email=email,
+            normalized_email=norm,
             name=name,
             google_sub=google_sub,
             avatar_url=avatar,
+            email_verified=True,
+            signup_ip=client_ip(request),
             created_at=_utcnow(),
         )
         db.add(user)
@@ -138,6 +210,68 @@ async def google_sign_in(body: GoogleRequest, db: AsyncSession = Depends(get_db)
     await db.commit()
     logger.info(f"[auth] Google sign-in for user {user.id}")
     return await _auth_response(user, db)
+
+
+@router.post("/verify-email")
+async def verify_email(
+    body: VerifyEmailRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm the 6-digit code and mark the account verified."""
+    if getattr(user, "email_verified", False):
+        return await _user_full(user, db)
+    if not user.verification_code_hash or not user.verification_sent_at:
+        raise HTTPException(
+            status_code=400,
+            detail="No verification pending. Request a new code.",
+        )
+
+    age = (_utcnow() - _as_utc(user.verification_sent_at)).total_seconds()
+    if age > settings.VERIFICATION_CODE_TTL_MINUTES * 60:
+        raise HTTPException(
+            status_code=400,
+            detail="This code has expired. Request a new one.",
+        )
+    if (user.verification_attempts or 0) >= settings.VERIFICATION_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many incorrect attempts. Request a new code.",
+        )
+
+    if hash_code(body.code) != user.verification_code_hash:
+        user.verification_attempts = (user.verification_attempts or 0) + 1
+        await db.commit()
+        raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
+
+    user.email_verified = True
+    user.verification_code_hash = None
+    user.verification_attempts = 0
+    await db.commit()
+    logger.info(f"[auth] Email verified for user {user.id}")
+    return await _user_full(user, db)
+
+
+@router.post("/resend-verification")
+async def resend_verification(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-issue a verification code, rate-limited by a short cooldown."""
+    if getattr(user, "email_verified", False):
+        return {"ok": True, "already_verified": True}
+
+    if user.verification_sent_at:
+        age = (_utcnow() - _as_utc(user.verification_sent_at)).total_seconds()
+        if age < settings.VERIFICATION_RESEND_COOLDOWN_SECONDS:
+            wait = int(settings.VERIFICATION_RESEND_COOLDOWN_SECONDS - age)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {wait}s before requesting another code.",
+            )
+
+    await _issue_verification(user, db)
+    return {"ok": True}
 
 
 @router.get("/me")

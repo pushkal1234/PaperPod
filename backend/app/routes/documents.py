@@ -8,7 +8,7 @@ import asyncio
 import hashlib
 import mimetypes
 
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
@@ -16,8 +16,12 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_db, Document, AudioFile, QASession, User, _utcnow
-from app.security import get_current_user, get_upload_user
-from app.entitlements import enforce_can_create_podcast
+from app.security import get_current_user, get_upload_user, client_ip
+from app.entitlements import (
+    enforce_can_create_podcast,
+    enforce_email_verified,
+    enforce_ip_quota,
+)
 from app.services.document_service import save_upload, extract_text, chunk_text, clean_extracted_text
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
@@ -299,12 +303,14 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
 @router.post("/upload")
 async def upload_document(
     background_tasks: BackgroundTasks,
+    request: Request,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     user: User | None = Depends(get_upload_user),
 ):
     """Upload a document and start podcast generation in background."""
     content_type = file.content_type or "text/plain"
+    ip = client_ip(request)
 
     file_bytes = await file.read()
     if len(file_bytes) > settings.MAX_UPLOAD_BYTES:
@@ -319,7 +325,9 @@ async def upload_document(
         logger.info(f"[{existing.id}] Dedup hit for re-upload of {file.filename}")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
 
+    enforce_email_verified(user)
     await enforce_can_create_podcast(db, user)
+    await enforce_ip_quota(db, user, ip)
 
     file_path = save_upload(file_bytes, file.filename)
 
@@ -333,6 +341,7 @@ async def upload_document(
         num_chunks=0,
         content_hash=content_hash,
         source=_source_from_filename(file.filename),
+        creator_ip=ip,
         created_at=_utcnow(),
     )
     db.add(doc)
@@ -346,6 +355,7 @@ async def upload_document(
 @router.post("/text")
 async def upload_text(
     background_tasks: BackgroundTasks,
+    request: Request,
     text: str = Form(...),
     title: str = Form("Pasted text"),
     db: AsyncSession = Depends(get_db),
@@ -354,6 +364,7 @@ async def upload_text(
     """Upload raw text directly (copy-paste)."""
     if not text.strip():
         raise HTTPException(status_code=400, detail="No text provided.")
+    ip = client_ip(request)
     # Strip NUL/control bytes before hashing or storing — pasted text can carry
     # them (e.g. copied from a PDF) and Postgres rejects 0x00 in text columns.
     text = clean_extracted_text(text)
@@ -368,7 +379,9 @@ async def upload_text(
         logger.info(f"[{existing.id}] Dedup hit for re-submitted text")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
 
+    enforce_email_verified(user)
     await enforce_can_create_podcast(db, user)
+    await enforce_ip_quota(db, user, ip)
 
     doc_id = str(uuid.uuid4())
     doc = Document(
@@ -380,6 +393,7 @@ async def upload_text(
         num_chunks=0,
         content_hash=content_hash,
         source="pasted",
+        creator_ip=ip,
         created_at=_utcnow(),
     )
     db.add(doc)
@@ -393,11 +407,13 @@ async def upload_text(
 @router.post("/image")
 async def upload_image(
     background_tasks: BackgroundTasks,
+    request: Request,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     user: User | None = Depends(get_upload_user),
 ):
     """Upload an image — OCR extracts text in background, then generates podcast."""
+    ip = client_ip(request)
     image_bytes = await file.read()
     if len(image_bytes) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"Image too large. Maximum size is {settings.MAX_UPLOAD_MB} MB.")
@@ -412,7 +428,9 @@ async def upload_image(
         logger.info(f"[{existing.id}] Dedup hit for re-uploaded image {file.filename}")
         return {"doc_id": existing.id, "filename": existing.filename, "status": existing.status, "deduped": True}
 
+    enforce_email_verified(user)
     await enforce_can_create_podcast(db, user)
+    await enforce_ip_quota(db, user, ip)
 
     doc_id = str(uuid.uuid4())
     doc = Document(
@@ -424,6 +442,7 @@ async def upload_image(
         num_chunks=0,
         content_hash=content_hash,
         source="image",
+        creator_ip=ip,
         created_at=_utcnow(),
     )
     db.add(doc)

@@ -139,3 +139,58 @@ async def enforce_can_create_podcast(db: AsyncSession, user: User | None) -> Non
                 ),
             },
         )
+
+
+def enforce_email_verified(user: User | None) -> None:
+    """Raise HTTP 403 if a signed-in user hasn't verified their email.
+
+    No-op when email verification is disabled or the caller is anonymous
+    (anonymous uploads are governed by REQUIRE_AUTH_UPLOAD, not this). This is
+    the primary defense against fake-email multi-account abuse: an account can't
+    create podcasts until it proves it owns a real inbox.
+    """
+    if not settings.EMAIL_VERIFICATION_ENABLED or user is None:
+        return
+    if getattr(user, "email_verified", True):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "email_unverified",
+            "message": (
+                "Please verify your email to create podcasts. "
+                "Check your inbox for the 6-digit code."
+            ),
+        },
+    )
+
+
+async def enforce_ip_quota(db: AsyncSession, user: User | None, client_ip: str | None) -> None:
+    """Raise HTTP 402 if this IP has used up the shared free-podcast allowance.
+
+    Secondary defense: caps free podcasts per source IP across ALL accounts so
+    creating many accounts on one machine still shares one allowance. No-op when
+    disabled, when the IP is unknown, or for premium users (who are unlimited).
+    """
+    if not settings.IP_QUOTA_ENABLED or not client_ip:
+        return
+    if _is_premium(user):
+        return
+    result = await db.execute(
+        select(func.count(Document.id)).where(
+            Document.creator_ip == client_ip,
+            Document.status != "failed",
+        )
+    )
+    used = int(result.scalar_one() or 0)
+    if used >= settings.FREE_PODCASTS_PER_IP:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "ip_quota_exceeded",
+                "message": (
+                    "You've reached the free podcast limit for this network. "
+                    "Upgrade to Premium for unlimited podcasts."
+                ),
+            },
+        )

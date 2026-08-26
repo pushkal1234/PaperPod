@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, Text, Integer, Float, DateTime, ForeignKey, event
+from sqlalchemy import Column, String, Text, Integer, Float, Boolean, DateTime, ForeignKey, event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -46,6 +46,22 @@ class User(Base):
     billing_customer_id = Column(String, nullable=True, index=True)
     billing_subscription_id = Column(String, nullable=True, index=True)
 
+    # --- Anti-abuse: email verification & multi-account controls ---
+    # Canonical form of the email with Gmail dots/plus-aliases collapsed, used to
+    # detect duplicate accounts (a.b+x@gmail.com == ab@gmail.com). `email` keeps
+    # the address exactly as entered (lowercased).
+    normalized_email = Column(String, nullable=True, index=True)
+    # Whether the email has been confirmed via code. Google accounts are trusted
+    # as verified; pre-existing accounts are grandfathered verified in migration.
+    email_verified = Column(Boolean, nullable=False, default=False)
+    # sha256 of the current 6-digit code (never store the code in plaintext).
+    verification_code_hash = Column(String, nullable=True)
+    verification_sent_at = Column(DateTime(timezone=True), nullable=True)
+    verification_attempts = Column(Integer, nullable=False, default=0)
+    # IP the account was created from (best-effort; first X-Forwarded-For hop
+    # behind a proxy) for per-IP free-quota enforcement.
+    signup_ip = Column(String, nullable=True, index=True)
+
 
 class Document(Base):
     __tablename__ = "documents"
@@ -70,6 +86,9 @@ class Document(Base):
     # as "text/plain"). Nullable for pre-existing rows; the analytics endpoint
     # falls back to filename-extension inference when it's NULL.
     source = Column(String, nullable=True, index=True)
+    # IP the podcast was created from (best-effort; first X-Forwarded-For hop
+    # behind a proxy) for per-IP free-quota enforcement across accounts.
+    creator_ip = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     audio_file = relationship("AudioFile", back_populates="document", uselist=False)
@@ -241,6 +260,11 @@ async def _migrate_schema_sqlite(conn):
             )
             # Best-effort backfill of pre-existing rows from the filename extension.
             sync_conn.execute(text(_BACKFILL_SOURCE_SQL))
+        if "creator_ip" not in doc_cols:
+            sync_conn.execute(text("ALTER TABLE documents ADD COLUMN creator_ip TEXT"))
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_documents_creator_ip ON documents (creator_ip)")
+            )
 
         # Monetization columns on a pre-existing users table (Phase 0).
         user_rows = sync_conn.execute(text("PRAGMA table_info(users)")).fetchall()
@@ -262,6 +286,38 @@ async def _migrate_schema_sqlite(conn):
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN billing_subscription_id TEXT"))
             sync_conn.execute(
                 text("CREATE INDEX IF NOT EXISTS ix_users_billing_subscription_id ON users (billing_subscription_id)")
+            )
+
+        # Anti-abuse columns (email verification + multi-account controls).
+        if "normalized_email" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN normalized_email TEXT"))
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_users_normalized_email ON users (normalized_email)")
+            )
+            # Backfill so uniqueness checks work for pre-existing accounts. Gmail
+            # dot/plus normalization can't run in SQL, but stored emails are
+            # already unique+lowercased, so lower(email) is a safe canonical seed.
+            sync_conn.execute(
+                text("UPDATE users SET normalized_email = lower(email) WHERE normalized_email IS NULL")
+            )
+        if "email_verified" not in user_cols:
+            # Grandfather ALL pre-existing accounts as verified so nobody who
+            # already signed up is locked out when verification is turned on.
+            sync_conn.execute(
+                text("ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT 1")
+            )
+        if "verification_code_hash" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN verification_code_hash TEXT"))
+        if "verification_sent_at" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN verification_sent_at TIMESTAMP"))
+        if "verification_attempts" not in user_cols:
+            sync_conn.execute(
+                text("ALTER TABLE users ADD COLUMN verification_attempts INTEGER NOT NULL DEFAULT 0")
+            )
+        if "signup_ip" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN signup_ip TEXT"))
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_users_signup_ip ON users (signup_ip)")
             )
 
     await conn.run_sync(_migrate)
@@ -312,6 +368,45 @@ async def _migrate_schema_postgres(conn):
     )
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_users_billing_subscription_id ON users (billing_subscription_id)")
+    )
+
+    # Per-IP quota column on documents.
+    await conn.execute(
+        text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS creator_ip VARCHAR")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_documents_creator_ip ON documents (creator_ip)")
+    )
+
+    # Anti-abuse columns (email verification + multi-account controls).
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS normalized_email VARCHAR")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_users_normalized_email ON users (normalized_email)")
+    )
+    await conn.execute(
+        text("UPDATE users SET normalized_email = lower(email) WHERE normalized_email IS NULL")
+    )
+    # Grandfather pre-existing accounts as verified (DEFAULT TRUE) so nobody who
+    # already signed up is locked out when verification is turned on.
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code_hash VARCHAR")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_sent_at TIMESTAMPTZ")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_attempts INTEGER NOT NULL DEFAULT 0")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_ip VARCHAR")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_users_signup_ip ON users (signup_ip)")
     )
 
 

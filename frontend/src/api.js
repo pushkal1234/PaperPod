@@ -70,6 +70,18 @@ export async function getMe() {
   return res.data;
 }
 
+// Confirm the 6-digit code emailed at sign-up. Returns the refreshed user.
+export async function verifyEmail(code) {
+  const res = await api.post('/auth/verify-email', { code });
+  return res.data;
+}
+
+// Re-send the verification code (rate-limited server-side).
+export async function resendVerification() {
+  const res = await api.post('/auth/resend-verification');
+  return res.data;
+}
+
 export function logout() {
   clearToken();
 }

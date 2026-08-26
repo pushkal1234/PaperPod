@@ -143,6 +143,37 @@ class Settings(BaseSettings):
     # ~45-min podcast is a real, full experience that builds trust before paying.
     # Premium's only edge is quantity (unlimited podcasts), not document length.
 
+    # --- Anti-abuse: email verification ---
+    # Require users to confirm a 6-digit code emailed to them before they can
+    # create podcasts. Closes the "type any fake email -> unlimited free
+    # podcasts" loophole. Ships OFF so nothing changes until you flip it. When
+    # ON it REQUIRES an email provider below (Resend or SMTP); without one,
+    # codes are only logged (dev fallback) and abuse protection is void.
+    EMAIL_VERIFICATION_ENABLED: bool = os.getenv("EMAIL_VERIFICATION_ENABLED", "0") not in ("0", "false", "False")
+    VERIFICATION_CODE_TTL_MINUTES: int = int(os.getenv("VERIFICATION_CODE_TTL_MINUTES", "15"))
+    VERIFICATION_MAX_ATTEMPTS: int = int(os.getenv("VERIFICATION_MAX_ATTEMPTS", "5"))
+    VERIFICATION_RESEND_COOLDOWN_SECONDS: int = int(os.getenv("VERIFICATION_RESEND_COOLDOWN_SECONDS", "60"))
+    # Email provider — pick ONE. Resend is simplest (one API key):
+    #   https://resend.com -> API Keys. Verify a sending domain for production.
+    RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
+    # Generic SMTP fallback (used only if RESEND_API_KEY is blank).
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    # From header for outgoing mail, e.g. "PaperPod <noreply@yourdomain.com>".
+    # Resend's shared sandbox sender works for testing without a domain.
+    EMAIL_FROM: str = os.getenv("EMAIL_FROM", "PaperPod <onboarding@resend.dev>")
+
+    # --- Anti-abuse: per-IP free quota (secondary defense) ---
+    # Caps how many free podcasts can be created from a single IP across ALL
+    # accounts, so spinning up many fake accounts on one machine still shares one
+    # allowance. Ships OFF. Premium users are never limited. Behind a proxy the
+    # first X-Forwarded-For hop is used; shared networks (offices/campuses) can
+    # be affected, so keep the limit generous.
+    IP_QUOTA_ENABLED: bool = os.getenv("IP_QUOTA_ENABLED", "0") not in ("0", "false", "False")
+    FREE_PODCASTS_PER_IP: int = int(os.getenv("FREE_PODCASTS_PER_IP", "3"))
+
     # --- Billing provider: Dodo Payments (Merchant of Record) ---
     # MoR chosen because the founder is in India selling to mostly US/UK
     # customers, and Stripe/Lemon Squeezy are invite-only there. Dodo is the
@@ -162,6 +193,18 @@ class Settings(BaseSettings):
     @property
     def MAX_UPLOAD_BYTES(self) -> int:
         return self.MAX_UPLOAD_MB * 1024 * 1024
+
+    @property
+    def EMAIL_PROVIDER_CONFIGURED(self) -> bool:
+        """True when a real email provider (Resend or SMTP) is configured.
+
+        When False and verification is enabled, codes are only logged (dev
+        fallback) — surfaced loudly so it's never silently insecure in prod.
+        """
+        return bool(
+            self.RESEND_API_KEY.strip()
+            or (self.SMTP_HOST.strip() and self.SMTP_USER.strip())
+        )
 
     @property
     def DODO_API_BASE(self) -> str:

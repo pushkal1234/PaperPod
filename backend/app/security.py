@@ -101,6 +101,23 @@ def verify_google_id_token(id_token_str: str) -> dict:
     return claims
 
 
+# ── Client IP ──
+def client_ip(request) -> str | None:
+    """Best-effort source IP for per-IP quota.
+
+    Behind a proxy (Railway/Vercel) ``request.client.host`` is the proxy, so the
+    first hop of ``X-Forwarded-For`` is preferred. Returns None if unknown.
+    """
+    if request is None:
+        return None
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    return request.client.host if request.client else None
+
+
 # ── Dependencies ──
 async def get_optional_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),

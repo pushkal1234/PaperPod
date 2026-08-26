@@ -54,6 +54,9 @@ function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
+  // Which step the auth modal opens on: 'login' by default, or 'verify' when we
+  // send a signed-in-but-unverified user back to confirm their email.
+  const [authMode, setAuthMode] = useState('login');
   const [showSignOut, setShowSignOut] = useState(false);
   const [postAuthView, setPostAuthView] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -72,8 +75,9 @@ function App() {
   // When an action needs sign-in (e.g. an anonymous upload hits the auth gate),
   // this briefly bounces/highlights the navbar "Sign in" button so it's obvious.
   const [authNudge, setAuthNudge] = useState(false);
-  // Briefly glows the navbar "My Podcasts" button right after a podcast finishes
-  // generating, then settles — a one-shot nudge, never a continuous animation.
+  // Briefly bounces/highlights the navbar "My Podcasts" button right after a
+  // podcast finishes generating, then settles — a one-shot nudge that mirrors
+  // the "Sign in" attention cue so the user notices their saved episode.
   const [libraryGlow, setLibraryGlow] = useState(false);
   const pollRef = useRef(null);
   const elapsedRef = useRef(null);
@@ -96,8 +100,8 @@ function App() {
     authNudgeTimer.current = setTimeout(() => setAuthNudge(false), 6000);
   };
 
-  // One-shot glow on the navbar "My Podcasts" button after a podcast is ready,
-  // then it settles (≈2 glow cycles) so it never distracts during playback.
+  // One-shot bounce/ring on the navbar "My Podcasts" button after a podcast is
+  // ready, then it settles after a few seconds so it never distracts playback.
   const triggerLibraryGlow = () => {
     setLibraryGlow(true);
     if (libraryGlowTimer.current) clearTimeout(libraryGlowTimer.current);
@@ -240,6 +244,19 @@ function App() {
       triggerAuthNudge();
       return true;
     }
+    if (status === 403 && err?.response?.data?.detail?.code === 'email_unverified') {
+      // Signed in but hasn't confirmed their email — send them to the verify
+      // step so they can enter (or resend) their code.
+      pushToast(
+        err.response.data.detail.message
+          || 'Please verify your email to create podcasts. Check your inbox for the code.',
+        'info',
+        8000,
+      );
+      setAuthMode('verify');
+      setShowAuth(true);
+      return true;
+    }
     pushToast(fallbackMsg, 'error');
     return false;
   };
@@ -261,6 +278,7 @@ function App() {
   const handleAuthSuccess = (loggedInUser) => {
     setUser(loggedInUser);
     setShowAuth(false);
+    setAuthMode('login');
     // The "please sign in" nudge is now stale — clear any lingering toasts and
     // settle the bouncing Sign in button immediately once signed in.
     setToasts([]);
@@ -499,7 +517,7 @@ function App() {
                 view === 'library'
                   ? 'bg-brand-50 text-brand-700 border-brand-200'
                   : 'bg-white text-stone-600 border-paper-300 hover:text-brand-700 hover:border-brand-200'
-              } ${libraryGlow ? 'animate-glow-slow border-brand-300 text-brand-700' : ''}`}
+              } ${libraryGlow ? 'animate-bounce ring-4 ring-brand-400/60 ring-offset-2 ring-offset-paper-50 border-brand-300 text-brand-700' : ''}`}
               title="Your personal podcast library"
             >
               <FileAudio className="w-4 h-4" />
@@ -670,7 +688,11 @@ function App() {
       </nav>
 
       {showAuth && (
-        <AuthModal onClose={() => setShowAuth(false)} onSuccess={handleAuthSuccess} />
+        <AuthModal
+          initialMode={authMode}
+          onClose={() => { setShowAuth(false); setAuthMode('login'); }}
+          onSuccess={handleAuthSuccess}
+        />
       )}
 
       {showSignOut && (
@@ -711,6 +733,22 @@ function App() {
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       <main className="max-w-6xl mx-auto px-6 py-8">
+        {/* Signed in but email not yet confirmed — always offer a path to verify. */}
+        {user && user.verification_required && (
+          <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-soft">
+            <Mail className="w-5 h-5 shrink-0 text-amber-600" />
+            <p className="text-sm text-amber-800 leading-snug flex-1 min-w-[12rem]">
+              <span className="font-semibold">Verify your email</span> to start creating podcasts. We sent a 6-digit code to {user.email}.
+            </p>
+            <button
+              type="button"
+              onClick={() => { setAuthMode('verify'); setShowAuth(true); }}
+              className="shrink-0 whitespace-nowrap text-sm font-semibold px-4 py-2 rounded-full bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+            >
+              Enter code
+            </button>
+          </div>
+        )}
         {/* HOME VIEW */}
         {view === 'home' && (
           <div className="space-y-8 pb-24 md:pb-0">
@@ -799,7 +837,7 @@ function App() {
                 { icon: Zap, stat: '~60 sec', label: 'to your first podcast' },
                 { icon: Headphones, stat: '2 AI hosts', label: 'natural back-and-forth' },
                 { icon: MessageCircle, stat: 'Live Q&A', label: 'ask the doc anything' },
-                { icon: Star, stat: '$0 forever', label: 'no credit card to try it' },
+                { icon: Star, stat: '$0 to try', label: 'no credit card to try it' },
               ].map(({ icon: Icon, stat, label }, i) => (
                 <div
                   key={i}
