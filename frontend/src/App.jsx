@@ -72,11 +72,15 @@ function App() {
   // When an action needs sign-in (e.g. an anonymous upload hits the auth gate),
   // this briefly bounces/highlights the navbar "Sign in" button so it's obvious.
   const [authNudge, setAuthNudge] = useState(false);
+  // Briefly glows the navbar "My Podcasts" button right after a podcast finishes
+  // generating, then settles — a one-shot nudge, never a continuous animation.
+  const [libraryGlow, setLibraryGlow] = useState(false);
   const pollRef = useRef(null);
   const elapsedRef = useRef(null);
   const toastIdRef = useRef(0);
   const contactRef = useRef(null);
   const authNudgeTimer = useRef(null);
+  const libraryGlowTimer = useRef(null);
 
   const pushToast = (message, type = 'info', duration = 5000) => {
     const id = ++toastIdRef.current;
@@ -90,6 +94,14 @@ function App() {
     setAuthNudge(true);
     if (authNudgeTimer.current) clearTimeout(authNudgeTimer.current);
     authNudgeTimer.current = setTimeout(() => setAuthNudge(false), 6000);
+  };
+
+  // One-shot glow on the navbar "My Podcasts" button after a podcast is ready,
+  // then it settles (≈2 glow cycles) so it never distracts during playback.
+  const triggerLibraryGlow = () => {
+    setLibraryGlow(true);
+    if (libraryGlowTimer.current) clearTimeout(libraryGlowTimer.current);
+    libraryGlowTimer.current = setTimeout(() => setLibraryGlow(false), 6000);
   };
 
   useEffect(() => {
@@ -366,7 +378,11 @@ function App() {
           setCurrentDoc(doc);
           setView('player');
           loadDocuments();
-          if (getToken()) refreshUser();
+          if (getToken()) {
+            refreshUser();
+            // Nudge the user toward their saved library — a brief, one-shot glow.
+            triggerLibraryGlow();
+          }
           return;
         } else if (doc.status === 'failed') {
           setIsPolling(false);
@@ -483,7 +499,7 @@ function App() {
                 view === 'library'
                   ? 'bg-brand-50 text-brand-700 border-brand-200'
                   : 'bg-white text-stone-600 border-paper-300 hover:text-brand-700 hover:border-brand-200'
-              }`}
+              } ${libraryGlow ? 'animate-glow-slow border-brand-300 text-brand-700' : ''}`}
               title="Your personal podcast library"
             >
               <FileAudio className="w-4 h-4" />
@@ -1009,7 +1025,7 @@ function App() {
                   fallbackDuration={currentDoc.audio.duration_seconds}
                   onShare={() => handleShare(currentDoc.doc_id)}
                 />
-                {!user && (
+                {!user ? (
                   <div className="flex items-center gap-3 rounded-2xl border border-brand-200 bg-gradient-to-r from-brand-50 to-accent-50/60 px-4 py-3 shadow-soft animate-pulse-slow">
                     <div className="w-9 h-9 shrink-0 rounded-full bg-white/80 text-brand-600 flex items-center justify-center shadow-soft">
                       <Bookmark className="w-4 h-4" />
@@ -1023,6 +1039,26 @@ function App() {
                       library and open it anytime.
                     </p>
                   </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={goToLibrary}
+                    title="Open your podcast library"
+                    className="group w-full flex items-center gap-3 rounded-2xl border border-brand-200 bg-gradient-to-r from-brand-50 to-accent-50/60 px-4 py-3 text-left shadow-soft transition-all hover:shadow-glow hover:border-brand-300 animate-glow-slow"
+                  >
+                    <div className="w-9 h-9 shrink-0 rounded-full bg-white/80 text-brand-600 flex items-center justify-center shadow-soft">
+                      <Check className="w-4 h-4" />
+                    </div>
+                    <p className="text-sm text-stone-600 leading-snug flex-1">
+                      <span className="font-semibold text-stone-800">Saved to your library.</span>{' '}
+                      This episode is in your{' '}
+                      <span className="font-semibold text-brand-700 group-hover:text-brand-800 underline underline-offset-2 decoration-brand-300">
+                        My Podcasts
+                      </span>{' '}
+                      — open it anytime.
+                    </p>
+                    <ArrowLeft className="w-4 h-4 shrink-0 rotate-180 text-brand-500 transition-transform group-hover:translate-x-0.5" />
+                  </button>
                 )}
                 <div className="bg-white rounded-2xl p-5 border border-paper-300 shadow-soft">
                   <div className="grid grid-cols-2 gap-4 text-sm">

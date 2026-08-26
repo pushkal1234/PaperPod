@@ -77,11 +77,18 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(6px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
+        // Gentle brand glow with no motion — draws the eye without being
+        // distracting while a podcast is playing.
+        'glow-slow': {
+          '0%, 100%': { boxShadow: '0 1px 2px rgba(19,80,71,0.04), 0 10px 30px -12px rgba(19,80,71,0.12)' },
+          '50%': { boxShadow: '0 0 0 1px rgba(31,157,132,0.18), 0 14px 40px -16px rgba(31,157,132,0.45)' },
+        },
       },
       animation: {
         eq: 'eq 1.1s ease-in-out infinite',
         'pulse-slow': 'pulse-slow 2.4s ease-in-out infinite',
         'fade-in': 'fade-in 0.35s ease-out',
+        'glow-slow': 'glow-slow 3s ease-in-out infinite',
       },
     },
   },

@@ -19,7 +19,9 @@ from app.security import (
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 logger = logging.getLogger("paperpod")
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Non-empty local part, an "@", a dotted domain with a 2+ char TLD, and no
+# whitespace anywhere. Kept in sync with the frontend AuthModal guardrail.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)*\.[^@\s.]{2,}$")
 
 
 class RegisterRequest(BaseModel):

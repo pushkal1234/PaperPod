@@ -4,6 +4,12 @@ import { login, register, googleSignIn } from '../api';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
+// Mirror the backend guardrails so users get instant, friendly feedback instead
+// of a round-trip 400. Requires a non-empty local part, an "@", a dotted domain
+// with a 2+ char TLD, and no whitespace anywhere.
+const EMAIL_RE = /^[^@\s]+@[^@\s.]+(\.[^@\s.]+)*\.[^@\s.]{2,}$/;
+const MIN_PASSWORD_LENGTH = 8;
+
 // Load the Google Identity Services script once.
 function loadGoogleScript() {
   return new Promise((resolve, reject) => {
@@ -73,11 +79,23 @@ export default function AuthModal({ onClose, onSuccess }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    // Client-side guardrails: give instant feedback and avoid pointless requests.
+    const trimmedEmail = email.trim();
+    if (!EMAIL_RE.test(trimmedEmail)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (mode === 'signup' && password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      return;
+    }
+
     setLoading(true);
     try {
       const data = mode === 'login'
-        ? await login(email.trim(), password)
-        : await register(email.trim(), password, name.trim());
+        ? await login(trimmedEmail, password)
+        : await register(trimmedEmail, password, name.trim());
       onSuccess(data.user);
     } catch (err) {
       const detail = err?.response?.data?.detail;
