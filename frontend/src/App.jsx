@@ -221,7 +221,7 @@ function App() {
       // Anonymous caller hit the "sign in to create a podcast" gate. Make it
       // unmistakable: a warm message + a bouncing Sign in button to click.
       pushToast(
-        "You're not signed in yet \u2014 please sign in to create your podcast. It's completely free! \uD83C\uDFA7",
+        "Hey! You're not signed in yet \u2014 please sign in to create your podcast. It's completely free! \uD83C\uDFA7",
         'info',
         8000,
       );
@@ -249,6 +249,14 @@ function App() {
   const handleAuthSuccess = (loggedInUser) => {
     setUser(loggedInUser);
     setShowAuth(false);
+    // The "please sign in" nudge is now stale — clear any lingering toasts and
+    // settle the bouncing Sign in button immediately once signed in.
+    setToasts([]);
+    setAuthNudge(false);
+    if (authNudgeTimer.current) {
+      clearTimeout(authNudgeTimer.current);
+      authNudgeTimer.current = null;
+    }
     loadDocuments();
     // If the user opened sign-in on their way to "My Podcasts", take them there.
     if (postAuthView) {
