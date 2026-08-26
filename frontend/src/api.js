@@ -82,6 +82,20 @@ export async function resendVerification() {
   return res.data;
 }
 
+// Request a password-reset code by email. Always resolves generically (the
+// server never reveals whether the email is registered).
+export async function forgotPassword(email) {
+  const res = await api.post('/auth/forgot-password', { email });
+  return res.data;
+}
+
+// Set a new password using the emailed code; signs the user in on success.
+export async function resetPassword(email, code, password) {
+  const res = await api.post('/auth/reset-password', { email, code, password });
+  if (res.data?.token) setToken(res.data.token);
+  return res.data;
+}
+
 export function logout() {
   clearToken();
 }

@@ -84,15 +84,37 @@ def _build_bodies(code: str, name: str | None) -> tuple[str, str]:
     return text_body, html_body
 
 
-async def send_verification_email(to_email: str, code: str, name: str | None = None) -> bool:
-    """Send the code via the configured provider. Returns True if actually sent.
+def _build_reset_bodies(code: str, name: str | None) -> tuple[str, str]:
+    greeting = f"Hi {name}," if name else "Hi,"
+    ttl = settings.VERIFICATION_CODE_TTL_MINUTES
+    text_body = (
+        f"{greeting}\n\n"
+        f"Your PaperPod password reset code is: {code}\n\n"
+        f"Enter it in the app to set a new password. "
+        f"This code expires in {ttl} minutes.\n\n"
+        f"If you didn't request a password reset, you can safely ignore this "
+        f"email — your password won't change.\n\n"
+        f"— PaperPod"
+    )
+    html_body = f"""\
+<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#1c1917">
+  <h2 style="color:#136458;margin:0 0 8px">Reset your password</h2>
+  <p style="margin:0 0 16px;color:#57534e">{greeting}</p>
+  <p style="margin:0 0 16px;color:#57534e">Use this code to set a new password on PaperPod:</p>
+  <div style="font-size:32px;font-weight:700;letter-spacing:8px;background:#effaf7;color:#136458;
+              padding:16px 0;text-align:center;border-radius:12px;margin:0 0 16px">{code}</div>
+  <p style="margin:0 0 8px;color:#78716c;font-size:13px">This code expires in {ttl} minutes.</p>
+  <p style="margin:0;color:#a8a29e;font-size:12px">If you didn't request a password reset, you can safely ignore this email — your password won't change.</p>
+</div>"""
+    return text_body, html_body
+
+
+async def _dispatch(to_email: str, subject: str, html_body: str, text_body: str, *, log_label: str, code: str) -> bool:
+    """Send via the first configured provider, with a dev-only log fallback.
 
     Order: Brevo -> Resend -> SMTP -> DEV fallback (log only). Never raises; a
     failed send is logged and returns False so the caller can surface it.
     """
-    subject = "Your PaperPod verification code"
-    text_body, html_body = _build_bodies(code, name)
-
     if settings.BREVO_API_KEY.strip():
         return await _send_via_brevo(to_email, subject, html_body, text_body)
     if settings.RESEND_API_KEY.strip():
@@ -103,10 +125,28 @@ async def send_verification_email(to_email: str, code: str, name: str | None = N
     # DEV fallback — no provider configured. Log loudly so it's obvious this is
     # not secure for production, but let the flow proceed for local testing.
     logger.warning(
-        "[email] No provider configured — DEV fallback. Verification code for %s: %s",
-        to_email, code,
+        "[email] No provider configured — DEV fallback. %s for %s: %s",
+        log_label, to_email, code,
     )
     return False
+
+
+async def send_verification_email(to_email: str, code: str, name: str | None = None) -> bool:
+    """Send the sign-up verification code via the configured provider."""
+    text_body, html_body = _build_bodies(code, name)
+    return await _dispatch(
+        to_email, "Your PaperPod verification code", html_body, text_body,
+        log_label="Verification code", code=code,
+    )
+
+
+async def send_password_reset_email(to_email: str, code: str, name: str | None = None) -> bool:
+    """Send the password-reset code via the configured provider."""
+    text_body, html_body = _build_reset_bodies(code, name)
+    return await _dispatch(
+        to_email, "Your PaperPod password reset code", html_body, text_body,
+        log_label="Password reset code", code=code,
+    )
 
 
 def _parse_from(value: str) -> tuple[str, str]:

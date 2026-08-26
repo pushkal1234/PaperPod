@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Mail, Lock, User as UserIcon, Loader2, ShieldCheck } from 'lucide-react';
-import { login, register, googleSignIn, verifyEmail, resendVerification } from '../api';
+import { X, Mail, Lock, User as UserIcon, Loader2, ShieldCheck, KeyRound } from 'lucide-react';
+import {
+  login,
+  register,
+  googleSignIn,
+  verifyEmail,
+  resendVerification,
+  forgotPassword,
+  resetPassword,
+} from '../api';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
@@ -32,7 +40,7 @@ function loadGoogleScript() {
 }
 
 export default function AuthModal({ onClose, onSuccess, initialMode = 'login' }) {
-  const [mode, setMode] = useState(initialMode); // 'login' | 'signup' | 'verify'
+  const [mode, setMode] = useState(initialMode); // 'login' | 'signup' | 'verify' | 'forgot' | 'reset'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -146,6 +154,66 @@ export default function AuthModal({ onClose, onSuccess, initialMode = 'login' })
     }
   };
 
+  // Step 1 of reset: ask the server to email a code, then move to the reset step.
+  const handleForgot = async (e) => {
+    e.preventDefault();
+    setError('');
+    const trimmedEmail = email.trim();
+    if (!EMAIL_RE.test(trimmedEmail)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await forgotPassword(trimmedEmail);
+      setCode('');
+      setPassword('');
+      setResendMsg(`If an account exists for ${trimmedEmail}, a 6-digit code is on its way.`);
+      setMode('reset');
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Step 2 of reset: submit the code + new password; logs the user straight in.
+  const handleReset = async (e) => {
+    e.preventDefault();
+    setError('');
+    const trimmedEmail = email.trim();
+    const trimmedCode = code.trim();
+    if (!/^\d{6}$/.test(trimmedCode)) {
+      setError('Enter the 6-digit code from your email.');
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await resetPassword(trimmedEmail, trimmedCode, password);
+      onSuccess(data.user);
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Could not reset your password. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resend a reset code from the reset step (reuses the forgot endpoint).
+  const handleResendReset = async () => {
+    setError('');
+    setResendMsg('');
+    try {
+      await forgotPassword(email.trim());
+      setResendMsg('A new code is on its way. Check your inbox.');
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Could not resend the code. Please wait a moment.');
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm">
       <div className="relative w-full max-w-md bg-white rounded-3xl shadow-soft border border-paper-300 p-8">
@@ -161,14 +229,22 @@ export default function AuthModal({ onClose, onSuccess, initialMode = 'login' })
           <h2 className="font-display text-2xl font-semibold text-stone-900">
             {mode === 'verify'
               ? 'Verify your email'
-              : mode === 'login' ? 'Welcome back' : 'Create your account'}
+              : mode === 'forgot'
+                ? 'Forgot password'
+                : mode === 'reset'
+                  ? 'Set a new password'
+                  : mode === 'login' ? 'Welcome back' : 'Create your account'}
           </h2>
           <p className="text-sm text-stone-500 mt-1">
             {mode === 'verify'
               ? 'Enter the 6-digit code we emailed you to start creating podcasts.'
-              : mode === 'login'
-                ? 'Sign in to access your podcast library.'
-                : 'Sign up to save and organize your podcasts.'}
+              : mode === 'forgot'
+                ? "Enter your email and we'll send you a code to reset your password."
+                : mode === 'reset'
+                  ? 'Enter the code we emailed you and choose a new password.'
+                  : mode === 'login'
+                    ? 'Sign in to access your podcast library.'
+                    : 'Sign up to save and organize your podcasts.'}
           </p>
         </div>
 
@@ -208,7 +284,90 @@ export default function AuthModal({ onClose, onSuccess, initialMode = 'login' })
           </form>
         )}
 
-        {mode !== 'verify' && GOOGLE_CLIENT_ID && (
+        {mode === 'forgot' && (
+          <form onSubmit={handleForgot} className="space-y-3">
+            <div className="flex justify-center">
+              <div className="w-12 h-12 rounded-full bg-brand-50 text-brand-600 flex items-center justify-center">
+                <KeyRound className="w-6 h-6" />
+              </div>
+            </div>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-paper-300 bg-paper-50 text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
+              />
+            </div>
+            {error && <p className="text-sm text-red-600 text-center">{error}</p>}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-600 text-white font-semibold hover:bg-brand-700 shadow-glow transition-all disabled:opacity-60 disabled:cursor-wait"
+            >
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              Send reset code
+            </button>
+            <p className="text-sm text-stone-500 text-center">
+              Remembered it?{' '}
+              <button type="button" onClick={() => { setMode('login'); setError(''); }} className="text-brand-600 font-semibold hover:text-brand-700">
+                Back to sign in
+              </button>
+            </p>
+          </form>
+        )}
+
+        {mode === 'reset' && (
+          <form onSubmit={handleReset} className="space-y-3">
+            <div className="flex justify-center">
+              <div className="w-12 h-12 rounded-full bg-brand-50 text-brand-600 flex items-center justify-center">
+                <KeyRound className="w-6 h-6" />
+              </div>
+            </div>
+            {resendMsg && <p className="text-sm text-brand-700 text-center">{resendMsg}</p>}
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="Enter 6-digit code"
+              className="w-full text-center tracking-[0.5em] text-lg font-semibold px-3 py-2.5 rounded-xl border border-paper-300 bg-paper-50 text-stone-800 placeholder-stone-400 placeholder:tracking-normal placeholder:text-base placeholder:font-normal focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
+            />
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="New password (min 8 chars)"
+                className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-paper-300 bg-paper-50 text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
+              />
+            </div>
+            {error && <p className="text-sm text-red-600 text-center">{error}</p>}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-brand-600 text-white font-semibold hover:bg-brand-700 shadow-glow transition-all disabled:opacity-60 disabled:cursor-wait"
+            >
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              Reset password &amp; sign in
+            </button>
+            <p className="text-sm text-stone-500 text-center">
+              Didn't get the code?{' '}
+              <button type="button" onClick={handleResendReset} className="text-brand-600 font-semibold hover:text-brand-700">
+                Resend
+              </button>
+            </p>
+          </form>
+        )}
+
+        {(mode === 'login' || mode === 'signup') && GOOGLE_CLIENT_ID && (
           <>
             <div ref={googleBtnRef} className="flex justify-center mb-4 min-h-[44px]" />
             <div className="flex items-center gap-3 my-4">
@@ -219,7 +378,7 @@ export default function AuthModal({ onClose, onSuccess, initialMode = 'login' })
           </>
         )}
 
-        {mode !== 'verify' && (
+        {(mode === 'login' || mode === 'signup') && (
         <>
         <form onSubmit={handleSubmit} className="space-y-3">
           {mode === 'signup' && (
@@ -256,6 +415,18 @@ export default function AuthModal({ onClose, onSuccess, initialMode = 'login' })
               className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-paper-300 bg-paper-50 text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
             />
           </div>
+
+          {mode === 'login' && (
+            <div className="text-right -mt-1">
+              <button
+                type="button"
+                onClick={() => { setMode('forgot'); setError(''); setResendMsg(''); }}
+                className="text-sm text-brand-600 font-semibold hover:text-brand-700"
+              >
+                Forgot password?
+              </button>
+            </div>
+          )}
 
           {error && <p className="text-sm text-red-600 text-center">{error}</p>}
 

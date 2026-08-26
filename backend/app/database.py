@@ -62,6 +62,14 @@ class User(Base):
     # behind a proxy) for per-IP free-quota enforcement.
     signup_ip = Column(String, nullable=True, index=True)
 
+    # --- Forgot / reset password ---
+    # Kept SEPARATE from the email-verification code fields above so a pending
+    # password reset never clobbers a pending sign-up verification (and vice
+    # versa). sha256 of the current 6-digit reset code (never plaintext).
+    reset_code_hash = Column(String, nullable=True)
+    reset_sent_at = Column(DateTime(timezone=True), nullable=True)
+    reset_attempts = Column(Integer, nullable=False, default=0)
+
 
 class Document(Base):
     __tablename__ = "documents"
@@ -331,6 +339,16 @@ async def _migrate_schema_sqlite(conn):
                 text("CREATE INDEX IF NOT EXISTS ix_users_signup_ip ON users (signup_ip)")
             )
 
+        # Forgot/reset-password columns.
+        if "reset_code_hash" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN reset_code_hash TEXT"))
+        if "reset_sent_at" not in user_cols:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN reset_sent_at TIMESTAMP"))
+        if "reset_attempts" not in user_cols:
+            sync_conn.execute(
+                text("ALTER TABLE users ADD COLUMN reset_attempts INTEGER NOT NULL DEFAULT 0")
+            )
+
     await conn.run_sync(_migrate)
 
 
@@ -426,6 +444,17 @@ async def _migrate_schema_postgres(conn):
     )
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_users_signup_ip ON users (signup_ip)")
+    )
+
+    # Forgot/reset-password columns.
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_code_hash VARCHAR")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_sent_at TIMESTAMPTZ")
+    )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_attempts INTEGER NOT NULL DEFAULT 0")
     )
 
 

@@ -22,6 +22,7 @@ from app.services.email_service import (
     generate_code,
     hash_code,
     normalize_email,
+    send_password_reset_email,
     send_verification_email,
 )
 
@@ -50,6 +51,16 @@ class GoogleRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     code: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    password: str
 
 
 def _user_public(user: User) -> dict:
@@ -88,6 +99,18 @@ async def _issue_verification(user: User, db: AsyncSession) -> None:
     sent = await send_verification_email(user.email, code, user.name)
     if not sent and settings.EMAIL_PROVIDER_CONFIGURED:
         logger.error("[auth] Verification email FAILED to send to %s", user.email)
+
+
+async def _issue_reset(user: User, db: AsyncSession) -> None:
+    """Generate, store (hashed), and email a fresh password-reset code."""
+    code = generate_code()
+    user.reset_code_hash = hash_code(code)
+    user.reset_sent_at = _utcnow()
+    user.reset_attempts = 0
+    await db.commit()
+    sent = await send_password_reset_email(user.email, code, user.name)
+    if not sent and settings.EMAIL_PROVIDER_CONFIGURED:
+        logger.error("[auth] Password reset email FAILED to send to %s", user.email)
 
 
 async def _user_full(user: User, db: AsyncSession) -> dict:
@@ -272,6 +295,87 @@ async def resend_verification(
 
     await _issue_verification(user, db)
     return {"ok": True}
+
+
+@router.post("/forgot-password")
+async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Email a 6-digit reset code to a registered address.
+
+    Always returns the SAME generic success response whether or not the email
+    exists, so this endpoint can't be used to enumerate which addresses have
+    accounts. Rate-limited per-account by a short resend cooldown.
+    """
+    generic = {"ok": True, "message": "If an account exists for that email, a reset code is on its way."}
+
+    email = body.email.strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+
+    norm = normalize_email(email)
+    result = await db.execute(
+        select(User).where((User.normalized_email == norm) | (User.email == email))
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        return generic
+
+    # Throttle: don't let someone spam a user's inbox with reset codes.
+    if user.reset_sent_at:
+        age = (_utcnow() - _as_utc(user.reset_sent_at)).total_seconds()
+        if age < settings.VERIFICATION_RESEND_COOLDOWN_SECONDS:
+            # Silently succeed (generic) so timing can't reveal account existence.
+            return generic
+
+    await _issue_reset(user, db)
+    return generic
+
+
+@router.post("/reset-password")
+async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Verify the reset code and set a new password, then sign the user in.
+
+    Confirming the emailed code also proves inbox ownership, so we mark the
+    account verified here as a convenient side effect.
+    """
+    email = body.email.strip().lower()
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+
+    code = (body.code or "").strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(status_code=400, detail="Enter the 6-digit code from your email.")
+
+    norm = normalize_email(email)
+    result = await db.execute(
+        select(User).where((User.normalized_email == norm) | (User.email == email))
+    )
+    user = result.scalar_one_or_none()
+    # Uniform error for "no pending reset" whether the account is missing or just
+    # never requested one — avoids leaking which emails are registered.
+    if not user or not user.reset_code_hash or not user.reset_sent_at:
+        raise HTTPException(status_code=400, detail="No password reset pending. Request a new code.")
+
+    age = (_utcnow() - _as_utc(user.reset_sent_at)).total_seconds()
+    if age > settings.VERIFICATION_CODE_TTL_MINUTES * 60:
+        raise HTTPException(status_code=400, detail="This code has expired. Request a new one.")
+    if (user.reset_attempts or 0) >= settings.VERIFICATION_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new code.")
+
+    if hash_code(code) != user.reset_code_hash:
+        user.reset_attempts = (user.reset_attempts or 0) + 1
+        await db.commit()
+        raise HTTPException(status_code=400, detail="Incorrect code. Please try again.")
+
+    # Success: set the new password and clear the reset challenge.
+    user.password_hash = hash_password(body.password)
+    user.reset_code_hash = None
+    user.reset_attempts = 0
+    user.reset_sent_at = None
+    # Proving the code confirms the inbox — safe to treat the email as verified.
+    user.email_verified = True
+    await db.commit()
+    logger.info(f"[auth] Password reset for user {user.id}")
+    return await _auth_response(user, db)
 
 
 @router.get("/me")
