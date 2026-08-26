@@ -4,7 +4,7 @@ import { createCheckout } from '../api';
 
 const PREMIUM_PERKS = [
   { icon: InfinityIcon, text: 'Unlimited podcasts — no lifetime cap' },
-  { icon: MessageCircle, text: 'Live Q&A — ask your document anything, with Doc-only & Web modes', highlight: true },
+  { icon: MessageCircle, text: 'Live Q&A — Interrupt your custom AI podcast to ask questions in Doc-only & Web modes', highlight: true },
   { icon: FileText, text: 'Full-length documents & podcasts, always' },
   { icon: Sparkles, text: 'Priority support & new features first' },
 ];
