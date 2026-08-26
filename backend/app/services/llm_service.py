@@ -321,12 +321,12 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
     else:
         if cache_opt:
             length_rule = (
-                "6. LENGTH IS THE #1 REQUIREMENT — reaching the MINIMUM matters more than "
-                "anything else here. The minimum AND maximum in TARGET LENGTH (at the end "
-                "of these rules) are both strict. Produce AT LEAST the minimum number of "
-                "Host:/Guest: dialogue lines; falling short of the minimum is the single "
-                "biggest failure and is NOT acceptable — a short summary or overview is a "
-                "FAILURE, and so is running past the maximum. Plan the length from the "
+                "6. LENGTH IS THE #1 REQUIREMENT — staying INSIDE the min–max range in "
+                "TARGET LENGTH (at the end of these rules) matters more than anything else "
+                "here, and BOTH bounds are strict and equally mandatory. Produce AT LEAST the minimum number of "
+                "Host:/Guest: dialogue lines; falling short of the minimum is a critical "
+                "failure and is NOT acceptable — a short summary or overview is a "
+                "FAILURE, and running past the maximum is an EQUALLY unacceptable failure. Plan the length from the "
                 "FIRST line: spread coverage across the WHOLE document and pace yourself so "
                 "you build UP to the minimum naturally — never race to a conclusion or wrap "
                 "up early. Count your Host:/Guest: lines as you go; if you reach the end of "
@@ -339,10 +339,11 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
             )
         else:
             length_rule = (
-                f"6. LENGTH IS THE #1 REQUIREMENT — reaching the MINIMUM matters more than "
-                f"anything else here. Produce AT LEAST {target_lines} and up to {max_lines} "
-                f"dialogue lines (Host:/Guest: lines); falling short of {target_lines} is the "
-                f"single biggest failure and is NOT acceptable, and do NOT exceed {max_lines}. "
+                f"6. LENGTH IS THE #1 REQUIREMENT — staying INSIDE the "
+                f"{target_lines}-{max_lines} range matters more than anything else here, and "
+                f"BOTH bounds are strict. Produce AT LEAST {target_lines} and NO MORE THAN {max_lines} "
+                f"dialogue lines (Host:/Guest: lines); falling short of {target_lines} is a "
+                f"critical failure, and exceeding {max_lines} is an EQUALLY unacceptable failure. "
                 f"Target: {target}. A short summary or overview is a FAILURE. Plan the length "
                 f"from the FIRST line: spread coverage across the WHOLE document and pace "
                 f"yourself so you build UP to {target_lines} lines naturally — never race to a "
@@ -377,10 +378,14 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
     # trailing spec. Everything above it is byte-identical across documents of the
     # same type, so the provider's automatic prefix cache can reuse it.
     length_spec = (
-        f"\n\nTARGET LENGTH (the most important requirement): produce AT LEAST "
-        f"{target_lines} Host:/Guest: dialogue lines and no more than {max_lines}. "
-        f"The minimum of {target_lines} is mandatory — do NOT stop or wrap up before "
-        f"you have reached it. Target: {target}."
+        f"\n\nTARGET LENGTH (the most important requirement): write BETWEEN "
+        f"{target_lines} and {max_lines} Host:/Guest: dialogue lines — this is a HARD "
+        f"range and BOTH ends are strict. The minimum of {target_lines} is mandatory: "
+        f"do NOT stop or wrap up before reaching it. The maximum of {max_lines} is an "
+        f"ABSOLUTE cap: do NOT exceed it under any circumstances — as you approach "
+        f"{max_lines}, move to the closing exchange instead of opening new points. "
+        f"Count your Host:/Guest: lines and finish INSIDE the {target_lines}-{max_lines} "
+        f"range. Target: {target}."
         if cache_opt
         else ""
     )
@@ -1128,9 +1133,11 @@ def generate_podcast_script(document_text: str) -> str:
     # far above the text, so a trailing reminder is the last thing the model reads
     # before writing — this is what keeps the first pass above the retry floor.
     length_reminder = (
-        f"\n\nReminder: write AT LEAST {target_lines} and up to {max_lines} "
-        f"Host:/Guest: lines. The minimum of {target_lines} is mandatory — do not "
-        f"stop or wrap up before you reach it."
+        f"\n\nReminder: write BETWEEN {target_lines} and {max_lines} Host:/Guest: "
+        f"lines — both bounds are strict. The minimum of {target_lines} is mandatory "
+        f"(do not stop before it) and the maximum of {max_lines} is a HARD cap you must "
+        f"NOT exceed. As you near {max_lines}, wrap up with the closing exchange instead "
+        f"of starting new points. Count your lines and stay inside the range."
     )
     first_messages = [
         {"role": "system", "content": system_prompt},

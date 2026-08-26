@@ -205,7 +205,10 @@ def _describe_pdf_visuals(file_path: str, on_figures=None) -> str:
     if not settings.PDF_VISION_EXTRACTION or not settings.GOOGLE_API_KEY:
         return ""
     try:
-        import fitz  # PyMuPDF — imported lazily so it's only needed for PDFs
+        # PyMuPDF, imported lazily so it's only needed for PDFs. Use the modern
+        # `pymupdf` module name (aliased to fitz) to avoid the deprecated
+        # `import fitz` warning while keeping the fitz.* call sites unchanged.
+        import pymupdf as fitz
     except ImportError:
         logger.warning("[Vision] PyMuPDF not installed; skipping figure descriptions")
         return ""

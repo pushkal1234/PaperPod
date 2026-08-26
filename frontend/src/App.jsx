@@ -42,7 +42,12 @@ const CONTACT_EMAIL_LINK = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent
 
 
 function App() {
-  const [view, setView] = useState('home');
+  const [view, setView] = useState(() => {
+    // Restore a bookmarkable view (currently the library) from the URL so a
+    // refresh keeps the user where they were instead of bouncing to home.
+    const v = new URLSearchParams(window.location.search).get('view');
+    return v === 'library' ? 'library' : 'home';
+  });
   const [documents, setDocuments] = useState([]);
   const [currentDoc, setCurrentDoc] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -85,6 +90,11 @@ function App() {
   const contactRef = useRef(null);
   const authNudgeTimer = useRef(null);
   const libraryGlowTimer = useRef(null);
+  // SPA history plumbing: track the previous view so we know when to PUSH a new
+  // history entry (entering a sub-view from home) vs REPLACE it, and a flag to
+  // skip history writes when the view change was itself driven by Back/Forward.
+  const prevViewRef = useRef(view);
+  const skipHistoryRef = useRef(false);
 
   const pushToast = (message, type = 'info', duration = 5000) => {
     const id = ++toastIdRef.current;
@@ -176,6 +186,58 @@ function App() {
         .finally(() => setSharedLoading(false));
     }
   }, []);
+
+  // Keep browser history in sync with the current view so the Back button
+  // navigates WITHIN the app (any sub-view -> home) instead of leaving the site.
+  // Entering a sub-view from home PUSHES a new entry (so Back returns home);
+  // moving between sub-views or returning home REPLACES it so entries never
+  // stack. Only the library is bookmarkable via ?view=library; transient views
+  // (processing/player/failed/shared) keep the base path but still get an entry.
+  useEffect(() => {
+    const prev = prevViewRef.current;
+    if (view === prev) return;
+    prevViewRef.current = view;
+    // Change came FROM a Back/Forward (popstate) — the URL already matches, so
+    // don't write history again (that would fight the browser / duplicate entries).
+    if (skipHistoryRef.current) {
+      skipHistoryRef.current = false;
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (view === 'library') params.set('view', 'library');
+    else params.delete('view');
+    const qs = params.toString();
+    const url = window.location.pathname + (qs ? `?${qs}` : '');
+    if (view !== 'home' && prev === 'home') {
+      window.history.pushState({}, '', url);
+    } else {
+      window.history.replaceState({}, '', url);
+    }
+  }, [view]);
+
+  // Wire Back/Forward and seed a home entry when the app is opened directly on a
+  // deep view, so the Back button always keeps the user inside the app.
+  useEffect(() => {
+    // Refresh/bookmark landed straight on ?view=library: put a home entry
+    // beneath it so the first Back goes to home (not the previous website).
+    if (view === 'library') {
+      window.history.replaceState({}, '', window.location.pathname);
+      window.history.pushState({}, '', `${window.location.pathname}?view=library`);
+    }
+    const onPop = () => {
+      const v = new URLSearchParams(window.location.search).get('view');
+      skipHistoryRef.current = true; // this change is browser-driven; don't re-write history
+      setView(v === 'library' ? 'library' : 'home');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // If the URL asked for the (auth-gated) library but the visitor isn't signed
+  // in once the auth check settles, fall back to home instead of a blank page.
+  useEffect(() => {
+    if (authChecked && !user && view === 'library') setView('home');
+  }, [authChecked, user, view]);
 
   // Close the "Contact us" popover on outside click or Escape.
   useEffect(() => {
