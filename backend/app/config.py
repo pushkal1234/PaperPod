@@ -153,10 +153,18 @@ class Settings(BaseSettings):
     VERIFICATION_CODE_TTL_MINUTES: int = int(os.getenv("VERIFICATION_CODE_TTL_MINUTES", "15"))
     VERIFICATION_MAX_ATTEMPTS: int = int(os.getenv("VERIFICATION_MAX_ATTEMPTS", "5"))
     VERIFICATION_RESEND_COOLDOWN_SECONDS: int = int(os.getenv("VERIFICATION_RESEND_COOLDOWN_SECONDS", "60"))
-    # Email provider — pick ONE. Resend is simplest (one API key):
-    #   https://resend.com -> API Keys. Verify a sending domain for production.
+    # Email provider — pick ONE (checked in this order): Brevo, Resend, SMTP.
+    # Brevo (https://brevo.com) sends over an HTTPS API, so it works on hosts
+    # that block outbound SMTP (e.g. Railway's non-Pro plans) and allows a single
+    # verified sender email — no domain required. Dashboard -> SMTP & API -> API
+    # Keys. Set BREVO_API_KEY and verify your EMAIL_FROM address as a sender.
+    BREVO_API_KEY: str = os.getenv("BREVO_API_KEY", "")
+    # Resend (https://resend.com -> API Keys). HTTPS API; needs a verified domain
+    # to email arbitrary recipients. Used only if BREVO_API_KEY is blank.
     RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
-    # Generic SMTP fallback (used only if RESEND_API_KEY is blank).
+    # Generic SMTP — used only if BREVO_API_KEY and RESEND_API_KEY are both blank.
+    # NOTE: many PaaS (Railway free/hobby) BLOCK outbound SMTP ports, so prefer an
+    # HTTPS provider above in production.
     SMTP_HOST: str = os.getenv("SMTP_HOST", "")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USER: str = os.getenv("SMTP_USER", "")
@@ -196,13 +204,14 @@ class Settings(BaseSettings):
 
     @property
     def EMAIL_PROVIDER_CONFIGURED(self) -> bool:
-        """True when a real email provider (Resend or SMTP) is configured.
+        """True when a real email provider (Brevo, Resend, or SMTP) is configured.
 
         When False and verification is enabled, codes are only logged (dev
         fallback) — surfaced loudly so it's never silently insecure in prod.
         """
         return bool(
-            self.RESEND_API_KEY.strip()
+            self.BREVO_API_KEY.strip()
+            or self.RESEND_API_KEY.strip()
             or (self.SMTP_HOST.strip() and self.SMTP_USER.strip())
         )
 

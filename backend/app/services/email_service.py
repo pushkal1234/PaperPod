@@ -5,10 +5,7 @@ Two responsibilities live here:
 1. ``normalize_email`` — canonicalize an address (collapse Gmail dots and strip
    ``+tag`` aliases) so ``a.b+promo@gmail.com`` and ``ab@gmail.com`` map to the
    SAME account, closing the easy "alias -> another free account" trick.
-2. Verification codes — generate, hash, and email a 6-digit code. The provider
-   is pluggable: Resend (one API key) first, generic SMTP second, and a loud
-   "log the code" DEV fallback when neither is configured so local dev still
-   works (never silently in production — the caller checks EMAIL_PROVIDER_CONFIGURED).
+2. Verification codes — generate, hash, and email a 6-digit code.
 """
 from __future__ import annotations
 
@@ -90,12 +87,14 @@ def _build_bodies(code: str, name: str | None) -> tuple[str, str]:
 async def send_verification_email(to_email: str, code: str, name: str | None = None) -> bool:
     """Send the code via the configured provider. Returns True if actually sent.
 
-    Order: Resend -> SMTP -> DEV fallback (log only). Never raises; a failure to
-    send is logged and returns False so the caller can decide how to surface it.
+    Order: Brevo -> Resend -> SMTP -> DEV fallback (log only). Never raises; a
+    failed send is logged and returns False so the caller can surface it.
     """
     subject = "Your PaperPod verification code"
     text_body, html_body = _build_bodies(code, name)
 
+    if settings.BREVO_API_KEY.strip():
+        return await _send_via_brevo(to_email, subject, html_body, text_body)
     if settings.RESEND_API_KEY.strip():
         return await _send_via_resend(to_email, subject, html_body, text_body)
     if settings.SMTP_HOST.strip():
@@ -108,6 +107,51 @@ async def send_verification_email(to_email: str, code: str, name: str | None = N
         to_email, code,
     )
     return False
+
+
+def _parse_from(value: str) -> tuple[str, str]:
+    """Split an EMAIL_FROM header into (display_name, address).
+
+    Accepts both ``"PaperPod <a@b.com>"`` and a bare ``"a@b.com"``. Providers
+    with a structured sender object (Brevo) need the two parts separately.
+    """
+    v = (value or "").strip()
+    if "<" in v and ">" in v:
+        name = v[: v.index("<")].strip().strip('"')
+        addr = v[v.index("<") + 1 : v.index(">")].strip()
+        return name, addr
+    return "", v
+
+
+async def _send_via_brevo(to_email: str, subject: str, html: str, text: str) -> bool:
+    name, addr = _parse_from(settings.EMAIL_FROM)
+    sender = {"email": addr}
+    if name:
+        sender["name"] = name
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": settings.BREVO_API_KEY.strip(),
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                },
+                json={
+                    "sender": sender,
+                    "to": [{"email": to_email}],
+                    "subject": subject,
+                    "htmlContent": html,
+                    "textContent": text,
+                },
+            )
+        if resp.status_code >= 400:
+            logger.error("[email] Brevo failed %s: %s", resp.status_code, resp.text[:300])
+            return False
+        return True
+    except Exception as exc:  # network/timeout/etc — never crash the request
+        logger.error("[email] Brevo error: %s", exc)
+        return False
 
 
 async def _send_via_resend(to_email: str, subject: str, html: str, text: str) -> bool:
