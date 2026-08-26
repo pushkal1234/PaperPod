@@ -14,7 +14,7 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
 // Mirror the backend guardrails so users get instant, friendly feedback instead
 // of a round-trip 400. Requires a non-empty local part, an "@", a dotted domain
-// with a 2+ char TLD, and no whitespace anywhere.
+// with a 2+ char TLD, and no whitespace anywhere
 const EMAIL_RE = /^[^@\s]+@[^@\s.]+(\.[^@\s.]+)*\.[^@\s.]{2,}$/;
 const MIN_PASSWORD_LENGTH = 8;
 
