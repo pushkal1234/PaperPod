@@ -85,6 +85,11 @@ async def count_user_podcasts(db: AsyncSession, user_id: str) -> int:
     ``failed`` generations are excluded so a user is never charged a free credit
     for output the pipeline itself rejected (mirrors the dedup/quality-gate
     semantics elsewhere).
+
+    NOTE: soft-deleted documents (``deleted_at`` set) are intentionally STILL
+    counted — this is a *lifetime* quota. Do NOT add a ``deleted_at IS NULL``
+    filter here or a free user could create -> delete -> create forever. Delete
+    hides podcasts from the library, not from this counter (see documents.py).
     """
     result = await db.execute(
         select(func.count(Document.id)).where(

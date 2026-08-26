@@ -90,6 +90,12 @@ class Document(Base):
     # behind a proxy) for per-IP free-quota enforcement across accounts.
     creator_ip = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+    # Soft-delete marker. When a user deletes a podcast we KEEP this row (and its
+    # audio/Q&A are purged) so the lifetime free-quota keeps counting it — a hard
+    # delete would let a free user create -> delete -> create forever. Rows with
+    # a non-NULL deleted_at are hidden from the library/stats/dedup but still
+    # counted by the entitlement gates. See app/entitlements.py.
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     audio_file = relationship("AudioFile", back_populates="document", uselist=False)
     qa_sessions = relationship("QASession", back_populates="document")
@@ -265,6 +271,11 @@ async def _migrate_schema_sqlite(conn):
             sync_conn.execute(
                 text("CREATE INDEX IF NOT EXISTS ix_documents_creator_ip ON documents (creator_ip)")
             )
+        if "deleted_at" not in doc_cols:
+            sync_conn.execute(text("ALTER TABLE documents ADD COLUMN deleted_at TIMESTAMP"))
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_documents_deleted_at ON documents (deleted_at)")
+            )
 
         # Monetization columns on a pre-existing users table (Phase 0).
         user_rows = sync_conn.execute(text("PRAGMA table_info(users)")).fetchall()
@@ -376,6 +387,14 @@ async def _migrate_schema_postgres(conn):
     )
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_documents_creator_ip ON documents (creator_ip)")
+    )
+
+    # Soft-delete column on documents (preserves lifetime quota after deletion).
+    await conn.execute(
+        text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_documents_deleted_at ON documents (deleted_at)")
     )
 
     # Anti-abuse columns (email verification + multi-account controls).

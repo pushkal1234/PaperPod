@@ -115,6 +115,9 @@ async def _find_reusable_document(
             Document.content_hash == content_hash,
             Document.status.in_(["ready", "processing"]),
             Document.user_id == user_id,
+            # Never dedupe onto a soft-deleted podcast: its audio has been purged,
+            # so reusing it would hand back a broken (playback-less) result.
+            Document.deleted_at.is_(None),
         )
         .order_by(Document.created_at.desc())
     )
@@ -622,7 +625,7 @@ async def list_documents(
     """
     result = await db.execute(
         select(Document)
-        .where(Document.user_id == user.id)
+        .where(Document.user_id == user.id, Document.deleted_at.is_(None))
         .options(selectinload(Document.audio_file))
         .order_by(Document.created_at.desc())
     )
@@ -666,7 +669,7 @@ async def document_stats(
         )
         .select_from(Document)
         .outerjoin(AudioFile, AudioFile.document_id == Document.id)
-        .where(Document.user_id == user.id)
+        .where(Document.user_id == user.id, Document.deleted_at.is_(None))
     )
 
     total = ready = failed = processing = 0
@@ -745,7 +748,7 @@ async def document_stats(
 async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
     """Get document metadata and processing status."""
     doc = await db.get(Document, doc_id)
-    if not doc:
+    if not doc or doc.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Document not found")
 
     result = await db.execute(
@@ -784,12 +787,18 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Delete a document and all associated audio + Q&A history.
+    """Soft-delete a document, purging its audio + Q&A history and files.
 
     Requires auth and ownership: a user can only delete a podcast they own.
+
+    The ``documents`` row is deliberately KEPT (marked with ``deleted_at``) while
+    its audio/Q&A rows and on-disk files are removed. This reclaims storage yet
+    preserves lifetime free-quota accounting — hard-deleting the row would let a
+    free user create -> delete -> create podcasts forever without paying. The
+    row is hidden from the library, stats and dedup via its ``deleted_at`` marker.
     """
     doc = await db.get(Document, doc_id)
-    if not doc:
+    if not doc or doc.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Document not found")
     if doc.user_id is not None and doc.user_id != user.id:
         raise HTTPException(status_code=403, detail="You don't have permission to delete this podcast.")
@@ -814,10 +823,11 @@ async def delete_document(
         if s.answer_audio_path:
             file_paths.append(s.answer_audio_path)
 
-    # Delete DB rows
+    # Purge the audio + Q&A rows (reclaim space) but KEEP the document row,
+    # marking it soft-deleted so the lifetime free-quota still counts it.
     await db.execute(delete(QASession).where(QASession.document_id == doc_id))
     await db.execute(delete(AudioFile).where(AudioFile.document_id == doc_id))
-    await db.execute(delete(Document).where(Document.id == doc_id))
+    doc.deleted_at = _utcnow()
     await db.commit()
 
     # Remove in-memory chunks (if present)
