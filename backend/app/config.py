@@ -173,6 +173,16 @@ class Settings(BaseSettings):
     # Resend's shared sandbox sender works for testing without a domain.
     EMAIL_FROM: str = os.getenv("EMAIL_FROM", "PaperPod <onboarding@resend.dev>")
 
+    # --- Admin login alerts (temporary traction/visibility experiment) ---
+    # When ON, emails LOGIN_ALERT_EMAIL a tiny "so-and-so just signed in" note on
+    # every sign-in / sign-up (Google or email), containing only the user's name
+    # and email. Ships OFF (default "0"); flip to "1" in Railway when you want the
+    # daily login pulse, then back to "0". The send is fire-and-forget in a
+    # background task, so it never adds latency to auth and never blocks a login.
+    LOGIN_ALERTS_ENABLED: bool = os.getenv("LOGIN_ALERTS_ENABLED", "0") not in ("0", "false", "False")
+    # Where the alert is delivered. Defaults to the founder's inbox.
+    LOGIN_ALERT_EMAIL: str = os.getenv("LOGIN_ALERT_EMAIL", "pushkalshuk@gmail.com")
+
     # --- Anti-abuse: per-IP free quota (secondary defense) ---
     # Caps how many free podcasts can be created from a single IP across ALL
     # accounts, so spinning up many fake accounts on one machine still shares one

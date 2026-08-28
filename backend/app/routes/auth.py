@@ -2,7 +2,7 @@ import logging
 import re
 from datetime import timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from app.services.email_service import (
     generate_code,
     hash_code,
     normalize_email,
+    send_login_alert_email,
     send_password_reset_email,
     send_verification_email,
 )
@@ -101,6 +102,23 @@ async def _issue_verification(user: User, db: AsyncSession) -> None:
         logger.error("[auth] Verification email FAILED to send to %s", user.email)
 
 
+def _queue_login_alert(background_tasks: BackgroundTasks, user: User, method: str) -> None:
+    """Fire-and-forget an admin login-alert email, if the flag is on.
+
+    Scheduled as a background task so it runs AFTER the auth response is sent —
+    it can never add latency to, or fail, a sign-in. No-op when disabled.
+    """
+    if not settings.LOGIN_ALERTS_ENABLED:
+        return
+    background_tasks.add_task(
+        send_login_alert_email,
+        settings.LOGIN_ALERT_EMAIL,
+        user.email,
+        user.name,
+        method,
+    )
+
+
 async def _issue_reset(user: User, db: AsyncSession) -> None:
     """Generate, store (hashed), and email a fresh password-reset code."""
     code = generate_code()
@@ -132,7 +150,12 @@ async def _auth_response(user: User, db: AsyncSession) -> dict:
 
 
 @router.post("/register")
-async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def register(
+    body: RegisterRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     email = body.email.strip().lower()
     if not _EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Please enter a valid email address.")
@@ -168,11 +191,16 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     if settings.EMAIL_VERIFICATION_ENABLED:
         await _issue_verification(user, db)
 
+    _queue_login_alert(background_tasks, user, "email sign-up")
     return await _auth_response(user, db)
 
 
 @router.post("/login")
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    body: LoginRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     email = body.email.strip().lower()
     norm = normalize_email(email)
     # Match on the canonical email first (so alias variants resolve to the one
@@ -183,11 +211,17 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
+    _queue_login_alert(background_tasks, user, "email login")
     return await _auth_response(user, db)
 
 
 @router.post("/google")
-async def google_sign_in(body: GoogleRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def google_sign_in(
+    body: GoogleRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     claims = verify_google_id_token(body.id_token)
     google_sub = claims["sub"]
     email = claims["email"].strip().lower()
@@ -205,6 +239,7 @@ async def google_sign_in(body: GoogleRequest, request: Request, db: AsyncSession
         )
         user = result.scalar_one_or_none()
 
+    is_new = user is None
     if user:
         # Backfill Google fields on an existing account.
         if not user.google_sub:
@@ -232,6 +267,7 @@ async def google_sign_in(body: GoogleRequest, request: Request, db: AsyncSession
 
     await db.commit()
     logger.info(f"[auth] Google sign-in for user {user.id}")
+    _queue_login_alert(background_tasks, user, "google sign-up" if is_new else "google login")
     return await _auth_response(user, db)
 
 

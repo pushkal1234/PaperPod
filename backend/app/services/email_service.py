@@ -149,6 +149,42 @@ async def send_password_reset_email(to_email: str, code: str, name: str | None =
     )
 
 
+async def send_login_alert_email(
+    admin_email: str, user_email: str, user_name: str | None, method: str
+) -> bool:
+    """Notify the admin that a user just signed in/up (traction experiment).
+
+    Carries only the user's name + email + the auth method. Fire-and-forget:
+    never raises, returns False if no provider is configured or the send fails.
+    """
+    display_name = (user_name or "").strip() or "(no name)"
+    subject = f"PaperPod login: {display_name}"
+    text_body = (
+        "A user just signed in to PaperPod.\n\n"
+        f"Name:   {display_name}\n"
+        f"Email:  {user_email}\n"
+        f"Method: {method}\n"
+    )
+    html_body = f"""\
+<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#1c1917">
+  <h2 style="color:#136458;margin:0 0 12px">New PaperPod sign-in</h2>
+  <table style="border-collapse:collapse;font-size:14px;color:#44403c">
+    <tr><td style="padding:4px 12px 4px 0;color:#78716c">Name</td><td style="padding:4px 0;font-weight:600">{display_name}</td></tr>
+    <tr><td style="padding:4px 12px 4px 0;color:#78716c">Email</td><td style="padding:4px 0;font-weight:600">{user_email}</td></tr>
+    <tr><td style="padding:4px 12px 4px 0;color:#78716c">Method</td><td style="padding:4px 0;font-weight:600">{method}</td></tr>
+  </table>
+</div>"""
+    if not settings.EMAIL_PROVIDER_CONFIGURED:
+        logger.warning(
+            "[email] Login alert requested but no provider configured (user=%s)", user_email
+        )
+        return False
+    return await _dispatch(
+        admin_email, subject, html_body, text_body,
+        log_label="Login alert", code=user_email,
+    )
+
+
 def _parse_from(value: str) -> tuple[str, str]:
     """Split an EMAIL_FROM header into (display_name, address).
 
