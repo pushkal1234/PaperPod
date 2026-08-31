@@ -1245,7 +1245,7 @@ function App() {
             {CONTACT_EMAIL}
           </a>
         </div>
-        <p className="text-brand-600 font-semibold mb-1">Free forever · No credit card required</p>
+        <p className="text-brand-600 font-semibold mb-1">Free to try it out · No credit card required</p>
         PaperPod · Documents to Podcasts with Real-time Q&A
       </footer>
 
