@@ -6,6 +6,34 @@ html {
   scroll-behavior: smooth;
 }
 
+html,
+body {
+  overflow-x: clip;
+  max-width: 100%;
+  position: relative;
+  width: 100%;
+}
+
+/* Fallback for older iOS Safari (< 16) that doesn't support `overflow: clip`.
+   On the html/body document scroller, `hidden` still clamps the horizontal
+   overflow and keeps the body-level sticky navbar working. */
+@supports not (overflow: clip) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+}
+
+/* Responsive media safety net: never let an image/video/embed exceed its
+   container and force the whole page wider than the viewport on mobile. */
+img,
+svg,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   color: #1c2b27;
