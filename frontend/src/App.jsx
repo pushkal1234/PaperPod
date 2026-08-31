@@ -1114,9 +1114,13 @@ function App() {
               Back to home
             </button>
 
-            <div className="grid lg:grid-cols-2 gap-6">
+            {/* min-w-0 on the grid children: CSS grid items default to
+                min-width:auto and refuse to shrink below their content's
+                intrinsic width, overflowing (and clipping) the column on narrow
+                mobile screens. min-w-0 lets each card shrink to the viewport. */}
+            <div className="grid lg:grid-cols-2 gap-6 [&>*]:min-w-0">
               {/* Podcast Player */}
-              <div className="space-y-4">
+              <div className="space-y-4 min-w-0">
                 <PodcastPlayer
                   audioUrl={getAudioUrl(currentDoc.audio.audio_id)}
                   title={currentDoc.filename}
