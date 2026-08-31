@@ -17,15 +17,19 @@ class Settings(BaseSettings):
     LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
     LLM_FALLBACK_MODEL: str = os.getenv("LLM_FALLBACK_MODEL", "gemini-2.5-flash")
     WHISPER_MODEL: str = "whisper-large-v3"
-    # Voice casting:
-    #   HOST  = drives the convo / asks questions  -> male voice
-    #   GUEST = the expert who explains & speaks more -> Neerja Expressive (female)
+    # Voice casting — BOTH en-US so the whole episode is a natural US-English
+    #   HOST  = drives the convo / asks questions   -> Andrew (US male)
+    #   GUEST = the expert who explains & speaks most -> Ava (US female, warm,
+    #           multilingual). Also the voice used for Q&A answers.
+    # Pace: kept to a gentle positive % — lively but NOT rushed — so non-native
+    # listeners can follow the English comfortably. Pitch left at
+    # each voice's natural tone (Ava is already warm; no artificial brightening).
     TTS_VOICE_HOST: str = os.getenv("TTS_VOICE_HOST", "en-US-AndrewMultilingualNeural")
-    TTS_VOICE_GUEST: str = os.getenv("TTS_VOICE_GUEST", "en-IN-NeerjaExpressiveNeural")
-    TTS_RATE_HOST: str = os.getenv("TTS_RATE_HOST", "+10%")
+    TTS_VOICE_GUEST: str = os.getenv("TTS_VOICE_GUEST", "en-US-AvaMultilingualNeural")
+    TTS_RATE_HOST: str = os.getenv("TTS_RATE_HOST", "+4%")
     TTS_PITCH_HOST: str = os.getenv("TTS_PITCH_HOST", "+0Hz")
-    TTS_RATE_GUEST: str = os.getenv("TTS_RATE_GUEST", "+8%")
-    TTS_PITCH_GUEST: str = os.getenv("TTS_PITCH_GUEST", "+2Hz")
+    TTS_RATE_GUEST: str = os.getenv("TTS_RATE_GUEST", "+3%")
+    TTS_PITCH_GUEST: str = os.getenv("TTS_PITCH_GUEST", "+0Hz")
     # Max parallel edge-tts calls for LARGE podcasts. edge-tts is free with no
     # documented limit, but it can throttle/drop audio ("No audio received") under
     # heavy concurrency — more so from datacenter IPs. 8 is fast for long episodes
@@ -104,7 +108,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "18")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "19")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.
