@@ -14,6 +14,7 @@ import ToastContainer from './components/ToastContainer';
 import PaywallModal from './components/PaywallModal';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler, getBillingConfig, createCheckout, getBillingPortal } from './api';
+import { FOUNDING, HEADLINE_MONTHLY, REGULAR_MONTHLY, FOUNDING_SPOTS, FOUNDING_SPOTS_LEFT, SHOW_FOUNDING_COUNTER } from './pricing';
 
 // Browser extension store listings — surfaced in the navbar, hero, and footer.
 const CHROME_STORE_URL = 'https://chromewebstore.google.com/detail/paperpod-%E2%80%94-ai-podcast-for/oeppbenincbmdaomedjpjfegnfphdoeo';
@@ -852,8 +853,14 @@ function App() {
                     <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs font-medium text-stone-500">
                       <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> 2 free podcasts to start</span>
                       <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> No credit card to try it</span>
-                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> Unlimited Podcasts on Premium — $5/mo</span>
+                      <span className="inline-flex items-center gap-1.5"><Check className="w-3.5 h-3.5 text-brand-600" /> Unlimited podcasts on Premium — {FOUNDING ? `founding ${HEADLINE_MONTHLY}/mo (reg. ${REGULAR_MONTHLY})` : `${HEADLINE_MONTHLY}/mo`}</span>
                     </div>
+                    {SHOW_FOUNDING_COUNTER && (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-accent-700 bg-accent-50 border border-accent-200 px-3 py-1 rounded-full">
+                        <Zap className="w-3.5 h-3.5" />
+                        Only {FOUNDING_SPOTS_LEFT} of {FOUNDING_SPOTS} founding spots left
+                      </span>
+                    )}
                   </>
                 ) : (
                   <>

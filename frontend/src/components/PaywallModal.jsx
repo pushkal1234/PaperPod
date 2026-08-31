@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { X, Sparkles, Check, Infinity as InfinityIcon, FileText, MessageCircle, Loader2, Phone, Mail } from 'lucide-react';
 import { createCheckout } from '../api';
+import { FOUNDING, FOUNDING_LABEL, FOUNDING_NOTE, HEADLINE_MONTHLY, REGULAR_MONTHLY, FOUNDING_SPOTS, FOUNDING_SPOTS_LEFT, SHOW_FOUNDING_COUNTER } from '../pricing';
 
 const PREMIUM_PERKS = [
-  { icon: InfinityIcon, text: 'Unlimited podcasts — no lifetime cap' },
-  { icon: MessageCircle, text: 'Live Q&A — Interrupt your custom AI podcast to ask questions in Doc-only & Web modes', highlight: true },
+  { icon: InfinityIcon, text: 'Unlimited podcasts — turn any document into audio, anytime' },
+  { icon: MessageCircle, text: 'Live Q&A — interrupt your AI podcast to ask questions in Doc-only & Web modes', highlight: true },
   { icon: FileText, text: 'Full-length documents & podcasts, always' },
-  { icon: Sparkles, text: 'Priority support & new features first' },
+  { icon: Sparkles, text: 'Priority generation, support & new features first' },
 ];
 
 // Shown when the backend returns HTTP 402 (quota_exceeded) or when a free user
@@ -19,7 +20,7 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
   const title =
     reason === 'quota_exceeded'
       ? "You've used your free podcasts"
-      : 'Go unlimited Podcasts with Premium';
+      : 'Unlock unlimited podcasts with Premium';
 
   const handleUpgrade = async () => {
     setLoading(true);
@@ -72,10 +73,39 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
 
         {/* Body */}
         <div className="px-7 py-6">
-          <div className="flex items-baseline gap-1.5 mb-5">
-            <span className="text-4xl font-bold text-stone-900">$5</span>
-            <span className="text-stone-500 font-medium">/ month</span>
-            <span className="ml-auto text-xs text-stone-400">Cancel anytime</span>
+          <div className="mb-5">
+            {FOUNDING && (
+              <div className="inline-flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.12em] text-accent-700 bg-accent-50 border border-accent-200 px-2.5 py-1 rounded-full mb-2">
+                <Sparkles className="w-3 h-3" /> {FOUNDING_LABEL}
+              </div>
+            )}
+            <div className="flex items-baseline gap-2">
+              <span className="text-4xl font-bold text-stone-900">{HEADLINE_MONTHLY}</span>
+              <span className="text-stone-500 font-medium">/ month</span>
+              {FOUNDING && (
+                <span className="text-lg font-semibold text-stone-400 line-through decoration-2">{REGULAR_MONTHLY}</span>
+              )}
+              <span className="ml-auto text-xs text-stone-400">Cancel anytime</span>
+            </div>
+            {FOUNDING && (
+              <p className="mt-1.5 text-xs font-semibold text-brand-700">
+                {FOUNDING_NOTE} Regular price {REGULAR_MONTHLY}/mo.
+              </p>
+            )}
+            {SHOW_FOUNDING_COUNTER && (
+              <div className="mt-3 rounded-xl bg-accent-50 border border-accent-200 px-3 py-2.5">
+                <div className="flex items-center justify-between text-xs font-semibold text-accent-800">
+                  <span>Only {FOUNDING_SPOTS_LEFT} of {FOUNDING_SPOTS} founding spots left</span>
+                  <span className="text-accent-600">{FOUNDING_SPOTS - FOUNDING_SPOTS_LEFT} claimed</span>
+                </div>
+                <div className="mt-1.5 h-1.5 w-full rounded-full bg-accent-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-accent-500 transition-all"
+                    style={{ width: `${Math.min(100, Math.max(4, ((FOUNDING_SPOTS - FOUNDING_SPOTS_LEFT) / FOUNDING_SPOTS) * 100))}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <ul className="space-y-2.5 mb-6">
