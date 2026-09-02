@@ -26,6 +26,7 @@ from app.services.document_service import save_upload, extract_text, chunk_text,
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
+from app.services.email_service import send_upload_alert_email
 from app.mem_utils import trim_memory
 
 logger = logging.getLogger("paperpod")
@@ -84,6 +85,29 @@ def _source_from_filename(filename: str) -> str:
     if name.endswith(_IMAGE_EXTS):
         return "image"
     return "other"
+
+
+def _queue_upload_alert(
+    background_tasks: BackgroundTasks, user: User | None, doc_name: str, doc_type: str
+) -> None:
+    """Fire-and-forget an admin "user uploaded a doc" email, if the flag is on.
+
+    Reuses the LOGIN_ALERTS_ENABLED switch (same traction experiment) and the
+    same per-user subject as the sign-in alert, so uploads thread under that
+    user's conversation. Only for SIGNED-IN users — anonymous uploads have no
+    identity to attribute, so there's nothing to track. Scheduled as a
+    background task so it never adds latency to, or fails, an upload.
+    """
+    if not settings.LOGIN_ALERTS_ENABLED or user is None:
+        return
+    background_tasks.add_task(
+        send_upload_alert_email,
+        settings.LOGIN_ALERT_EMAIL,
+        user.email,
+        user.name,
+        doc_name,
+        doc_type,
+    )
 
 
 def _content_hash(data: bytes) -> str:
@@ -352,6 +376,7 @@ async def upload_document(
 
     logger.info(f"[{doc_id}] Upload received: {file.filename} ({content_type})")
     background_tasks.add_task(_process_document, doc_id, file_path, content_type)
+    _queue_upload_alert(background_tasks, user, doc.filename, doc.source)
     return {"doc_id": doc_id, "filename": file.filename, "status": "processing"}
 
 
@@ -404,6 +429,7 @@ async def upload_text(
 
     logger.info(f"[{doc_id}] Text upload received: {len(text)} chars")
     background_tasks.add_task(_process_text_document, doc_id, text)
+    _queue_upload_alert(background_tasks, user, doc.filename, doc.source)
     return {"doc_id": doc_id, "filename": f"{title}.txt", "status": "processing"}
 
 
@@ -453,6 +479,7 @@ async def upload_image(
 
     logger.info(f"[{doc_id}] Image upload received: {file.filename} ({len(image_bytes)} bytes)")
     background_tasks.add_task(_process_image_document, doc_id, image_bytes, mime_type)
+    _queue_upload_alert(background_tasks, user, doc.filename, doc.source)
     return {"doc_id": doc_id, "filename": file.filename, "status": "processing"}
 
 

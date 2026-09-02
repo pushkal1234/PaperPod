@@ -22,7 +22,7 @@ export const FOUNDING_NOTE = 'Locked in forever — early-supporter price.';
 export const HEADLINE_MONTHLY = FOUNDING ? FOUNDING_MONTHLY : REGULAR_MONTHLY;
 
 export const FOUNDING_SPOTS = 100;
-export const FOUNDING_CLAIMED = 37;
+export const FOUNDING_CLAIMED = 47;
 
 // Seats remaining (clamped to >= 0). Only meaningful when FOUNDING_CLAIMED is set.
 export const FOUNDING_SPOTS_LEFT =

@@ -149,6 +149,20 @@ async def send_password_reset_email(to_email: str, code: str, name: str | None =
     )
 
 
+def _alert_subject(user_name: str | None) -> str:
+    """Per-user subject shared by BOTH the sign-in alert and the upload alert.
+
+    Gmail groups a conversation by its (normalized) subject + participants, so
+    using the identical subject for a given user makes their sign-in note and
+    every subsequent upload note land in the SAME thread — exactly the "one
+    thread per user" view we track traction with. Uploads by a returning user
+    (already logged in from an earlier session, no fresh sign-in email) thread
+    into their historical conversation for free, since the subject still matches.
+    """
+    display_name = (user_name or "").strip() or "(no name)"
+    return f"PaperPod login: {display_name}"
+
+
 async def send_login_alert_email(
     admin_email: str, user_email: str, user_name: str | None, method: str
 ) -> bool:
@@ -158,7 +172,7 @@ async def send_login_alert_email(
     never raises, returns False if no provider is configured or the send fails.
     """
     display_name = (user_name or "").strip() or "(no name)"
-    subject = f"PaperPod login: {display_name}"
+    subject = _alert_subject(user_name)
     text_body = (
         "A user just signed in to PaperPod.\n\n"
         f"Name:   {display_name}\n"
@@ -182,6 +196,57 @@ async def send_login_alert_email(
     return await _dispatch(
         admin_email, subject, html_body, text_body,
         log_label="Login alert", code=user_email,
+    )
+
+
+async def send_upload_alert_email(
+    admin_email: str,
+    user_email: str,
+    user_name: str | None,
+    doc_name: str,
+    doc_type: str,
+) -> bool:
+    """Notify the admin that a signed-in user just uploaded a document.
+
+    Deliberately shares the SAME subject as that user's sign-in alert (see
+    ``_alert_subject``) so it threads into their conversation — turning each
+    user's thread into a mini activity log: "signed in → uploaded X". Lets us
+    see who actually *does* something after landing vs. who only peeks in.
+
+    Fire-and-forget: never raises; returns False if no provider is configured or
+    the send fails.
+    """
+    display_name = (user_name or "").strip() or "(no name)"
+    subject = _alert_subject(user_name)
+    doc_name = (doc_name or "").strip() or "(untitled)"
+    doc_type = (doc_type or "").strip() or "(unknown)"
+    text_body = (
+        "A user just uploaded a document to PaperPod.\n\n"
+        f"Name:     {display_name}\n"
+        f"Email:    {user_email}\n"
+        f"Event:    Document uploaded\n"
+        f"Document: {doc_name}\n"
+        f"Type:     {doc_type}\n"
+    )
+    html_body = f"""\
+<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;color:#1c1917">
+  <h2 style="color:#136458;margin:0 0 12px">Document uploaded on PaperPod</h2>
+  <table style="border-collapse:collapse;font-size:14px;color:#44403c">
+    <tr><td style="padding:4px 12px 4px 0;color:#78716c">Name</td><td style="padding:4px 0;font-weight:600">{display_name}</td></tr>
+    <tr><td style="padding:4px 12px 4px 0;color:#78716c">Email</td><td style="padding:4px 0;font-weight:600">{user_email}</td></tr>
+    <tr><td style="padding:4px 12px 4px 0;color:#78716c">Event</td><td style="padding:4px 0;font-weight:600">Document uploaded</td></tr>
+    <tr><td style="padding:4px 12px 4px 0;color:#78716c">Document</td><td style="padding:4px 0;font-weight:600">{doc_name}</td></tr>
+    <tr><td style="padding:4px 12px 4px 0;color:#78716c">Type</td><td style="padding:4px 0;font-weight:600">{doc_type}</td></tr>
+  </table>
+</div>"""
+    if not settings.EMAIL_PROVIDER_CONFIGURED:
+        logger.warning(
+            "[email] Upload alert requested but no provider configured (user=%s)", user_email
+        )
+        return False
+    return await _dispatch(
+        admin_email, subject, html_body, text_body,
+        log_label="Upload alert", code=user_email,
     )
 
 
