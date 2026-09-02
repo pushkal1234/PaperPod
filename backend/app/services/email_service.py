@@ -250,6 +250,95 @@ async def send_upload_alert_email(
     )
 
 
+def _fmt_secs(seconds: float | None) -> str:
+    """Human-friendly duration, e.g. 190.4 -> "190.4s (3m 10s)"."""
+    if seconds is None:
+        return "(unknown)"
+    s = float(seconds)
+    if s < 60:
+        return f"{s:.1f}s"
+    m, r = divmod(int(round(s)), 60)
+    return f"{s:.1f}s ({m}m {r:02d}s)"
+
+
+async def send_generation_alert_email(
+    admin_email: str,
+    user_email: str,
+    user_name: str | None,
+    doc_name: str,
+    *,
+    ok: bool,
+    total_seconds: float | None = None,
+    audio_seconds: float | None = None,
+    failing_service: str | None = None,
+    error: str | None = None,
+) -> bool:
+    """Notify the admin that a podcast generation finished (or failed).
+
+    Shares the SAME per-user subject as the sign-in/upload alerts (see
+    ``_alert_subject``), so it threads into that user's conversation — the thread
+    reads sign-in -> uploaded X -> podcast ready (3m10s, 21m audio) / FAILED.
+
+    On failure, ``error`` carries the RAW (un-sanitized) message so the admin can
+    see which downstream provider broke (groq / gemini / edge-tts / gTTS / ...).
+    Fire-and-forget: never raises; returns False if no provider or send fails.
+    """
+    display_name = (user_name or "").strip() or "(no name)"
+    subject = _alert_subject(user_name)
+    doc_name = (doc_name or "").strip() or "(untitled)"
+
+    if ok:
+        heading = "Podcast ready on PaperPod"
+        status_txt = "Ready"
+        rows = [
+            ("Name", display_name),
+            ("Email", user_email),
+            ("Document", doc_name),
+            ("Status", "Ready"),
+            ("Total time", _fmt_secs(total_seconds)),
+            ("Podcast length", _fmt_secs(audio_seconds)),
+        ]
+    else:
+        heading = "Podcast generation FAILED on PaperPod"
+        status_txt = "Failed"
+        rows = [
+            ("Name", display_name),
+            ("Email", user_email),
+            ("Document", doc_name),
+            ("Status", "Failed"),
+            ("Likely service", (failing_service or "").strip() or "(unknown)"),
+            ("Total time", _fmt_secs(total_seconds)),
+            ("Error", (error or "").strip() or "(no detail)"),
+        ]
+
+    text_body = (
+        f"Podcast generation {'succeeded' if ok else 'FAILED'} on PaperPod.\n\n"
+        + "".join(f"{label + ':':<16}{value}\n" for label, value in rows)
+    )
+    html_rows = "".join(
+        f'<tr><td style="padding:4px 12px 4px 0;color:#78716c;vertical-align:top">{label}</td>'
+        f'<td style="padding:4px 0;font-weight:600">{value}</td></tr>'
+        for label, value in rows
+    )
+    color = "#136458" if ok else "#b91c1c"
+    html_body = f"""\
+<div style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:520px;margin:0 auto;color:#1c1917">
+  <h2 style="color:{color};margin:0 0 12px">{heading}</h2>
+  <table style="border-collapse:collapse;font-size:14px;color:#44403c">{html_rows}</table>
+</div>"""
+
+    if not settings.EMAIL_PROVIDER_CONFIGURED:
+        logger.warning(
+            "[email] Generation alert (%s) requested but no provider configured (user=%s)",
+            status_txt, user_email,
+        )
+        return False
+    return await _dispatch(
+        admin_email, subject, html_body, text_body,
+        log_label=f"Generation alert ({status_txt})", code=user_email,
+    )
+
+
 def _parse_from(value: str) -> tuple[str, str]:
     """Split an EMAIL_FROM header into (display_name, address).
 

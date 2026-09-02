@@ -26,7 +26,7 @@ from app.services.document_service import save_upload, extract_text, chunk_text,
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
-from app.services.email_service import send_upload_alert_email
+from app.services.email_service import send_upload_alert_email, send_generation_alert_email
 from app.mem_utils import trim_memory
 
 logger = logging.getLogger("paperpod")
@@ -108,6 +108,63 @@ def _queue_upload_alert(
         doc_name,
         doc_type,
     )
+
+
+def _service_for_step(step: str) -> str:
+    """Map a pipeline step to the downstream service that owns it, so a failure
+    email points at the culprit area. The RAW error (passed separately) names the
+    exact provider (groq / gemini / edge-tts / gTTS)."""
+    s = (step or "").lower()
+    if "extract" in s:
+        return "text extraction / vision (PDF parse, Gemini vision)"
+    if "chunk" in s:
+        return "chunking / vector store"
+    if "script" in s or "llm" in s:
+        return "LLM script generation (Groq -> Gemini fallback)"
+    if "synth" in s or "audio" in s or "tts" in s:
+        return "TTS audio synthesis (Edge TTS -> gTTS fallback)"
+    if "validat" in s:
+        return "quality validation (script/audio too short)"
+    return step or "unknown"
+
+
+async def _send_generation_alert(
+    doc_id: str,
+    *,
+    ok: bool,
+    total_seconds: float | None = None,
+    audio_seconds: float | None = None,
+    failing_step: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Email the admin a one-line generation summary (ready / failed), threaded
+    into the user's conversation. Best-effort: gated by LOGIN_ALERTS_ENABLED and
+    wrapped so an email hiccup can never affect the pipeline. Runs inline here —
+    we're already inside a background task and the doc is already committed."""
+    if not settings.LOGIN_ALERTS_ENABLED:
+        return
+    try:
+        from app.database import async_session
+
+        async with async_session() as session:
+            doc = await session.get(Document, doc_id)
+            if not doc:
+                return
+            user = await session.get(User, doc.user_id) if doc.user_id else None
+            doc_name = doc.filename
+        await send_generation_alert_email(
+            settings.LOGIN_ALERT_EMAIL,
+            user.email if user else "(anonymous)",
+            user.name if user else None,
+            doc_name,
+            ok=ok,
+            total_seconds=total_seconds,
+            audio_seconds=audio_seconds,
+            failing_service=_service_for_step(failing_step) if failing_step else None,
+            error=error,
+        )
+    except Exception:
+        logger.warning("[%s] Generation alert email failed to send", doc_id, exc_info=True)
 
 
 def _content_hash(data: bytes) -> str:
@@ -309,6 +366,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
             f"chars={len(raw_text)}, chunks={len(chunks)}, turns={len([l for l in script.split(chr(10)) if l.strip()])}"
         )
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
+        await _send_generation_alert(doc_id, ok=True, total_seconds=total, audio_seconds=duration)
 
     except Exception as e:
         total = time.perf_counter() - overall_start
@@ -325,6 +383,11 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
                     await session.commit()
         except Exception:
             logger.error(f"[{doc_id}] Could not update status to failed")
+        # Admin gets the RAW error (un-sanitized) so the failing provider is visible.
+        await _send_generation_alert(
+            doc_id, ok=False, total_seconds=total,
+            failing_step=current_step, error=f"Failed while {current_step}: {e}",
+        )
 
 
 @router.post("/upload")
@@ -622,6 +685,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
             f"chars={len(raw_text)}, chunks={len(chunks)}"
         )
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
+        await _send_generation_alert(doc_id, ok=True, total_seconds=total, audio_seconds=duration)
 
     except Exception as e:
         total = time.perf_counter() - overall_start
@@ -637,6 +701,11 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
                     await session.commit()
         except Exception:
             logger.error(f"[{doc_id}] Could not update status to failed")
+        # Admin gets the RAW error (un-sanitized) so the failing provider is visible.
+        await _send_generation_alert(
+            doc_id, ok=False, total_seconds=total,
+            failing_step=current_step, error=f"Failed while {current_step}: {e}",
+        )
 
 
 @router.get("/list")
