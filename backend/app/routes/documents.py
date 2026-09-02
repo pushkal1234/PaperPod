@@ -128,6 +128,21 @@ def _service_for_step(step: str) -> str:
     return step or "unknown"
 
 
+# Keep strong refs to in-flight fire-and-forget alert tasks: asyncio only holds
+# a WEAK reference to a bare create_task(), so without this the garbage collector
+# can cancel the send mid-flight. Tasks remove themselves on completion.
+_alert_tasks: set[asyncio.Task] = set()
+
+
+def _fire_and_forget_alert(coro) -> None:
+    """Schedule an admin-alert coroutine WITHOUT awaiting it, so it runs off the
+    job's critical path and never extends how long the pipeline holds
+    ``_job_semaphore``. Errors are already swallowed inside the coroutine."""
+    task = asyncio.create_task(coro)
+    _alert_tasks.add(task)
+    task.add_done_callback(_alert_tasks.discard)
+
+
 async def _send_generation_alert(
     doc_id: str,
     *,
@@ -366,7 +381,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
             f"chars={len(raw_text)}, chunks={len(chunks)}, turns={len([l for l in script.split(chr(10)) if l.strip()])}"
         )
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
-        await _send_generation_alert(doc_id, ok=True, total_seconds=total, audio_seconds=duration)
+        _fire_and_forget_alert(_send_generation_alert(doc_id, ok=True, total_seconds=total, audio_seconds=duration))
 
     except Exception as e:
         total = time.perf_counter() - overall_start
@@ -384,10 +399,10 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         except Exception:
             logger.error(f"[{doc_id}] Could not update status to failed")
         # Admin gets the RAW error (un-sanitized) so the failing provider is visible.
-        await _send_generation_alert(
+        _fire_and_forget_alert(_send_generation_alert(
             doc_id, ok=False, total_seconds=total,
             failing_step=current_step, error=f"Failed while {current_step}: {e}",
-        )
+        ))
 
 
 @router.post("/upload")
@@ -685,7 +700,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
             f"chars={len(raw_text)}, chunks={len(chunks)}"
         )
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
-        await _send_generation_alert(doc_id, ok=True, total_seconds=total, audio_seconds=duration)
+        _fire_and_forget_alert(_send_generation_alert(doc_id, ok=True, total_seconds=total, audio_seconds=duration))
 
     except Exception as e:
         total = time.perf_counter() - overall_start
@@ -702,10 +717,10 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
         except Exception:
             logger.error(f"[{doc_id}] Could not update status to failed")
         # Admin gets the RAW error (un-sanitized) so the failing provider is visible.
-        await _send_generation_alert(
+        _fire_and_forget_alert(_send_generation_alert(
             doc_id, ok=False, total_seconds=total,
             failing_step=current_step, error=f"Failed while {current_step}: {e}",
-        )
+        ))
 
 
 @router.get("/list")
