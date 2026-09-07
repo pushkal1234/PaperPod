@@ -87,6 +87,14 @@ SHORT_SCRIPT_ACCEPT_RATIO = 0.85
 # document can't burn the scarce Gemini daily quota: at most this many extra
 # calls, and we stop early the moment an attempt fails to grow the script.
 MAX_LENGTH_RETRIES = 2
+# Overshoot ceiling behaviour for SMALL docs. The generous multiplicative factor
+# (HEAVY_OVERSHOOT_CEILING_FACTOR, 1.75x) exists to preserve rich content in LONG
+# episodes, but on a small base it just lets padding nearly DOUBLE the episode
+# (e.g. max=14 -> ceiling 25 ≈ 2 min from a 20-word note). Small docs have no rich
+# content to preserve, so overshoot there is pure padding — cap it to a small
+# ABSOLUTE headroom above max instead of the runaway 1.75x multiple.
+SMALL_DOC_LINE_BAND = 22          # tiers whose max_lines <= this are "short docs"
+SMALL_DOC_OVERSHOOT_HEADROOM = 2  # lines allowed above max before trimming kicks in
 
 # Max output tokens per completion, PER PROVIDER. With 2-3 short sentences per
 # Host:/Guest: line, a line consumes ~60 tokens. This lets us cap max_lines so
@@ -235,6 +243,12 @@ def _adjust_tier_for_density(
 # ~1 min of audio ≈ 150 words ≈ 6-8 exchanges (~12 dialogue lines)
 # Each tier: (char_threshold, target_description, target_lines, max_lines)
 LENGTH_TIERS = [
+    # Tiny inputs (a photo of a few handwritten lines, a one-line note) MUST stay
+    # short — there isn't enough material for more, so anything longer is the model
+    # padding or inventing. Floored at the quality gate (~6 lines / ~20-30s) so they
+    # still pass validation without ballooning into a 2-minute episode from 20 words.
+    (150,   "3 exchanges (~6 lines, ~30 seconds)",          6,  8),
+    (350,   "4 exchanges (~8 lines, ~45 seconds)",          8,  10),
     (500,   "6 exchanges (~12 lines, ~1 minute)",           12, 14),
     (2000,  "10 exchanges (~20 lines, ~2 minutes)",         20, 22),
     (5000,  "14 exchanges (~28 lines, ~3 minutes)",         28, 30),
@@ -884,8 +898,16 @@ def _overshoot_ceiling(max_lines: int) -> int:
     document is never chopped back to max_lines just to hit a line number. The
     ceiling is max_lines × HEAVY_OVERSHOOT_CEILING_FACTOR, clamped to the TTS
     runaway cap (minus room for the deterministic outro) and never below max_lines.
+
+    EXCEPTION for small docs (max_lines <= SMALL_DOC_LINE_BAND): the multiplicative
+    factor on a small base just preserves PADDING (a few-word note has no rich
+    content to keep), so those get a small ABSOLUTE headroom instead — this is what
+    stops a 20-word photo from ballooning into a 2-minute episode.
     """
-    ceiling = round(max_lines * settings.HEAVY_OVERSHOOT_CEILING_FACTOR)
+    if max_lines <= SMALL_DOC_LINE_BAND:
+        ceiling = max_lines + SMALL_DOC_OVERSHOOT_HEADROOM
+    else:
+        ceiling = round(max_lines * settings.HEAVY_OVERSHOOT_CEILING_FACTOR)
     ceiling = min(ceiling, settings.MAX_DIALOGUE_TURNS - 2)  # leave room for the outro
     return max(ceiling, max_lines)
 
@@ -1031,6 +1053,16 @@ def generate_podcast_script(document_text: str) -> str:
         max_lines = feasible_lines
     if target_lines > max_lines - 2:
         target_lines = max(1, max_lines - 2)
+
+    # LOWER floor — mirror of the hard/feasible UPPER caps above. Density scaling
+    # (× as low as 0.7) can pull a tiny tier below the quality gate, which would
+    # make a legitimately short episode get marked "failed" by _podcast_quality_issue.
+    # Clamp so we never TARGET below what validation will accept.
+    min_lines_floor = max(MIN_VIABLE_DIALOGUE_LINES, settings.MIN_PODCAST_DIALOGUE_LINES)
+    if max_lines < min_lines_floor + 2:
+        max_lines = min_lines_floor + 2
+    if target_lines < min_lines_floor:
+        target_lines = min_lines_floor
 
     # ---- Size-based provider routing (see docstring) --------------------
     # Guarantee: the happy path makes exactly ONE provider call, and Groq is
