@@ -142,6 +142,90 @@ def _is_procedural(document_text: str) -> bool:
     return keyword_hits >= 3 or (numbered_lines >= 4 and keyword_hits >= 1)
 
 
+# --- Anthology / multi-article detection ---------------------------------
+# A magazine, journal issue, newsletter, or proceedings is NOT one coherent
+# document — it's a COLLECTION of independent articles. The default long-form
+# prompt deep-dives "the document" and, when it can't cover everything within
+# the line cap, prioritizes the strongest section — which on an anthology means
+# one article dominates and the rest are dropped (the exact "it only covered one
+# article in the middle" feedback). We detect these so the prompt can switch to
+# a breadth-first, cover-every-article DIGEST instead of a single deep dive.
+_ANTHOLOGY_MIN_CHARS = 25000
+_ANTHOLOGY_TOC_MARKERS = (
+    "in this issue", "table of contents", "inside this issue", "in this edition",
+    "in this month", "from the editor", "editor's note", "editors note",
+    "editorial", "masthead", "features", "departments", "contents",
+)
+_ANTHOLOGY_MAGAZINE_MARKERS = (
+    "magazine", "issn", "quarterly", "newsletter", "bulletin", "gazette",
+    "vol.", "volume ", "issue ", "no.",
+)
+# "By Firstname Lastname" bylines — the strongest independent-article signal.
+_ANTHOLOGY_BYLINE_RE = re.compile(
+    r"(?im)^\s*(?:by|written by|words by|story by)\s+[A-Z][A-Za-z.'\-]+\s+[A-Z][A-Za-z.'\-]+"
+)
+
+
+def _count_heading_lines(text: str) -> int:
+    """Count short, title-like lines (article/section headlines) in the text.
+
+    A headline looks like a short line of a few words, mostly Title Case or ALL
+    CAPS, that does NOT end like a sentence. This is deliberately conservative to
+    avoid counting ordinary body sentences.
+    """
+    count = 0
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not (8 <= len(line) <= 80):
+            continue
+        if line.endswith((".", ",", ";", ":")):
+            continue
+        words = line.split()
+        if not (2 <= len(words) <= 12):
+            continue
+        alpha_words = [w for w in words if any(c.isalpha() for c in w)]
+        if not alpha_words:
+            continue
+        all_caps = line == line.upper() and any(c.isalpha() for c in line)
+        # "Title Case": most words start uppercase (ignore short stopwords).
+        significant = [w for w in alpha_words if len(w) > 3]
+        title_case = significant and sum(
+            1 for w in significant if w[:1].isupper()
+        ) >= max(1, int(0.7 * len(significant)))
+        if all_caps or title_case:
+            count += 1
+    return count
+
+
+def _is_anthology(document_text: str) -> bool:
+    """Detect a multi-article collection (magazine/journal/newsletter/proceedings).
+
+    Conservative on purpose: only fires for LARGE docs that also show several
+    independent-article signals, so a normal long report or single research
+    paper (which legitimately wants a deep dive) is never misclassified.
+    """
+    if not document_text or len(document_text) < _ANTHOLOGY_MIN_CHARS:
+        return False
+    low = document_text.lower()
+    byline_count = len(_ANTHOLOGY_BYLINE_RE.findall(document_text))
+    toc_hits = sum(1 for m in _ANTHOLOGY_TOC_MARKERS if m in low)
+    mag_hits = sum(1 for m in _ANTHOLOGY_MAGAZINE_MARKERS if m in low)
+    headings = _count_heading_lines(document_text)
+
+    # Strong on their own: several distinct bylines, or clear contents/masthead
+    # language. Otherwise require magazine language backed by many headlines.
+    strong = byline_count >= 3 or toc_hits >= 2
+    supportive = headings >= 10 and (mag_hits >= 1 or toc_hits >= 1 or byline_count >= 2)
+    result = strong or supportive
+    if result:
+        logger.info(
+            f"[LLM] Anthology detected (chars={len(document_text)}, bylines={byline_count}, "
+            f"toc_markers={toc_hits}, mag_markers={mag_hits}, headings={headings}) "
+            f"— using breadth-first digest coverage"
+        )
+    return result
+
+
 def _compute_content_density(text: str) -> float:
     """Return a scaling factor in [0.7, 1.3] reflecting how content-rich the text is.
 
@@ -270,7 +354,9 @@ def _get_length_tier(doc_length: int) -> tuple[str, int, int]:
     return last[1], last[2], last[3]
 
 
-def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = False) -> str:
+def _build_podcast_prompt(
+    target_lines: int, max_lines: int, procedural: bool = False, anthology: bool = False
+) -> str:
     """Build system prompt with content-aware line targets."""
     # The density-adjusted target/max are already computed when this is called.
     target = f"{target_lines} dialogue lines (about {target_lines // 2} speaker turns)"
@@ -280,7 +366,29 @@ def _build_podcast_prompt(target_lines: int, max_lines: int, procedural: bool = 
     # reach the target honestly (see the short-script incidents in the logs).
     is_short_doc = target_lines <= 22
 
-    if procedural:
+    if anthology:
+        # A magazine / journal issue / newsletter is a COLLECTION of independent
+        # articles. Cover the WHOLE issue at a useful level — one segment per
+        # article — instead of deep-diving a single piece (the "it only covered
+        # one article" failure). This deliberately overrides the default "long
+        # doc" rule, whose "prioritize the most important sections" clause is
+        # what let one article dominate.
+        coverage_rule = (
+            "5. This document is a COLLECTION of multiple INDEPENDENT articles/"
+            "sections (e.g. a magazine or journal issue), NOT one continuous "
+            "document. Deliver a HIGH-LEVEL OVERVIEW of the WHOLE issue so a "
+            "listener is briefed on everything without reading it themselves. "
+            "First, the hosts briefly map what this issue covers. Then give EACH "
+            "major article its OWN segment: introduce it, explain its key "
+            "point(s), and mention anything notable (authors, findings, numbers, "
+            "recommendations) before moving to the next article. Cover ALL the "
+            "major articles at a useful level and give them ROUGHLY PROPORTIONAL "
+            "time — do NOT let one article dominate and do NOT skip any. Only if "
+            "there is still room after every article has been covered should the "
+            "hosts go a little deeper on the one or two most important ones. Use "
+            "ONLY what is in the document; never add outside facts."
+        )
+    elif procedural:
         coverage_rule = (
             "5. This document describes a PROCEDURE or set of STEPS. Walk the "
             "listener through the actual steps IN ORDER. Do NOT skip steps and "
@@ -1016,6 +1124,14 @@ def generate_podcast_script(document_text: str) -> str:
     if procedural:
         logger.info("[LLM] Procedural/step document detected — using step-by-step coverage")
 
+    # Detect multi-article anthologies (magazines, journals, newsletters) on the
+    # ORIGINAL text. These need a breadth-first DIGEST that covers every article,
+    # not a single deep dive. Anthology framing wins over procedural (a magazine
+    # is not a how-to), so an anthology is never treated as procedural below.
+    anthology = _is_anthology(document_text)
+    if anthology:
+        procedural = False
+
     # Tier targets based on ORIGINAL doc size so the same file always gets the same length band
     _, target_lines, tier_max_lines = _get_length_tier(original_length)
     # Adjust up or down based on content density (lists, vocabulary, structure).
@@ -1127,7 +1243,7 @@ def generate_podcast_script(document_text: str) -> str:
     # sentence line + headroom, capped at the serving provider's max. Only tokens
     # ACTUALLY generated count toward latency/TPM, so a generous cap is free for
     # docs that don't reach it.
-    system_prompt = _build_podcast_prompt(target_lines, max_lines, procedural=procedural)
+    system_prompt = _build_podcast_prompt(target_lines, max_lines, procedural=procedural, anthology=anthology)
     # Budget must fit the requested line count. Cap by the SERVING model's limit:
     # Gemini can go long-form; Groq is bounded by its 8192-token model max.
     provider_token_cap = GEMINI_MAX_OUTPUT_TOKENS if prefer_gemini else GROQ_MAX_OUTPUT_TOKENS
