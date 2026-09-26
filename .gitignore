@@ -17,6 +17,10 @@ dist/
 # Internal docs (not for repo)
 paperPodDocs/
 
+# Local marketing / Cursor skill artifacts
+brag-output/
+skills-lock.json
+
 # IDE / OS
 .vscode/
 .idea/
