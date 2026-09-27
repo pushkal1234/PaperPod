@@ -22,7 +22,7 @@ from app.entitlements import (
     enforce_email_verified,
     enforce_ip_quota,
 )
-from app.services.document_service import save_upload, extract_text, chunk_text, clean_extracted_text
+from app.services.document_service import save_upload, extract_text, chunk_text, clean_extracted_text, get_pdf_page_count
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
@@ -314,7 +314,12 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         # Offload blocking PDF/DOCX parsing to a thread so the event loop stays free.
         raw_text = await run_in_threadpool(extract_text, file_path, content_type, on_figures)
         step_times['extract'] = time.perf_counter() - t0
-        logger.info(f"[{doc_id}] Extracted {len(raw_text)} chars in {step_times['extract']:.2f}s")
+        # Real page count (PDFs) for honest "too long" messaging downstream.
+        page_count = await run_in_threadpool(get_pdf_page_count, file_path, content_type)
+        logger.info(
+            f"[{doc_id}] Extracted {len(raw_text)} chars"
+            f"{f' from {page_count} pages' if page_count else ''} in {step_times['extract']:.2f}s"
+        )
 
         current_step = "chunking and storing text"
         t0 = time.perf_counter()
@@ -335,7 +340,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
         _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
         # The Groq client is synchronous/blocking — run it off the event loop.
-        script = await run_in_threadpool(generate_podcast_script, raw_text)
+        script = await run_in_threadpool(generate_podcast_script, raw_text, page_count)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 

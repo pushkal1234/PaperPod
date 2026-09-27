@@ -56,16 +56,22 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = int(os.getenv("MAX_UPLOAD_MB", "25"))
     # Boundary between the "send the WHOLE doc straight to Gemini" lane and the
     # lossy "summarize first" lane. Gemini 2.5 Flash has a ~1M-token context and
-    # 250K TPM, so even a doc at MAX_DOC_CHARS_HARD (~270K chars ≈ 77K tokens)
-    # fits in ONE direct call. The binding limit on podcast length is OUTPUT
-    # (~8K tokens ≈ 132 lines), not input — so summarizing a big doc first only
-    # THROWS AWAY material (a ~10K-char summary sustains ~50 lines) without ever
-    # enabling a longer episode. We therefore set this EQUAL to the hard cap:
-    # any doc we accept is podcasted from its FULL text in one Gemini pass. The
-    # lossy chunked-summary lane now only runs as a fallback when Gemini is not
-    # configured at all. Lower this only if direct calls start costing too much.
-    MAX_DOC_CHARS: int = int(os.getenv("MAX_DOC_CHARS", "270000"))
-    MAX_DOC_CHARS_HARD: int = int(os.getenv("MAX_DOC_CHARS_HARD", "270000"))
+    # 250K TPM, so even a doc at MAX_DOC_CHARS_HARD (~500K chars ≈ 143K tokens)
+    # fits comfortably in ONE direct call. The binding limit on podcast length is
+    # OUTPUT (~12K tokens ≈ 200 lines), not input — so summarizing a big doc
+    # first only THROWS AWAY material (a ~10K-char summary sustains ~50 lines)
+    # without ever enabling a longer episode. We therefore set this EQUAL to the
+    # hard cap: any doc we accept is podcasted from its FULL text in one Gemini
+    # pass. The lossy chunked-summary lane now only runs as a fallback when
+    # Gemini is not configured at all. Lower this only if direct calls start
+    # costing too much.
+    #
+    # NOTE: this is a CHARACTER cap, not a page cap. Dense docs (magazines,
+    # journals, legal acts) pack ~3,000-3,700 chars/page, so a 76-page magazine
+    # is ~270K chars. The old 270K cap rejected exactly those real-world docs.
+    # 500K chars ≈ ~140 dense pages / ~280 sparse pages, still one Gemini call.
+    MAX_DOC_CHARS: int = int(os.getenv("MAX_DOC_CHARS", "500000"))
+    MAX_DOC_CHARS_HARD: int = int(os.getenv("MAX_DOC_CHARS_HARD", "500000"))
     # PDF vision: describe diagrams/charts/figures with Gemini so they're narrated
     # in the podcast (PyPDF2 reads text only). Set to "0" to disable.
     PDF_VISION_EXTRACTION: bool = os.getenv("PDF_VISION_EXTRACTION", "1") not in ("0", "false", "False")
@@ -108,7 +114,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "21")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "22")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

@@ -50,9 +50,14 @@ def _trip_groq_cooldown(reason: str = "") -> None:
 MAX_INPUT_CHARS = 6000
 # Large docs: summarize first, then podcast from summary
 LARGE_DOC_THRESHOLD = 15000
-# Rough extracted-text-per-page estimate, used only to phrase the "too long"
-# message in human terms (a 1-page PDF in our tests ≈ 1760 chars).
-CHARS_PER_PAGE = 1800
+# Rough extracted-text-per-page estimate, used ONLY as a FALLBACK to phrase the
+# "too long" message when the real page count isn't available (pasted text, or a
+# format without pages). PDFs pass their true page_count into
+# generate_podcast_script, which is always preferred. The old value (1800) was
+# tuned on a sparse test PDF and roughly DOUBLED the reported page number for
+# dense real-world docs (magazines, journals, legal acts run ~3,000-3,700
+# chars/page), so a 76-page magazine was reported as "~156 pages".
+CHARS_PER_PAGE = 3000
 MAX_SUMMARY_CHARS = 10000
 # Groq free tier meters input+output tokens in a rolling 1-minute window (8K TPM).
 # Two Groq calls for one podcast reliably trip that window, so we only send a
@@ -947,7 +952,9 @@ Be thorough but tight — aim for roughly 1200-2000 words.
 Do NOT invent anything that is not in the document."""
 
 
-def _summarize_full_document_gemini(document_text: str, original_length: int) -> str:
+def _summarize_full_document_gemini(
+    document_text: str, original_length: int, chars_per_page: float | None = None
+) -> str:
     """Condense an entire long document in a SINGLE Gemini call.
 
     Gemini's ~1M-token context fits large PDFs whole, so one call replaces the
@@ -956,8 +963,9 @@ def _summarize_full_document_gemini(document_text: str, original_length: int) ->
     or fails, raise a clear length-specific error so the user knows to shorten
     the document rather than seeing a generic failure.
     """
-    approx_pages = max(1, round(original_length / CHARS_PER_PAGE))
-    soft_pages = max(1, round(settings.MAX_DOC_CHARS / CHARS_PER_PAGE))
+    cpp = chars_per_page if (chars_per_page and chars_per_page > 0) else float(CHARS_PER_PAGE)
+    approx_pages = max(1, round(original_length / cpp))
+    soft_pages = max(1, round(settings.MAX_DOC_CHARS / cpp))
 
     if not settings.GOOGLE_API_KEY or not settings.LLM_FALLBACK_MODEL:
         raise RuntimeError(
@@ -1065,8 +1073,12 @@ def _strip_trailing_signoff(script: str) -> str:
     return "\n".join(lines).rstrip()
 
 
-def generate_podcast_script(document_text: str) -> str:
+def generate_podcast_script(document_text: str, page_count: int | None = None) -> str:
     """Generate a podcast-style dialogue from document text.
+
+    ``page_count`` is the document's REAL page count when known (PDFs). It is
+    used only for honest "too long" messaging; the char-based ``CHARS_PER_PAGE``
+    estimate is the fallback for pasted text / formats without pages.
 
     Provider routing is size-based so we make AT MOST ONE Groq call per podcast
     (Groq's 8K TPM meters input+output in a rolling minute, so two sequential
@@ -1102,13 +1114,20 @@ def generate_podcast_script(document_text: str) -> str:
 
     original_length = len(document_text)
 
-    # Hard guard: absurdly long PDFs (beyond ~150 pages) are rejected up-front
-    # with a clear, length-specific message and zero API calls — even a single
-    # summary + the podcast format can't do them justice. Documents between the
-    # soft and hard caps are handled below via a single-pass Gemini summary.
+    # Prefer the document's REAL chars-per-page (from its actual page count) so
+    # the "~N pages" messaging is honest; fall back to the static estimate only
+    # when the page count is unknown (pasted text / non-paged formats).
+    if page_count and page_count > 0:
+        chars_per_page = max(1.0, original_length / page_count)
+    else:
+        chars_per_page = float(CHARS_PER_PAGE)
+
+    # Hard guard: absurdly long docs are rejected up-front with a clear,
+    # length-specific message and zero API calls — even a single summary + the
+    # podcast format can't do them justice.
     if original_length > settings.MAX_DOC_CHARS_HARD:
-        approx_pages = max(1, round(original_length / CHARS_PER_PAGE))
-        limit_pages = max(1, round(settings.MAX_DOC_CHARS_HARD / CHARS_PER_PAGE))
+        approx_pages = page_count if (page_count and page_count > 0) else max(1, round(original_length / chars_per_page))
+        limit_pages = max(1, round(settings.MAX_DOC_CHARS_HARD / chars_per_page))
         logger.warning(
             f"[LLM] Document too long: {original_length} chars (~{approx_pages} pages) "
             f"exceeds hard cap {settings.MAX_DOC_CHARS_HARD} (~{limit_pages} pages) — rejecting"
@@ -1198,7 +1217,7 @@ def generate_podcast_script(document_text: str) -> str:
     if lane == "gemini_summarize":
         # One Gemini pass digests the whole doc; the short summary then goes to
         # Groq (cold window, fits 8K TPM) so we spend only ONE Gemini request.
-        source_text = _summarize_full_document_gemini(document_text, original_length)
+        source_text = _summarize_full_document_gemini(document_text, original_length, chars_per_page)
         prefer_gemini = False
     elif lane == "groq_summarize":
         # No Gemini configured: fall back to Groq chunked summary, then a single

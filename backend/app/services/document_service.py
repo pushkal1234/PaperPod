@@ -133,6 +133,23 @@ def compact_document_text(text: str) -> str:
         return text
 
 
+def get_pdf_page_count(file_path: str, content_type: str) -> int | None:
+    """Return the real page count for a PDF, else None.
+
+    Used so the "document too long" message reports the document's ACTUAL page
+    count instead of a char-derived estimate (which roughly doubled the number
+    for dense docs). Never raises — returns None on any error / non-PDF.
+    """
+    if not (content_type == "application/pdf" or file_path.endswith(".pdf")):
+        return None
+    try:
+        with fitz.open(file_path) as doc:
+            return doc.page_count
+    except Exception as e:
+        logger.warning(f"[doc] page-count probe failed: {e}")
+        return None
+
+
 def extract_text(file_path: str, content_type: str, on_figures=None) -> str:
     """Extract text from PDF, DOCX, or TXT files.
 
