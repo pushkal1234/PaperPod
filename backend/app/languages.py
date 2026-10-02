@@ -1,0 +1,132 @@
+"""Multilingual podcast support: language detection + per-language profiles.
+
+The podcast prompt historically never specified a language, so the model always
+wrote the dialogue in English — even for a German/French/Greek document — and the
+TTS then read English audio. This module lets the pipeline:
+
+  1. detect the uploaded document's language, and
+  2. for SUPPORTED languages, generate the script IN that language, voice it with
+     NATIVE (correctly-accented) TTS voices, and use a localized deterministic
+     outro.
+
+Any language NOT in SUPPORTED falls back to English end-to-end (script + voices +
+outro) — the current, safe behaviour. Adding a new language is just one entry in
+LANGUAGE_PROFILES (name + two native voices + two outro lines).
+"""
+
+import logging
+
+from app.config import settings
+
+logger = logging.getLogger("paperpod")
+
+# Native-voice languages. Host = male voice, Guest = female voice, matching the
+# English default casting (Andrew/Ava). German & French use Microsoft's
+# native-locale MULTILINGUAL neural voices (natively accented, high quality);
+# Greek uses its standard native neural voices. The outro lines are the localized
+# equivalents of the English "Guest takeaway -> Host goodbye" close.
+LANGUAGE_PROFILES: dict[str, dict] = {
+    "de": {
+        "name": "German",
+        "host_voice": "de-DE-FlorianMultilingualNeural",
+        "guest_voice": "de-DE-SeraphinaMultilingualNeural",
+        "host_signoff": "Host: Danke fürs Zuhören – bis zum nächsten Mal!",
+        "fallback_takeaway": (
+            "Guest: Entscheidend ist, wie diese Ideen zusammenhängen und was sie "
+            "in der Praxis bedeuten."
+        ),
+    },
+    "fr": {
+        "name": "French",
+        "host_voice": "fr-FR-RemyMultilingualNeural",
+        "guest_voice": "fr-FR-VivienneMultilingualNeural",
+        "host_signoff": "Host: Merci de votre écoute – à la prochaine !",
+        "fallback_takeaway": (
+            "Guest: L'essentiel à retenir, c'est la façon dont ces idées "
+            "s'articulent et ce qu'elles signifient en pratique."
+        ),
+    },
+    "el": {
+        "name": "Greek",
+        "host_voice": "el-GR-NestorasNeural",
+        "guest_voice": "el-GR-AthinaNeural",
+        "host_signoff": "Host: Ευχαριστούμε που μας ακούσατε – τα λέμε στο επόμενο!",
+        "fallback_takeaway": (
+            "Guest: Το βασικό που αξίζει να κρατήσουμε είναι πώς συνδέονται αυτές "
+            "οι ιδέες και τι σημαίνουν στην πράξη."
+        ),
+    },
+    "es": {
+        "name": "Spanish",
+        "host_voice": "es-ES-AlvaroNeural",
+        "guest_voice": "es-ES-ElviraNeural",
+        "host_signoff": "Host: Gracias por escuchar, ¡hasta la próxima!",
+        "fallback_takeaway": (
+            "Guest: Lo importante es cómo se conectan estas ideas y lo que "
+            "significan en la práctica."
+        ),
+    },
+}
+
+# Keep the English "Host:"/"Guest:" labels literal in EVERY language — they are
+# parsing tags (tts_service.parse_dialogue matches ^(Host|Guest):), not spoken
+# text. If the model translates them, parsing yields zero lines and the podcast
+# fails. Each non-English profile's prompt instruction enforces this.
+
+
+def _english_profile() -> dict:
+    """English / fallback profile. Voices come from settings so env overrides and
+    the existing Ava/Andrew multilingual casting still apply."""
+    return {
+        "name": "English",
+        "host_voice": settings.TTS_VOICE_HOST,
+        "guest_voice": settings.TTS_VOICE_GUEST,
+        "host_signoff": "Host: Thanks for listening — see you in the next one!",
+        "fallback_takeaway": (
+            "Guest: The thing to hold onto is how these ideas connect and what "
+            "they mean in practice."
+        ),
+    }
+
+
+def get_language_profile(code: str | None) -> dict:
+    """Return the profile for a language code, falling back to English.
+
+    The returned dict always has: name, host_voice, guest_voice, host_signoff,
+    fallback_takeaway, and is_english.
+    """
+    profile = dict(LANGUAGE_PROFILES.get((code or "").lower(), _english_profile()))
+    profile["is_english"] = profile["name"] == "English"
+    return profile
+
+
+def detect_language(text: str) -> str:
+    """Detect a document's base language code (e.g. 'de', 'fr', 'el', 'en').
+
+    Returns a code only when we're confident AND we support it natively; anything
+    else returns 'en' so the pipeline stays on the safe English path. Deterministic
+    (seeded) so the same document always resolves to the same language — important
+    because the result feeds the dedup content hash via GENERATION_VERSION.
+    """
+    # Feature flag: when multilingual is OFF, every document stays on the English
+    # path (script, voices, outro) — the pre-feature behaviour.
+    if not settings.MULTILINGUAL_ENABLED:
+        return "en"
+
+    sample = (text or "").strip()
+    if len(sample) < 30:
+        return "en"
+    try:
+        from langdetect import detect, DetectorFactory
+
+        DetectorFactory.seed = 0  # deterministic across runs
+        code = detect(sample[:3000]).split("-")[0].lower()
+    except Exception as e:
+        logger.warning(f"[lang] detection failed ({e}); defaulting to English")
+        return "en"
+
+    if code in LANGUAGE_PROFILES:
+        logger.info(f"[lang] detected supported language '{code}' — native podcast")
+        return code
+    logger.info(f"[lang] detected '{code}' (no native support) — using English")
+    return "en"

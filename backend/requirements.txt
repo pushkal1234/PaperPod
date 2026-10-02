@@ -21,6 +21,8 @@ google-genai>=1.0.0
 # STT: Groq Whisper, TTS: edge-tts (free, conversational voices)
 groq==0.13.0
 edge-tts>=7.2.7
+# Language detection for multilingual podcast generation (pure-Python, tiny)
+langdetect==1.0.9
 # Using lightweight in-memory text search (no heavy ML models to download)
 pydub==0.25.1
 audioop-lts>=0.2.1

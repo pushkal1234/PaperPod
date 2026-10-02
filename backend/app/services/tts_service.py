@@ -145,13 +145,21 @@ async def _synthesize_one(
         )
 
 
-async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, list[dict]]:
+async def generate_podcast_audio(
+    script: str, doc_id: str, host_voice: str | None = None, guest_voice: str | None = None
+) -> tuple[str, float, list[dict]]:
     """Convert dialogue script to a single podcast MP3 file.
 
     TTS calls run in parallel (up to TTS_CONCURRENCY at once) for speed.
     Returns (file_path, duration_seconds, transcript_segments).
     Each segment: {speaker, text, start_seconds, end_seconds}.
+
+    ``host_voice``/``guest_voice`` override the default English casting so a
+    non-English script is read by native-accent voices (see app.languages). When
+    omitted they fall back to the configured English voices.
     """
+    host_voice = host_voice or settings.TTS_VOICE_HOST
+    guest_voice = guest_voice or settings.TTS_VOICE_GUEST
     dialogue = parse_dialogue(script)
     if not dialogue:
         raise ValueError("Could not parse dialogue from script")
@@ -179,7 +187,7 @@ async def generate_podcast_audio(script: str, doc_id: str) -> tuple[str, float, 
 
     for i, entry in enumerate(dialogue):
         is_host = entry["speaker"] == "Host"
-        voice = settings.TTS_VOICE_HOST if is_host else settings.TTS_VOICE_GUEST
+        voice = host_voice if is_host else guest_voice
         rate = settings.TTS_RATE_HOST if is_host else settings.TTS_RATE_GUEST
         pitch = settings.TTS_PITCH_HOST if is_host else settings.TTS_PITCH_GUEST
         clip_path = os.path.join(temp_dir, f"clip_{i:04d}.mp3")

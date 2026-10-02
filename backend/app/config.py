@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     # budget or when Gemini is unavailable.
     QA_FULL_DOC_MAX_CHARS: int = int(os.getenv("QA_FULL_DOC_MAX_CHARS", "300000"))
     QA_RETRIEVAL_TOP_K: int = int(os.getenv("QA_RETRIEVAL_TOP_K", "25"))
+    # Multilingual podcasts: generate the script + audio in the document's detected
+    # language (German/French/Greek/Spanish with native voices; other languages fall
+    # back to English). Behind a flag so it can be toggled from Railway with no
+    # redeploy. Default OFF — set MULTILINGUAL_ENABLED=1 to activate. Flipping it is
+    # folded into the podcast dedup hash (see _content_hash), so turning it ON makes
+    # already-uploaded foreign docs regenerate in their language on re-upload.
+    MULTILINGUAL_ENABLED: bool = os.getenv("MULTILINGUAL_ENABLED", "0") not in ("0", "false", "False")
     # PDF vision: describe diagrams/charts/figures with Gemini so they're narrated
     # in the podcast (PyPDF2 reads text only). Set to "0" to disable.
     PDF_VISION_EXTRACTION: bool = os.getenv("PDF_VISION_EXTRACTION", "1") not in ("0", "false", "False")
@@ -123,7 +130,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "23")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "24")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

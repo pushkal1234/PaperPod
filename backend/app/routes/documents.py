@@ -26,6 +26,7 @@ from app.services.document_service import save_upload, extract_text, chunk_text,
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
+from app.languages import detect_language, get_language_profile
 from app.services.email_service import send_upload_alert_email, send_generation_alert_email
 from app.mem_utils import trim_memory
 
@@ -190,7 +191,13 @@ def _content_hash(data: bytes) -> str:
     the previous pipeline and regenerate, instead of serving an old, buggy
     podcast. Old rows keep their previous hash and simply never match again.
     """
-    return hashlib.sha256(f"{settings.GENERATION_VERSION}:".encode() + data).hexdigest()
+    # Fold the multilingual flag in ONLY when it's on, so turning it ON changes the
+    # hash (foreign docs regenerate in their language on re-upload) while leaving the
+    # OFF state byte-identical to the plain versioned hash (no needless regens).
+    salt = f"{settings.GENERATION_VERSION}:"
+    if settings.MULTILINGUAL_ENABLED:
+        salt += "ml:"
+    return hashlib.sha256(salt.encode() + data).hexdigest()
 
 
 async def _find_reusable_document(
@@ -335,12 +342,17 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
                 doc.num_chunks = len(chunks)
                 await session.commit()
 
+        # Detect the document's language so the script is written in it and voiced
+        # with native-accent TTS (English for unsupported languages).
+        lang_code = detect_language(raw_text)
+        lang_profile = get_language_profile(lang_code)
+
         current_step = "generating podcast script"
         t0 = time.perf_counter()
-        logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
+        logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM ({lang_profile['name']})...")
         _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
         # The Groq client is synchronous/blocking — run it off the event loop.
-        script = await run_in_threadpool(generate_podcast_script, raw_text, page_count)
+        script = await run_in_threadpool(generate_podcast_script, raw_text, page_count, lang_profile)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 
@@ -348,7 +360,9 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         _set_stage(doc_id, _STAGE_SYNTHESIZING)
-        audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
+        audio_path, duration, transcript_segments = await generate_podcast_audio(
+            script, doc_id, lang_profile["host_voice"], lang_profile["guest_voice"]
+        )
         step_times['tts'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s at {audio_path} in {step_times['tts']:.2f}s")
 
@@ -655,12 +669,16 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
                 doc.num_chunks = len(chunks)
                 await session.commit()
 
+        # Detect the pasted text's language (native script + voices when supported).
+        lang_code = detect_language(raw_text)
+        lang_profile = get_language_profile(lang_code)
+
         current_step = "generating podcast script"
         t0 = time.perf_counter()
-        logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM...")
+        logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM ({lang_profile['name']})...")
         _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
         # The Groq client is synchronous/blocking — run it off the event loop.
-        script = await run_in_threadpool(generate_podcast_script, raw_text)
+        script = await run_in_threadpool(generate_podcast_script, raw_text, None, lang_profile)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
 
@@ -668,7 +686,9 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
         t0 = time.perf_counter()
         logger.info(f"[{doc_id}] Step 4/4: Synthesizing audio (TTS)...")
         _set_stage(doc_id, _STAGE_SYNTHESIZING)
-        audio_path, duration, transcript_segments = await generate_podcast_audio(script, doc_id)
+        audio_path, duration, transcript_segments = await generate_podcast_audio(
+            script, doc_id, lang_profile["host_voice"], lang_profile["guest_voice"]
+        )
         step_times['tts'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Audio ready: {duration:.1f}s in {step_times['tts']:.2f}s")
 
