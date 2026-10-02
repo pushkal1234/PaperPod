@@ -254,7 +254,7 @@ export default function QAPanel({ docId }) {
             }
             className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold py-2 px-3 rounded-lg border transition-all ${
               searchMode === 'hybrid'
-                ? 'bg-accent-50 border-accent-300 text-accent-700'
+                ? 'bg-brand-50 border-brand-300 text-brand-700'
                 : 'bg-paper-50 border-paper-300 text-stone-400 hover:text-stone-600'
             } ${!webSearchAvailable ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
@@ -263,7 +263,7 @@ export default function QAPanel({ docId }) {
           </button>
         </div>
         {searchMode === 'hybrid' && (
-          <p className="text-[10px] text-accent-600/90 mt-2">
+          <p className="text-[10px] text-brand-600/90 mt-2">
             Searches the web, then answers using your document + web results.
           </p>
         )}
@@ -291,7 +291,7 @@ export default function QAPanel({ docId }) {
             `}
             >
               {msg.type === 'answer' && msg.searchMode === 'hybrid' && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-accent-700 bg-accent-100 px-2 py-0.5 rounded-full mb-2">
+                <span className="inline-flex items-center gap-1 text-[10px] text-brand-700 bg-brand-100 px-2 py-0.5 rounded-full mb-2">
                   <Globe className="w-3 h-3" />
                   Document + Web
                 </span>

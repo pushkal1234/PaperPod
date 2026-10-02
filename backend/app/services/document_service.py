@@ -143,6 +143,9 @@ def get_pdf_page_count(file_path: str, content_type: str) -> int | None:
     if not (content_type == "application/pdf" or file_path.endswith(".pdf")):
         return None
     try:
+        # fitz (pymupdf) is imported lazily inside _extract_pdf, not at module
+        # scope, so import it here too rather than relying on a global.
+        import pymupdf as fitz
         with fitz.open(file_path) as doc:
             return doc.page_count
     except Exception as e:

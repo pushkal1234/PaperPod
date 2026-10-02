@@ -88,10 +88,19 @@ MIN_VIABLE_DIALOGUE_LINES = 6
 # short scripts (< this ratio) trigger the (Gemini-routed) retry.
 SHORT_SCRIPT_ACCEPT_RATIO = 0.85
 # When a script comes back severely short (< SHORT_SCRIPT_ACCEPT_RATIO of target)
-# we retry with an EXPAND instruction. Bound the extra attempts so a stubborn
-# document can't burn the scarce Gemini daily quota: at most this many extra
-# calls, and we stop early the moment an attempt fails to grow the script.
+# we retry with an EXPAND instruction, up to this many extra attempts. We allow
+# TWO because the RETRY_GOOD_ENOUGH_RATIO cap below already prevents the wasteful
+# case (a retry that reaches 75%+ stops immediately), so a 2nd attempt now ONLY
+# fires when the first expand is still badly short (<75% of target) — exactly the
+# case where another try is genuinely warranted. We also stop the moment an
+# attempt fails to grow the script.
 MAX_LENGTH_RETRIES = 2
+# Once an expand reaches this fraction of target, accept it — chasing the last
+# few lines just makes the model pad a document that has no more real content,
+# which is exactly what produced over-long, repetitive episodes. This cap is what
+# makes a 2-retry budget safe: it kills diminishing-returns retries (e.g. the
+# 76 -> 78 line case) while keeping a real second attempt for genuinely-short scripts.
+RETRY_GOOD_ENOUGH_RATIO = 0.75
 # Overshoot ceiling behaviour for SMALL docs. The generous multiplicative factor
 # (HEAVY_OVERSHOOT_CEILING_FACTOR, 1.75x) exists to preserve rich content in LONG
 # episodes, but on a small base it just lets padding nearly DOUBLE the episode
@@ -156,58 +165,37 @@ def _is_procedural(document_text: str) -> bool:
 # article in the middle" feedback). We detect these so the prompt can switch to
 # a breadth-first, cover-every-article DIGEST instead of a single deep dive.
 _ANTHOLOGY_MIN_CHARS = 25000
+# Masthead / "what's in this issue" language that magazines & newsletters have but
+# normal reports, letters, and papers do NOT. These are the decisive signal.
 _ANTHOLOGY_TOC_MARKERS = (
-    "in this issue", "table of contents", "inside this issue", "in this edition",
-    "in this month", "from the editor", "editor's note", "editors note",
-    "editorial", "masthead", "features", "departments", "contents",
+    "in this issue", "inside this issue", "in this edition", "in this month's",
+    "from the editor", "editor's note", "editors note", "editorial note",
+    "feature articles", "news & views", "news and views",
 )
+# Magazine/periodical terms. Kept STRONG only — the old list included "no.",
+# "vol.", "issue ", which match ordinary docs ("Flat No.", "CIN No.") and caused
+# false positives (an offer letter matched "no." and got digest mode).
 _ANTHOLOGY_MAGAZINE_MARKERS = (
-    "magazine", "issn", "quarterly", "newsletter", "bulletin", "gazette",
-    "vol.", "volume ", "issue ", "no.",
+    "magazine", "issn", "quarterly magazine", "newsletter", "gazette",
+    "subscribe to", "advertise with", "editorial board",
 )
-# "By Firstname Lastname" bylines — the strongest independent-article signal.
+# "By Firstname Lastname" bylines. On their own these are NOT sufficient — formal
+# docs contain "signed by …", "approved by …", "report to …", so bylines only
+# count when combined with genuine magazine language below.
 _ANTHOLOGY_BYLINE_RE = re.compile(
     r"(?im)^\s*(?:by|written by|words by|story by)\s+[A-Z][A-Za-z.'\-]+\s+[A-Z][A-Za-z.'\-]+"
 )
 
 
-def _count_heading_lines(text: str) -> int:
-    """Count short, title-like lines (article/section headlines) in the text.
-
-    A headline looks like a short line of a few words, mostly Title Case or ALL
-    CAPS, that does NOT end like a sentence. This is deliberately conservative to
-    avoid counting ordinary body sentences.
-    """
-    count = 0
-    for raw in text.split("\n"):
-        line = raw.strip()
-        if not (8 <= len(line) <= 80):
-            continue
-        if line.endswith((".", ",", ";", ":")):
-            continue
-        words = line.split()
-        if not (2 <= len(words) <= 12):
-            continue
-        alpha_words = [w for w in words if any(c.isalpha() for c in w)]
-        if not alpha_words:
-            continue
-        all_caps = line == line.upper() and any(c.isalpha() for c in line)
-        # "Title Case": most words start uppercase (ignore short stopwords).
-        significant = [w for w in alpha_words if len(w) > 3]
-        title_case = significant and sum(
-            1 for w in significant if w[:1].isupper()
-        ) >= max(1, int(0.7 * len(significant)))
-        if all_caps or title_case:
-            count += 1
-    return count
-
-
 def _is_anthology(document_text: str) -> bool:
-    """Detect a multi-article collection (magazine/journal/newsletter/proceedings).
+    """Detect a multi-article collection (magazine/journal issue/newsletter).
 
-    Conservative on purpose: only fires for LARGE docs that also show several
-    independent-article signals, so a normal long report or single research
-    paper (which legitimately wants a deep dive) is never misclassified.
+    Deliberately keyed on magazine/masthead LANGUAGE, not on counting short
+    "heading-like" lines — PDF extraction produces hundreds of short lines
+    (addresses, labels, signature blocks) that the old heading heuristic
+    miscounted as article headlines, so an offer letter scored 355 "headings"
+    and was wrongly treated as a magazine. A normal report, letter, contract, or
+    single paper has none of the masthead language below, so it never qualifies.
     """
     if not document_text or len(document_text) < _ANTHOLOGY_MIN_CHARS:
         return False
@@ -215,18 +203,20 @@ def _is_anthology(document_text: str) -> bool:
     byline_count = len(_ANTHOLOGY_BYLINE_RE.findall(document_text))
     toc_hits = sum(1 for m in _ANTHOLOGY_TOC_MARKERS if m in low)
     mag_hits = sum(1 for m in _ANTHOLOGY_MAGAZINE_MARKERS if m in low)
-    headings = _count_heading_lines(document_text)
 
-    # Strong on their own: several distinct bylines, or clear contents/masthead
-    # language. Otherwise require magazine language backed by many headlines.
-    strong = byline_count >= 3 or toc_hits >= 2
-    supportive = headings >= 10 and (mag_hits >= 1 or toc_hits >= 1 or byline_count >= 2)
-    result = strong or supportive
+    # Decisive: real masthead/contents language ("in this issue", "from the
+    # editor"). Secondary: an explicit periodical term (magazine/ISSN/...) backed
+    # by several independent bylines. Bylines or headings ALONE never qualify.
+    result = toc_hits >= 1 or (mag_hits >= 1 and byline_count >= 3)
     if result:
         logger.info(
             f"[LLM] Anthology detected (chars={len(document_text)}, bylines={byline_count}, "
-            f"toc_markers={toc_hits}, mag_markers={mag_hits}, headings={headings}) "
-            f"— using breadth-first digest coverage"
+            f"toc_markers={toc_hits}, mag_markers={mag_hits}) — using breadth-first digest coverage"
+        )
+    else:
+        logger.info(
+            f"[LLM] Not an anthology (chars={len(document_text)}, bylines={byline_count}, "
+            f"toc_markers={toc_hits}, mag_markers={mag_hits})"
         )
     return result
 
@@ -293,11 +283,28 @@ def _compute_content_density(text: str) -> float:
 
     # Normalize each metric to a 0-1 score relative to typical documents
     vocab_score = max(0.0, min(1.0, (vocab_richness - 0.20) / 0.25))
-    wps_score = max(0.0, min(1.0, (words_per_sentence - 8) / 17))
     struct_score = max(0.0, min(1.0, (structural_density - 2.0) / 10.0))
 
-    # Weighted composite; scale range 0.7x (sparse) to 1.3x (dense)
-    density = 0.35 * vocab_score + 0.35 * wps_score + 0.30 * struct_score
+    # Words-per-sentence as an INVERTED-U, not a monotonic reward. Natural,
+    # explainable prose (~12-24 wps) is the sweet spot for a rich conversation.
+    # BOTH extremes score low: choppy fragments (< 8 wps) AND very long run-on /
+    # legalese sentences (> ~24 wps). The old monotonic version let legal
+    # boilerplate (an offer letter at 34.7 wps) MAX this out and inflate the
+    # target — the model then couldn't fill the inflated length and undershot.
+    if words_per_sentence <= 8:
+        wps_score = 0.0
+    elif words_per_sentence <= 12:
+        wps_score = (words_per_sentence - 8) / 4.0            # 8->12 : ramp 0->1
+    elif words_per_sentence <= 24:
+        wps_score = 1.0                                       # natural prose band
+    else:
+        wps_score = max(0.1, 1.0 - (words_per_sentence - 24) / 16.0)  # legalese: decline
+
+    # Weighted composite; scale range 0.7x (sparse) to 1.3x (dense). Structure
+    # (lists, steps, headings = genuinely distinct discussable points) now carries
+    # the most weight, so a doc that's merely long-winded can't score "rich" on
+    # sentence length alone.
+    density = 0.30 * vocab_score + 0.30 * wps_score + 0.40 * struct_score
     density_factor = round(0.7 + 0.6 * density, 2)
     logger.info(
         f"[LLM] Content density: vocab={vocab_score:.2f} wps={wps_score:.2f} "
@@ -569,7 +576,8 @@ Rules:
 3. Briefly distinguish what comes from the document vs the web when both are used.
 4. Only cite URLs that appear in the web results section — do not invent links.
 5. Be concise and conversational — suitable for spoken audio.
-6. Use plain text only — NO markdown (no **bold**, no bullets, no headers). Write as if speaking aloud."""
+6. Use plain text only — NO markdown (no **bold**, no bullets, no headers). Write as if speaking aloud.
+7. KEEP IT SHORT: 2-4 sentences, roughly 90 words or fewer. The answer is read aloud by a voice, so a long answer means a long, slow audio clip. Lead with the direct answer; add at most one sentence of supporting detail."""
 
 
 def normalize_answer_text(text: str) -> str:
@@ -1394,6 +1402,15 @@ def generate_podcast_script(document_text: str, page_count: int | None = None) -
                 full_script = retry_script
                 dialogue_lines = retry_lines
                 logger.info(f"[LLM] Expand retry {attempt} produced {len(dialogue_lines)} lines")
+                # Good enough: once we're within RETRY_GOOD_ENOUGH_RATIO of target,
+                # stop. The remaining gap is diminishing returns and chasing it just
+                # makes the model pad a document that has no more real content.
+                if len(dialogue_lines) >= RETRY_GOOD_ENOUGH_RATIO * target_lines:
+                    logger.info(
+                        f"[LLM] Expand retry {attempt} reached {len(dialogue_lines)} lines "
+                        f"(>= {RETRY_GOOD_ENOUGH_RATIO:.0%} of target {target_lines}) — accepting, no further retries"
+                    )
+                    break
             else:
                 logger.info(
                     f"[LLM] Expand retry {attempt} did not grow the script "
@@ -1566,11 +1583,14 @@ def answer_question_hybrid(
                 "content": (
                     f"DOCUMENT CONTEXT:\n\n{doc or '(None — unrelated or insufficient for this question)'}\n\n---\n\n"
                     f"WEB SEARCH RESULTS:\n\n{web_block}\n\n---\n\n"
-                    f"QUESTION: {question}"
+                    f"QUESTION: {question}\n\nAnswer in 2-4 short sentences (~90 words max) — it will be read aloud."
                 ),
             },
         ],
         temperature=0.2,
-        max_tokens=1024,
+        # Cap the length: this answer is spoken via TTS, and TTS time scales with
+        # length. A 1,500-char answer took ~53s to synthesize; ~90 words keeps it
+        # to a few seconds. The prompt also enforces brevity.
+        max_tokens=400,
     )
     return normalize_answer_text(raw)
