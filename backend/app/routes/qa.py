@@ -8,6 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db, Document, QASession, _utcnow
 from app.services.stt_service import transcribe_audio
 from app.services.vector_service import query_chunks, store_chunks
@@ -73,9 +74,13 @@ async def ask_question(
     if not question_text:
         raise HTTPException(status_code=400, detail="No question provided (text or audio)")
 
-    # Retrieve context
+    # Retrieve context. top_k is only the FALLBACK path now (used when the doc is
+    # too large to fit whole, or Gemini is unavailable) — the preferred path in
+    # answer_question answers from the entire document. We still retrieve so that
+    # fallback has good material.
     t0 = time.perf_counter()
-    context_chunks = await run_in_threadpool(query_chunks, question_text, doc_id, 5)
+    top_k = settings.QA_RETRIEVAL_TOP_K
+    context_chunks = await run_in_threadpool(query_chunks, question_text, doc_id, top_k)
     # The chunk index lives in process memory and is lost on restart/redeploy
     # (and isn't shared across workers). On a miss, rebuild it from the
     # persisted raw_text so Q&A keeps working instead of silently answering
@@ -83,7 +88,7 @@ async def ask_question(
     if not context_chunks and doc.raw_text:
         rebuilt = await run_in_threadpool(chunk_text, doc.raw_text)
         store_chunks(doc_id, rebuilt)
-        context_chunks = await run_in_threadpool(query_chunks, question_text, doc_id, 5)
+        context_chunks = await run_in_threadpool(query_chunks, question_text, doc_id, top_k)
         logger.info(f"[QA][{doc_id}] Rebuilt {len(rebuilt)} chunks from persisted text")
     step_times['retrieve'] = time.perf_counter() - t0
 
@@ -108,13 +113,13 @@ async def ask_question(
                 citations = result.get("citations") or []
             except Exception as e:
                 logger.warning(f"[QA][{doc_id}] Web search failed, falling back to document-only: {e}")
-                answer_text = await run_in_threadpool(answer_question, question_text, context_chunks)
+                answer_text = await run_in_threadpool(answer_question, question_text, context_chunks, doc.raw_text)
                 mode = "document"
                 citations = [{"note": "Web search unavailable, answered from document only."}]
         else:
             if mode == "hybrid" and not serpapi_service.is_configured():
                 mode = "document"
-            answer_text = await run_in_threadpool(answer_question, question_text, context_chunks)
+            answer_text = await run_in_threadpool(answer_question, question_text, context_chunks, doc.raw_text)
     except RuntimeError as e:
         raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
     except Exception as e:

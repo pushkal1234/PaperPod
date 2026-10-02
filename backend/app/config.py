@@ -72,6 +72,15 @@ class Settings(BaseSettings):
     # 500K chars ≈ ~140 dense pages / ~280 sparse pages, still one Gemini call.
     MAX_DOC_CHARS: int = int(os.getenv("MAX_DOC_CHARS", "500000"))
     MAX_DOC_CHARS_HARD: int = int(os.getenv("MAX_DOC_CHARS_HARD", "500000"))
+    # Q&A context. The old Q&A retrieved only 5 keyword-matched chunks (~2 pages
+    # of a dense doc), so on a big magazine it both saw too little and often
+    # grabbed the wrong passages ("it could only see 5 pages" + wrong answers).
+    # Now, when the whole document fits QA_FULL_DOC_MAX_CHARS, we answer from the
+    # ENTIRE document via Gemini's large context — no retrieval guesswork.
+    # Retrieval (with a much higher top-k) is the fallback for docs beyond that
+    # budget or when Gemini is unavailable.
+    QA_FULL_DOC_MAX_CHARS: int = int(os.getenv("QA_FULL_DOC_MAX_CHARS", "300000"))
+    QA_RETRIEVAL_TOP_K: int = int(os.getenv("QA_RETRIEVAL_TOP_K", "25"))
     # PDF vision: describe diagrams/charts/figures with Gemini so they're narrated
     # in the podcast (PyPDF2 reads text only). Set to "0" to disable.
     PDF_VISION_EXTRACTION: bool = os.getenv("PDF_VISION_EXTRACTION", "1") not in ("0", "false", "False")
@@ -114,7 +123,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "22")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "23")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

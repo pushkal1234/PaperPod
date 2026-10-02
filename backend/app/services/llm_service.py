@@ -390,8 +390,14 @@ def _build_podcast_prompt(
             "major articles at a useful level and give them ROUGHLY PROPORTIONAL "
             "time — do NOT let one article dominate and do NOT skip any. Only if "
             "there is still room after every article has been covered should the "
-            "hosts go a little deeper on the one or two most important ones. Use "
-            "ONLY what is in the document; never add outside facts."
+            "hosts go a little deeper on the one or two most important ones. "
+            "CRITICAL — move between articles SMOOTHLY: never jump cold from one "
+            "topic to the next. Each time you move to a new article, one host "
+            "gives a short spoken transition that closes the previous topic and "
+            "introduces the next (e.g. 'That ties into the next piece on …' or "
+            "'Switching gears, there's also an article about …'). Every topic "
+            "change must have a bridging line so the conversation never feels like "
+            "it skipped ahead. Use ONLY what is in the document; never add outside facts."
         )
     elif procedural:
         coverage_rule = (
@@ -1028,8 +1034,16 @@ def _overshoot_ceiling(max_lines: int) -> int:
     return max(ceiling, max_lines)
 
 
-def _trim_script_to_max_lines(script: str, max_lines: int) -> str:
-    """Keep only the first max_lines Host/Guest lines (preserves non-dialogue spacing minimally)."""
+def _trim_script_to_max_lines(script: str, max_lines: int, end_on_guest: bool = False) -> str:
+    """Keep only the first max_lines Host/Guest lines (preserves non-dialogue spacing minimally).
+
+    When ``end_on_guest`` is True, after trimming we drop a trailing Host line so
+    the kept script ends on a Guest line — a COMPLETE answer rather than a
+    dangling Host question. This matters when we trim a long overshooting episode:
+    without it the cut lands mid-exchange and the deterministic outro gets bolted
+    onto a half-finished question, which is exactly the "abrupt jump at the end"
+    a listener hears.
+    """
     kept: list[str] = []
     count = 0
     for line in script.strip().split("\n"):
@@ -1039,6 +1053,22 @@ def _trim_script_to_max_lines(script: str, max_lines: int) -> str:
             if count > max_lines:
                 break
         kept.append(line)
+
+    if end_on_guest:
+        # Drop trailing non-dialogue + any trailing Host line(s) so the last
+        # spoken line is a Guest line (a finished thought). Capped so we never
+        # eat more than a couple of lines.
+        dropped = 0
+        while kept and dropped < 3:
+            last = kept[-1].strip().lower()
+            if not last:
+                kept.pop()
+                continue
+            if last.startswith("host:"):
+                kept.pop()
+                dropped += 1
+                continue
+            break  # hit a Guest line (or non-empty content) — stop
     return "\n".join(kept)
 
 
@@ -1386,7 +1416,7 @@ def generate_podcast_script(document_text: str, page_count: int | None = None) -
             f"[LLM] Heavy overshoot: {n} lines (+{pct}% over max={max_lines}) — shaving to "
             f"generous ceiling {ceiling} (keeping {ceiling - max_lines} lines above max, not trimming to max)"
         )
-        full_script = _trim_script_to_max_lines(full_script, ceiling)
+        full_script = _trim_script_to_max_lines(full_script, ceiling, end_on_guest=True)
         dialogue_lines = _count_dialogue_lines(full_script)
     elif n > max_lines:
         pct = round(100 * (n - max_lines) / max_lines)
@@ -1454,11 +1484,43 @@ def generate_podcast_script(document_text: str, page_count: int | None = None) -
     return full_script
 
 
-def answer_question(question: str, context_chunks: list[str]) -> str:
-    """Answer a question using document context via Groq LLM."""
+def answer_question(question: str, context_chunks: list[str], full_document: str | None = None) -> str:
+    """Answer a question about a document.
+
+    Preferred path: when the WHOLE document fits ``QA_FULL_DOC_MAX_CHARS`` and
+    Gemini is configured, answer from the ENTIRE document via Gemini's large
+    context. This is what fixes the old "it could only see 5 pages" / wrong-answer
+    behaviour — the model sees everything instead of 5 keyword-matched chunks.
+
+    Fallback path: for documents beyond that budget, or when Gemini is
+    unavailable, answer from the retrieved ``context_chunks`` (keyword retrieval).
+    """
+    gemini_ok = bool(settings.GOOGLE_API_KEY and settings.LLM_FALLBACK_MODEL)
+
+    if full_document and gemini_ok and len(full_document) <= settings.QA_FULL_DOC_MAX_CHARS:
+        try:
+            raw = _call_gemini(
+                messages=[
+                    {"role": "system", "content": QA_SYSTEM_PROMPT},
+                    {"role": "user", "content": (
+                        f"Full document:\n\n{full_document}\n\n---\n\nQuestion: {question}"
+                    )},
+                ],
+                temperature=0.4,
+                max_tokens=1024,
+            )
+            if raw and raw.strip():
+                logger.info(f"[QA] Answered from FULL document ({len(full_document)} chars) via Gemini")
+                return normalize_answer_text(raw)
+            logger.warning("[QA] Full-doc Gemini answer was empty — falling back to retrieval chunks")
+        except Exception as e:
+            logger.warning(f"[QA] Full-doc Gemini answer failed ({e}); falling back to retrieval chunks")
+
+    # Fallback: retrieval chunks. Allow a much larger context than the old 6K cap
+    # so a higher top-k actually reaches the model (Gemini-first via _call_llm's
+    # fallback handles the bigger payload; Groq stays the fast path for small docs).
     context = "\n\n---\n\n".join(context_chunks)
-    # Keep context within limits
-    context = context[:MAX_INPUT_CHARS]
+    context = context[:settings.QA_FULL_DOC_MAX_CHARS if gemini_ok else MAX_INPUT_CHARS]
 
     relevant = _is_context_relevant(question, context)
     user_content = (
