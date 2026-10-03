@@ -39,10 +39,12 @@ function formatDuration(seconds) {
 }
 
 function formatMonth(key) {
-  // key is "YYYY-MM"
+  // key is "YYYY-MM". Render as "Oct '26" (apostrophe = year) so the label can't
+  // be misread as a day — "Oct 26" / "Aug 26" looked like the 26th of the month.
   const [y, m] = key.split('-');
   const d = new Date(Number(y), Number(m) - 1, 1);
-  return d.toLocaleString('en-US', { month: 'short', year: '2-digit' });
+  const mon = d.toLocaleString('en-US', { month: 'short' });
+  return `${mon} '${String(y).slice(-2)}`;
 }
 
 function KpiCard({ icon: Icon, label, value, hint }) {
