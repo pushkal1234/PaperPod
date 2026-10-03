@@ -179,7 +179,9 @@ def extract_text(file_path: str, content_type: str, on_figures=None) -> str:
 
 
 def _extract_pdf(file_path: str, on_figures=None) -> str:
-    text_parts = []
+    # Keep page texts aligned by index (including empty pages) so we can swap in
+    # table-cleaned prose per page below.
+    pypdf_pages: list[str] = []
     with open(file_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
         # Many PDFs are encrypted with an owner/permissions password but an EMPTY
@@ -201,10 +203,27 @@ def _extract_pdf(file_path: str, on_figures=None) -> str:
                     "the password (open it and re-save/print to PDF) and try again."
                 )
         for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text_parts.append(page_text)
-    text = "\n\n".join(text_parts)
+            pypdf_pages.append(page.extract_text() or "")
+
+    # STRUCTURED tables + per-page prose with table regions removed. PyPDF2 flattens
+    # tables into unreadable runs (a salary table loses which number belongs to
+    # whom), so for every page that HAS a table we use PyMuPDF's prose (table area
+    # excluded) instead of PyPDF2's text — the clean grid is appended once at the
+    # end, with no duplicated jumble. Pages without tables keep PyPDF2 text as-is.
+    table_blocks, table_page_prose = _extract_pdf_tables(file_path)
+
+    parts: list[str] = []
+    for i, pytext in enumerate(pypdf_pages):
+        if i in table_page_prose:
+            prose = table_page_prose[i].strip()
+            if prose:
+                parts.append(prose)
+        elif pytext.strip():
+            parts.append(pytext)
+    text = "\n\n".join(parts)
+
+    if table_blocks:
+        text = f"{text}\n\n## Tables (structured — rows and columns preserved)\n{table_blocks}"
 
     # Enrich with spoken-language descriptions of diagrams/charts/figures that
     # PyPDF2 (text layer only) cannot read, so the podcast can narrate visuals.
@@ -212,6 +231,107 @@ def _extract_pdf(file_path: str, on_figures=None) -> str:
     if visuals:
         text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
     return text
+
+
+# A detected region must have at least this many rows/cols to count as a real
+# table (filters out stray 1-cell "tables" PyMuPDF sometimes reports).
+_MIN_TABLE_ROWS = 2
+_MIN_TABLE_COLS = 2
+
+
+def _page_prose_excluding(page, table_rects) -> str:
+    """Return a page's text with any text block centered inside a table rect removed.
+
+    Used so a page's table content isn't duplicated: once as PyPDF2's flattened
+    jumble AND once as the clean structured grid. We keep the surrounding prose and
+    drop only the blocks that fall within a detected table's bounding box.
+    """
+    try:
+        blocks = page.get_text("blocks")  # (x0, y0, x1, y1, text, blockno, type)
+    except Exception:  # noqa: BLE001
+        return ""
+    kept: list[str] = []
+    for b in blocks:
+        if len(b) < 5 or not (b[4] or "").strip():
+            continue
+        cx, cy = (b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0
+        if any(r.x0 <= cx <= r.x1 and r.y0 <= cy <= r.y1 for r in table_rects):
+            continue  # this block is inside a table — the structured version covers it
+        kept.append(b[4].strip())
+    return "\n".join(kept)
+
+
+def _extract_pdf_tables(file_path: str) -> tuple[str, dict[int, str]]:
+    """Return (structured_table_text, {page_index: prose_without_tables}).
+
+    - structured_table_text: every detected table rendered as pipe-delimited rows,
+      labeled by page, so the LLM sees the row/column grid PyPDF2 destroys (this is
+      why financial customers' salary tables were missing from the podcast).
+    - prose map: for each page that HAD a table, the page text with the table
+      region(s) removed, so the caller drops PyPDF2's flattened-table jumble for
+      those pages and avoids duplication. Pages with no table are omitted.
+
+    Best-effort: returns ("", {}) on any issue so extraction never breaks here.
+    """
+    if not settings.PDF_TABLE_EXTRACTION:
+        return "", {}
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        return "", {}
+
+    blocks: list[str] = []
+    page_prose: dict[int, str] = {}
+    try:
+        with fitz.open(file_path) as doc:
+            # Match the PyPDF2 empty-password decrypt; bail to PyPDF2 text if locked.
+            if getattr(doc, "needs_pass", False):
+                try:
+                    if not doc.authenticate(""):
+                        return "", {}
+                except Exception:  # noqa: BLE001
+                    return "", {}
+            max_pages = min(doc.page_count, settings.PDF_TABLE_MAX_PAGES)
+            for i in range(max_pages):
+                page = doc[i]
+                try:
+                    tables = list(getattr(page.find_tables(), "tables", []))
+                except Exception:  # noqa: BLE001 — table finding is best-effort per page
+                    continue
+                rects = []
+                for tbl in tables:
+                    try:
+                        rows = tbl.extract()
+                    except Exception:  # noqa: BLE001
+                        continue
+                    # Drop fully-empty rows; normalize cells (None -> "", flatten newlines).
+                    clean_rows = [
+                        [(c or "").strip().replace("\n", " ") for c in row]
+                        for row in rows
+                        if any((c or "").strip() for c in row)
+                    ]
+                    if len(clean_rows) < _MIN_TABLE_ROWS:
+                        continue
+                    if max(len(r) for r in clean_rows) < _MIN_TABLE_COLS:
+                        continue
+                    rendered = "\n".join("| " + " | ".join(r) + " |" for r in clean_rows)
+                    blocks.append(f"(Table from page {i + 1})\n{rendered}")
+                    try:
+                        rects.append(fitz.Rect(tbl.bbox))
+                    except Exception:  # noqa: BLE001
+                        pass
+                if rects:
+                    page_prose[i] = _page_prose_excluding(page, rects)
+    except Exception as e:  # noqa: BLE001 — never fail extraction on tables
+        logger.warning(f"[PDF] Table extraction failed ({e})")
+        return "", {}
+
+    if blocks:
+        logger.info(
+            f"[PDF] Extracted {len(blocks)} structured table(s); "
+            f"removed flattened table text from {len(page_prose)} page(s)"
+        )
+    return "\n\n".join(blocks), page_prose
 
 
 def _describe_pdf_visuals(file_path: str, on_figures=None) -> str:

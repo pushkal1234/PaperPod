@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     PDF_VISION_EXTRACTION: bool = os.getenv("PDF_VISION_EXTRACTION", "1") not in ("0", "false", "False")
     PDF_VISION_MAX_PAGES: int = int(os.getenv("PDF_VISION_MAX_PAGES", "60"))
     PDF_VISION_MAX_FIGURES: int = int(os.getenv("PDF_VISION_MAX_FIGURES", "12"))
+    # PDF table extraction: PyPDF2's plain text FLATTENS tables (a salary table
+    # becomes a jumble of names and numbers with no row/column link), so financial
+    # docs effectively lost their tables in the podcast. PyMuPDF's table finder
+    # recovers the grid and we append it as pipe-delimited rows the LLM can read.
+    # Set to "0" to disable. Capped to PDF_TABLE_MAX_PAGES for latency.
+    PDF_TABLE_EXTRACTION: bool = os.getenv("PDF_TABLE_EXTRACTION", "1") not in ("0", "false", "False")
+    PDF_TABLE_MAX_PAGES: int = int(os.getenv("PDF_TABLE_MAX_PAGES", "60"))
     MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
     # Retain the source upload (renamed to the document id) after processing
     # instead of deleting it, so failed/undershoot cases can be inspected later.
@@ -130,7 +137,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "24")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "25")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

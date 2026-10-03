@@ -66,6 +66,65 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "significan en la práctica."
         ),
     },
+    "it": {
+        "name": "Italian",
+        "host_voice": "it-IT-DiegoNeural",
+        "guest_voice": "it-IT-IsabellaNeural",
+        "host_signoff": "Host: Grazie per l'ascolto, alla prossima!",
+        "fallback_takeaway": (
+            "Guest: La cosa importante è capire come queste idee si collegano e "
+            "cosa significano nella pratica."
+        ),
+    },
+    "hi": {
+        "name": "Hindi",
+        "host_voice": "hi-IN-MadhurNeural",
+        "guest_voice": "hi-IN-SwaraNeural",
+        "host_signoff": "Host: सुनने के लिए धन्यवाद, अगली बार मिलते हैं!",
+        "fallback_takeaway": (
+            "Guest: ध्यान देने वाली बात यह है कि ये विचार आपस में कैसे जुड़ते हैं और "
+            "व्यवहार में इनका क्या मतलब है।"
+        ),
+    },
+    "vi": {
+        "name": "Vietnamese",
+        "host_voice": "vi-VN-NamMinhNeural",
+        "guest_voice": "vi-VN-HoaiMyNeural",
+        "host_signoff": "Host: Cảm ơn các bạn đã lắng nghe, hẹn gặp lại!",
+        "fallback_takeaway": (
+            "Guest: Điều quan trọng là hiểu những ý tưởng này kết nối với nhau ra "
+            "sao và ý nghĩa thực tế của chúng."
+        ),
+    },
+    "da": {
+        "name": "Danish",
+        "host_voice": "da-DK-JeppeNeural",
+        "guest_voice": "da-DK-ChristelNeural",
+        "host_signoff": "Host: Tak fordi du lyttede med – vi ses næste gang!",
+        "fallback_takeaway": (
+            "Guest: Det vigtige er, hvordan disse idéer hænger sammen, og hvad de "
+            "betyder i praksis."
+        ),
+    },
+    "fa": {
+        "name": "Persian",
+        "host_voice": "fa-IR-FaridNeural",
+        "guest_voice": "fa-IR-DilaraNeural",
+        "host_signoff": "Host: ممنون که گوش دادید، تا دفعهٔ بعد!",
+        "fallback_takeaway": (
+            "Guest: نکتهٔ مهم این است که این ایده‌ها چگونه به هم مرتبط می‌شوند و در "
+            "عمل چه معنایی دارند."
+        ),
+    },
+    "ar": {
+        "name": "Arabic",
+        "host_voice": "ar-SA-HamedNeural",
+        "guest_voice": "ar-SA-ZariyahNeural",
+        "host_signoff": "Host: شكرًا لاستماعكم، إلى اللقاء في المرة القادمة!",
+        "fallback_takeaway": (
+            "Guest: المهم هو كيف ترتبط هذه الأفكار معًا وماذا تعني على أرض الواقع."
+        ),
+    },
 }
 
 # Keep the English "Host:"/"Guest:" labels literal in EVERY language — they are
