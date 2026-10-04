@@ -303,6 +303,34 @@ function App() {
     return false;
   };
 
+  // Whether the server requires sign-in to upload (REQUIRE_AUTH_UPLOAD). Exposed
+  // via /billing/config so the client can prompt sign-in INSTANTLY instead of
+  // uploading the whole file only to get a 401 back.
+  const requireAuth = !!billingConfig?.require_auth_upload;
+
+  // Warm "please sign in" toast + a bounce on the navbar Sign in button. Shared by
+  // the instant client guard below AND the server-401 fallback in handleUploadError.
+  const nudgeSignIn = () => {
+    pushToast(
+      "Hey! You're not signed in yet \u2014 please sign in to create your podcast. It's completely free! \uD83C\uDFA7",
+      'info',
+      8000,
+    );
+    triggerAuthNudge();
+  };
+
+  // Block the upload up-front when sign-in is required but the user is anonymous,
+  // so the sign-in prompt shows in <1s with no file transfer. The server still
+  // enforces this (get_upload_user → 401), so bypassing the client via devtools
+  // just hits that safety net.
+  const blockIfNotSignedIn = () => {
+    if (requireAuth && !user) {
+      nudgeSignIn();
+      return true;
+    }
+    return false;
+  };
+
   // Detect a 402 (Payment Required) from an upload and open the paywall with the
   // backend's reason/message; otherwise show a normal error toast.
   const handleUploadError = (err, fallbackMsg) => {
@@ -315,14 +343,9 @@ function App() {
       return true;
     }
     if (status === 401) {
-      // Anonymous caller hit the "sign in to create a podcast" gate. Make it
-      // unmistakable: a warm message + a bouncing Sign in button to click.
-      pushToast(
-        "Hey! You're not signed in yet \u2014 please sign in to create your podcast. It's completely free! \uD83C\uDFA7",
-        'info',
-        8000,
-      );
-      triggerAuthNudge();
+      // Anonymous caller hit the "sign in to create a podcast" gate (server-side
+      // safety net; the client guard normally catches this before upload).
+      nudgeSignIn();
       return true;
     }
     if (status === 403 && err?.response?.data?.detail?.code === 'email_unverified') {
@@ -398,6 +421,7 @@ function App() {
   };
 
   const handleUpload = async (file) => {
+    if (blockIfNotSignedIn()) return;
     if (blockIfQuotaExhausted()) return;
     setIsUploading(true);
     try {
@@ -417,6 +441,7 @@ function App() {
   };
 
   const handleUploadText = async (text, title) => {
+    if (blockIfNotSignedIn()) return;
     if (blockIfQuotaExhausted()) return;
     setIsUploading(true);
     try {
@@ -435,6 +460,7 @@ function App() {
   };
 
   const handleUploadImage = async (file) => {
+    if (blockIfNotSignedIn()) return;
     if (blockIfQuotaExhausted()) return;
     setIsUploading(true);
     try {

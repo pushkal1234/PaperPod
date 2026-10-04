@@ -277,4 +277,5 @@ async def billing_config():
     return {
         "billing_enabled": settings.BILLING_ENABLED,
         "checkout_available": settings.DODO_CONFIGURED,
+        "require_auth_upload": settings.REQUIRE_AUTH_UPLOAD,
     }
