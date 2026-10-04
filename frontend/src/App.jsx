@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Headphones, FileAudio, Sparkles, ArrowLeft, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube, Github, Mail, Phone, X } from 'lucide-react';
+import { Headphones, FileAudio, ArrowLeft, AlertCircle, Trash2, Chrome, Puzzle, LogOut, LogIn, Check, Download, Upload, Wand2, MessageCircle, Zap, Star, Bookmark, Loader2, Youtube, Github, Mail, Phone, X } from 'lucide-react';
+import Equalizer from './components/Equalizer';
 import UploadZone from './components/UploadZone';
 import PodcastPlayer from './components/PodcastPlayer';
 import QAPanel from './components/QAPanel';
@@ -635,7 +636,7 @@ function App() {
                       className="inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-full bg-white text-stone-600 border border-paper-300 hover:text-brand-700 hover:border-brand-200 transition-all disabled:opacity-60"
                       title="Manage your subscription"
                     >
-                      {portalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      {portalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Equalizer className="h-4" />}
                       <span className="hidden sm:inline">Manage</span>
                     </button>
                   </div>
@@ -817,8 +818,8 @@ function App() {
           <div className="space-y-8 pb-24 md:pb-0">
             {/* Hero */}
             <div className="text-center pt-10 pb-6">
-              <div className="inline-flex items-center gap-2 bg-white/70 text-brand-700 text-xs font-semibold px-3.5 py-1.5 rounded-full mb-6 border border-brand-200 shadow-soft">
-                <Sparkles className="w-3.5 h-3.5 text-accent-500" />
+              <div className="inline-flex items-center gap-2.5 bg-white/80 text-brand-700 text-xs font-semibold pl-3 pr-4 py-2 rounded-full mb-6 border border-brand-200 shadow-soft">
+                <Equalizer className="h-3.5" />
                 Turn reading into listening
               </div>
               <h1 className="font-display text-5xl md:text-6xl font-semibold text-stone-900 leading-[1.05] tracking-tight">
@@ -847,7 +848,7 @@ function App() {
                 {billingOn ? (
                   <>
                     <span className="inline-flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.12em] text-accent-600 bg-accent-50 border border-accent-200 px-3 py-1 rounded-full shadow-soft animate-pulse-slow">
-                      <Sparkles className="w-3.5 h-3.5" />
+                      <Equalizer className="h-3.5" />
                       Start free — no card required
                     </span>
                     <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs font-medium text-stone-500">
@@ -865,7 +866,7 @@ function App() {
                 ) : (
                   <>
                     <span className="inline-flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.12em] text-accent-600 bg-accent-50 border border-accent-200 px-3 py-1 rounded-full shadow-soft animate-pulse-slow">
-                      <Sparkles className="w-3.5 h-3.5" />
+                      <Equalizer className="h-3.5" />
                       100% Free forever
                     </span>
                     <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs font-medium text-stone-500">
@@ -1051,7 +1052,7 @@ function App() {
                   onClick={() => { setView('home'); setCurrentDoc(null); }}
                   className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-brand-600 text-white font-semibold hover:bg-brand-700 shadow-glow transition-all"
                 >
-                  <Sparkles className="w-5 h-5" />
+                  <Equalizer className="h-5" tone="light" />
                   Create your first podcast
                 </button>
               </div>
@@ -1088,7 +1089,7 @@ function App() {
           <div className="space-y-6 max-w-2xl mx-auto py-8">
             <div className="text-center">
               <div className="inline-flex items-center gap-2 bg-white/70 text-brand-700 text-xs font-semibold px-3.5 py-1.5 rounded-full mb-4 border border-brand-200 shadow-soft">
-                <Sparkles className="w-3.5 h-3.5 text-accent-500" />
+                <Equalizer className="h-3.5" />
                 Shared Podcast
               </div>
             </div>

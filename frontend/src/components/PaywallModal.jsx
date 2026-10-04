@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { X, Sparkles, Check, Infinity as InfinityIcon, FileText, MessageCircle, Loader2, Phone, Mail } from 'lucide-react';
+import { X, Zap, Check, Infinity as InfinityIcon, FileText, MessageCircle, Loader2, Phone, Mail } from 'lucide-react';
+import Equalizer from './Equalizer';
 import { createCheckout } from '../api';
 import { FOUNDING, FOUNDING_LABEL, FOUNDING_NOTE, HEADLINE_MONTHLY, REGULAR_MONTHLY, FOUNDING_SPOTS, FOUNDING_SPOTS_LEFT, SHOW_FOUNDING_COUNTER } from '../pricing';
 
@@ -7,7 +8,7 @@ const PREMIUM_PERKS = [
   { icon: InfinityIcon, text: 'Unlimited podcasts — turn any document into audio, anytime' },
   { icon: MessageCircle, text: 'Live Q&A — interrupt your AI podcast to ask questions in Doc-only & Web modes', highlight: true },
   { icon: FileText, text: 'Full-length documents & podcasts, always' },
-  { icon: Sparkles, text: 'Priority generation, support & new features first' },
+  { icon: Zap, text: 'Priority generation, support & new features first' },
 ];
 
 // Shown when the backend returns HTTP 402 (quota_exceeded) or when a free user
@@ -64,7 +65,7 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
         {/* Header */}
         <div className="bg-gradient-to-br from-brand-500 to-accent-500 px-7 pt-8 pb-7 text-white">
           <div className="inline-flex items-center gap-1.5 bg-white/20 text-white text-xs font-semibold px-3 py-1 rounded-full mb-4">
-            <Sparkles className="w-3.5 h-3.5" />
+            <Equalizer className="h-3.5" tone="light" />
             PaperPod Premium
           </div>
           <h2 className="font-display text-2xl font-semibold leading-tight">{title}</h2>
@@ -76,7 +77,7 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
           <div className="mb-5">
             {FOUNDING && (
               <div className="inline-flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.12em] text-accent-700 bg-accent-50 border border-accent-200 px-2.5 py-1 rounded-full mb-2">
-                <Sparkles className="w-3 h-3" /> {FOUNDING_LABEL}
+                <Equalizer className="h-3" /> {FOUNDING_LABEL}
               </div>
             )}
             <div className="flex items-baseline gap-2">
@@ -140,7 +141,7 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
               </>
             ) : (
               <>
-                <Sparkles className="w-5 h-5" />
+                <Equalizer className="h-5" tone="light" />
                 Upgrade to Premium
               </>
             )}

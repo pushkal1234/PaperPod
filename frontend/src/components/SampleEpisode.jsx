@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, Hand, Loader2, MessageCircle, Headphones, Sparkles } from 'lucide-react';
+import { Play, Pause, Hand, Loader2, MessageCircle, Headphones } from 'lucide-react';
+import Equalizer from './Equalizer';
 
 const SAMPLE_SRC = '/sample-podcast.mp3';
 
@@ -231,7 +232,7 @@ export default function SampleEpisode({ onCreateClick }) {
             onClick={onCreateClick}
             className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-brand-600 text-white font-semibold hover:bg-brand-700 shadow-glow hover:-translate-y-0.5 transition-all"
           >
-            <Sparkles className="w-5 h-5" />
+            <Equalizer className="h-5" tone="light" />
             Create yours — free
           </button>
         </div>

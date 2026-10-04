@@ -66,6 +66,16 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "significan en la práctica."
         ),
     },
+    "pt": {
+        "name": "Portuguese",
+        "host_voice": "pt-BR-AntonioNeural",
+        "guest_voice": "pt-BR-FranciscaNeural",
+        "host_signoff": "Host: Obrigado por ouvir, até a próxima!",
+        "fallback_takeaway": (
+            "Guest: O importante é entender como essas ideias se conectam e o que "
+            "significam na prática."
+        ),
+    },
     "it": {
         "name": "Italian",
         "host_voice": "it-IT-DiegoNeural",
