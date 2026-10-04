@@ -286,6 +286,23 @@ function App() {
   const billingOn = !!billingConfig?.billing_enabled;
   const isPremium = user?.plan === 'premium';
 
+  // A signed-in free user who has used all their free podcasts. We know this from
+  // the authoritative server usage (refreshed on load + after every upload), so we
+  // can show the paywall INSTANTLY on an upload attempt instead of transferring the
+  // whole file and waiting ~10s for the server's 402 (the "Processing…" delay).
+  const quotaExhausted =
+    billingOn && !isPremium &&
+    user?.usage?.podcasts_remaining != null && user.usage.podcasts_remaining <= 0;
+
+  // Returns true (and opens the paywall) when the upload should be blocked up-front.
+  const blockIfQuotaExhausted = () => {
+    if (quotaExhausted) {
+      setPaywall({ reason: 'quota_exceeded', message: null });
+      return true;
+    }
+    return false;
+  };
+
   // Detect a 402 (Payment Required) from an upload and open the paywall with the
   // backend's reason/message; otherwise show a normal error toast.
   const handleUploadError = (err, fallbackMsg) => {
@@ -381,6 +398,7 @@ function App() {
   };
 
   const handleUpload = async (file) => {
+    if (blockIfQuotaExhausted()) return;
     setIsUploading(true);
     try {
       const isImage = file.type?.startsWith('image/');
@@ -399,6 +417,7 @@ function App() {
   };
 
   const handleUploadText = async (text, title) => {
+    if (blockIfQuotaExhausted()) return;
     setIsUploading(true);
     try {
       const res = await uploadText(text, title);
@@ -416,6 +435,7 @@ function App() {
   };
 
   const handleUploadImage = async (file) => {
+    if (blockIfQuotaExhausted()) return;
     setIsUploading(true);
     try {
       const res = await uploadImage(file);
