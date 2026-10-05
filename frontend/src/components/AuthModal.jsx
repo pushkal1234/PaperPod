@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Mail, Lock, User as UserIcon, Loader2, ShieldCheck, KeyRound } from 'lucide-react';
+import { X, Mail, User as UserIcon, Loader2, ShieldCheck, KeyRound } from 'lucide-react';
 import {
   login,
   register,
@@ -9,6 +9,7 @@ import {
   forgotPassword,
   resetPassword,
 } from '../api';
+import PasswordInput from './PasswordInput';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
@@ -338,17 +339,13 @@ export default function AuthModal({ onClose, onSuccess, initialMode = 'login' })
               placeholder="Enter 6-digit code"
               className="w-full text-center tracking-[0.5em] text-lg font-semibold px-3 py-2.5 rounded-xl border border-paper-300 bg-paper-50 text-stone-800 placeholder-stone-400 placeholder:tracking-normal placeholder:text-base placeholder:font-normal focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
             />
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="New password (min 8 chars)"
-                className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-paper-300 bg-paper-50 text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
-              />
-            </div>
+            <PasswordInput
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="New password (min 8 chars)"
+              autoComplete="new-password"
+            />
             {error && <p className="text-sm text-red-600 text-center">{error}</p>}
             <button
               type="submit"
@@ -404,17 +401,13 @@ export default function AuthModal({ onClose, onSuccess, initialMode = 'login' })
               className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-paper-300 bg-paper-50 text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
             />
           </div>
-          <div className="relative">
-            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={mode === 'signup' ? 'Create a password (min 8 chars)' : 'Password'}
-              className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-paper-300 bg-paper-50 text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
-            />
-          </div>
+          <PasswordInput
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={mode === 'signup' ? 'Create a password (min 8 chars)' : 'Password'}
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+          />
 
           {mode === 'login' && (
             <div className="text-right -mt-1">
