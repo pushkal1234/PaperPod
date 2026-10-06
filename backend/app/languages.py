@@ -135,6 +135,15 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "Guest: المهم هو كيف ترتبط هذه الأفكار معًا وماذا تعني على أرض الواقع."
         ),
     },
+    "zh": {
+        "name": "Chinese",
+        "host_voice": "zh-CN-YunxiNeural",
+        "guest_voice": "zh-CN-XiaoxiaoNeural",
+        "host_signoff": "Host: 感谢收听，我们下期再见！",
+        "fallback_takeaway": (
+            "Guest: 关键在于理解这些观点之间的联系，以及它们在实际中的意义。"
+        ),
+    },
 }
 
 # Keep the English "Host:"/"Guest:" labels literal in EVERY language — they are
