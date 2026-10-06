@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Zap, Check, Infinity as InfinityIcon, FileText, MessageCircle, Loader2, Phone, Mail } from 'lucide-react';
 import Equalizer from './Equalizer';
 import { createCheckout } from '../api';
@@ -17,6 +17,18 @@ const PREMIUM_PERKS = [
 export default function PaywallModal({ reason, message, onClose, onError, contact }) {
   const [loading, setLoading] = useState(false);
   const [showContact, setShowContact] = useState(false);
+
+  // "Upgrade" redirects to the hosted checkout in the SAME tab. If the user backs
+  // out of checkout, the browser restores this modal from the back/forward cache
+  // frozen with loading=true, leaving "Opening secure checkout…" stuck. Clear it
+  // on a bfcache restore (pageshow with persisted=true).
+  useEffect(() => {
+    const onPageShow = (e) => {
+      if (e.persisted) setLoading(false);
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
 
   const title =
     reason === 'quota_exceeded'

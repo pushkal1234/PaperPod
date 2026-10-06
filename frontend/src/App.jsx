@@ -51,6 +51,10 @@ function App() {
     return v === 'library' ? 'library' : 'home';
   });
   const [documents, setDocuments] = useState([]);
+  // Whether the library has been fetched at least once this session. Gates the
+  // library view's loading-vs-empty decision so a refresh never flashes
+  // "No podcasts yet" before the real list arrives.
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [currentDoc, setCurrentDoc] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
@@ -260,6 +264,19 @@ function App() {
     };
   }, [showContact]);
 
+  // The "Manage" button redirects to the billing portal in the SAME tab. When the
+  // user returns via the back button, the browser restores this page from the
+  // back/forward cache frozen exactly as it left — with portalLoading still true,
+  // so the spinner stays stuck until a manual refresh. pageshow with persisted=true
+  // is the restore signal; clear the spinner then.
+  useEffect(() => {
+    const onPageShow = (e) => {
+      if (e.persisted) setPortalLoading(false);
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
+
   const loadDocuments = async () => {
     try {
       const res = await listDocuments();
@@ -267,6 +284,12 @@ function App() {
     } catch (err) {
       // 401 is expected when logged out; the interceptor already clears state.
       if (err?.response?.status !== 401) console.error('Failed to load documents:', err);
+    } finally {
+      // Marks that the library has been fetched at least once, so the library
+      // view shows a loading state (not the "No podcasts yet" empty state) until
+      // the real list arrives — otherwise a refresh on ?view=library flashes
+      // "No podcasts yet" to a user who actually has podcasts.
+      setDocumentsLoaded(true);
     }
   };
 
@@ -295,9 +318,16 @@ function App() {
     user?.usage?.podcasts_remaining != null && user.usage.podcasts_remaining <= 0;
 
   // Returns true (and opens the paywall) when the upload should be blocked up-front.
+  // Pass the SAME "You've used all N free podcasts" message the server 402 sends,
+  // using the user's real limit, so the explicit free-podcast count still shows
+  // (the instant client guard must not drop that wording).
   const blockIfQuotaExhausted = () => {
     if (quotaExhausted) {
-      setPaywall({ reason: 'quota_exceeded', message: null });
+      const limit = user?.usage?.podcasts_limit ?? 2;
+      setPaywall({
+        reason: 'quota_exceeded',
+        message: `You've used all ${limit} free podcasts. Upgrade to Premium for unlimited podcasts.`,
+      });
       return true;
     }
     return false;
@@ -371,8 +401,14 @@ function App() {
     setPortalLoading(true);
     try {
       const { url } = await getBillingPortal();
-      if (url) window.location.href = url;
-      else pushToast('Could not open the billing portal. Please try again.', 'error');
+      if (url) {
+        // Navigating away (same tab). Keep the spinner until unload; a bfcache
+        // return is cleared by the pageshow effect above.
+        window.location.href = url;
+        return;
+      }
+      pushToast('Could not open the billing portal. Please try again.', 'error');
+      setPortalLoading(false);
     } catch {
       pushToast('Could not open the billing portal. Please try again.', 'error');
       setPortalLoading(false);
@@ -637,7 +673,7 @@ function App() {
               href={CHROME_STORE_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className={`${user ? 'hidden 2xl:inline-flex' : 'hidden lg:inline-flex'} shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-brand-600 text-white hover:bg-brand-700 shadow-glow transition-all`}
+              className={`${user || !authChecked ? 'hidden 2xl:inline-flex' : 'hidden lg:inline-flex'} shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-brand-600 text-white hover:bg-brand-700 shadow-glow transition-all`}
               title="Download PaperPod for Chrome — free forever, no credit card"
             >
               <Download className="w-4 h-4" />
@@ -648,7 +684,7 @@ function App() {
               href={FIREFOX_STORE_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className={`${user ? 'hidden 2xl:inline-flex' : 'hidden lg:inline-flex'} shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-white text-brand-700 border border-brand-200 hover:bg-brand-50 shadow-soft transition-all`}
+              className={`${user || !authChecked ? 'hidden 2xl:inline-flex' : 'hidden lg:inline-flex'} shrink-0 whitespace-nowrap items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-white text-brand-700 border border-brand-200 hover:bg-brand-50 shadow-soft transition-all`}
               title="Download PaperPod for Firefox — free forever, no credit card"
             >
               <Puzzle className="w-4 h-4" />
@@ -1028,7 +1064,14 @@ function App() {
             {/* Usage/analytics dashboard — self-hides when there are 0 podcasts. */}
             <AnalyticsDashboard />
 
-            {documents.length > 0 ? (
+            {!authChecked || (user && !documentsLoaded) ? (
+              /* Loading: auth still resolving, or the library is being fetched.
+                 Prevents a "No podcasts yet" flash for users who have podcasts. */
+              <div className="flex items-center justify-center gap-2 py-16 text-stone-400">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span className="text-sm font-medium">Loading your podcasts…</span>
+              </div>
+            ) : documents.length > 0 ? (
               <div className="grid gap-3">
                 {documents.map((doc) => (
                   <div
