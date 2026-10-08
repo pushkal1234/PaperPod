@@ -135,6 +135,16 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "Guest: المهم هو كيف ترتبط هذه الأفكار معًا وماذا تعني على أرض الواقع."
         ),
     },
+    "nl": {
+        "name": "Dutch",
+        "host_voice": "nl-NL-MaartenNeural",
+        "guest_voice": "nl-NL-ColetteNeural",
+        "host_signoff": "Host: Bedankt voor het luisteren, tot de volgende keer!",
+        "fallback_takeaway": (
+            "Guest: Het belangrijkste is hoe deze ideeën met elkaar samenhangen en "
+            "wat ze in de praktijk betekenen."
+        ),
+    },
     "zh": {
         "name": "Chinese",
         "host_voice": "zh-CN-YunxiNeural",
