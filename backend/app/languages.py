@@ -135,6 +135,26 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "Guest: المهم هو كيف ترتبط هذه الأفكار معًا وماذا تعني على أرض الواقع."
         ),
     },
+    "ur": {
+        "name": "Urdu",
+        "host_voice": "ur-PK-AsadNeural",
+        "guest_voice": "ur-PK-UzmaNeural",
+        "host_signoff": "Host: سننے کا شکریہ، اگلی بار ملتے ہیں!",
+        "fallback_takeaway": (
+            "Guest: اہم بات یہ ہے کہ یہ خیالات آپس میں کیسے جڑتے ہیں اور عملی طور پر "
+            "ان کا کیا مطلب ہے۔"
+        ),
+    },
+    "ru": {
+        "name": "Russian",
+        "host_voice": "ru-RU-DmitryNeural",
+        "guest_voice": "ru-RU-SvetlanaNeural",
+        "host_signoff": "Host: Спасибо, что слушали, до встречи в следующий раз!",
+        "fallback_takeaway": (
+            "Guest: Главное — понять, как эти идеи связаны между собой и что они "
+            "значат на практике."
+        ),
+    },
     "nl": {
         "name": "Dutch",
         "host_voice": "nl-NL-MaartenNeural",
