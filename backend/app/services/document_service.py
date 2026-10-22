@@ -225,6 +225,14 @@ def _extract_pdf(file_path: str, on_figures=None) -> str:
     if table_blocks:
         text = f"{text}\n\n## Tables (structured — rows and columns preserved)\n{table_blocks}"
 
+    # Scanned / screenshot PDFs (each page is just an image, no text layer) read as
+    # near-empty here, so the podcast would be built from nothing. Detect that and
+    # OCR every page — transcribing ALL text verbatim in its original language —
+    # and use that as the document body instead of the empty text layer.
+    ocr = _ocr_scanned_pdf(file_path, len(text.strip()), on_figures)
+    if ocr:
+        return ocr
+
     # Enrich with spoken-language descriptions of diagrams/charts/figures that
     # PyPDF2 (text layer only) cannot read, so the podcast can narrate visuals.
     visuals = _describe_pdf_visuals(file_path, on_figures)
@@ -332,6 +340,68 @@ def _extract_pdf_tables(file_path: str) -> tuple[str, dict[int, str]]:
             f"removed flattened table text from {len(page_prose)} page(s)"
         )
     return "\n\n".join(blocks), page_prose
+
+
+def _ocr_scanned_pdf(file_path: str, text_layer_chars: int, on_figures=None) -> str:
+    """OCR an image-only / scanned PDF, returning the full verbatim transcription.
+
+    Returns "" (never raises) unless the PDF is genuinely scanned — i.e. its text
+    layer is near-empty AND at least half its pages are images. This is the fix for
+    "5 screenshots merged into a PDF" uploads, where PyPDF2 reads ~0 chars and the
+    podcast would otherwise be built from nothing (and mis-detect the language).
+    """
+    if not settings.PDF_VISION_EXTRACTION or not settings.GOOGLE_API_KEY:
+        return ""
+    if settings.PDF_OCR_MIN_CHARS_PER_PAGE <= 0:
+        return ""
+    try:
+        # Local import keeps the module import-safe if PyMuPDF isn't installed.
+        import pymupdf as fitz
+    except ImportError:
+        return ""
+
+    try:
+        doc = fitz.open(file_path)
+    except Exception as e:  # noqa: BLE001 — best-effort
+        logger.warning(f"[OCR] Could not open PDF for scan detection ({e})")
+        return ""
+
+    try:
+        page_count = doc.page_count
+        if page_count == 0:
+            return ""
+        # A real text-layer PDF easily clears this; a scanned one reads ~0 chars.
+        if text_layer_chars >= settings.PDF_OCR_MIN_CHARS_PER_PAGE * page_count:
+            return ""
+        image_pages = sum(1 for i in range(page_count) if _page_has_visual(doc[i]))
+        if image_pages < max(1, (page_count + 1) // 2):
+            return ""
+        if page_count > settings.PDF_VISION_MAX_PAGES:
+            logger.info(
+                f"[OCR] Scanned PDF has {page_count} pages > PDF_VISION_MAX_PAGES "
+                f"({settings.PDF_VISION_MAX_PAGES}); skipping full-page OCR"
+            )
+            return ""
+        logger.info(
+            f"[OCR] Scanned/image PDF detected ({image_pages}/{page_count} image "
+            f"pages, text layer={text_layer_chars} chars) — running full-page OCR"
+        )
+        matrix = fitz.Matrix(_FIGURE_RENDER_DPI / 72.0, _FIGURE_RENDER_DPI / 72.0)
+        pages: list[tuple[int, bytes]] = []
+        for i in range(page_count):
+            pix = doc[i].get_pixmap(matrix=matrix)
+            pages.append((i + 1, pix.tobytes("png")))
+    finally:
+        doc.close()
+
+    if on_figures is not None:
+        try:
+            on_figures()
+        except Exception:  # noqa: BLE001 — a progress hook must never break extraction
+            pass
+
+    from app.services.image_service import transcribe_pdf_pages
+    return transcribe_pdf_pages(pages)
 
 
 def _describe_pdf_visuals(file_path: str, on_figures=None) -> str:
@@ -491,11 +561,16 @@ def _extract_docx(file_path: str, on_figures=None) -> str:
                 parts.append(rendered)
     text = "\n\n".join(parts)
 
-    # Enrich with spoken descriptions of embedded images (same Gemini vision
-    # path as PDFs/PPTX), so diagrams/charts in Word docs are narrated too.
-    visuals = _describe_embedded_images(_docx_images(doc), on_figures)
-    if visuals:
-        text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
+    # Vision pass over embedded images. If the Word doc is really just pasted
+    # screenshots (near-empty text layer), OCR them in full and use that as the
+    # body; otherwise append brief spoken descriptions so diagrams are narrated.
+    content, is_full_text = _describe_or_ocr_embedded_images(
+        _docx_images(doc), len(text.strip()), on_figures
+    )
+    if content:
+        if is_full_text:
+            return content
+        text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{content}"
     return text
 
 
@@ -552,11 +627,16 @@ def _extract_pptx(file_path: str, on_figures=None) -> str:
 
     text = "\n\n".join(parts)
 
-    # Same Gemini vision path as PDFs; pictures come straight from the file so
-    # no page rendering is needed.
-    visuals = _describe_embedded_images(images, on_figures)
-    if visuals:
-        text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
+    # Vision pass over slide pictures. A deck that is really just pasted
+    # screenshots (near-empty text layer) is OCR'd in full and used as the body;
+    # otherwise append brief spoken descriptions so diagrams/charts are narrated.
+    content, is_full_text = _describe_or_ocr_embedded_images(
+        images, len(text.strip()), on_figures
+    )
+    if content:
+        if is_full_text:
+            return content
+        text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{content}"
     return text
 
 
@@ -578,21 +658,18 @@ def _pptx_table(table) -> str:
     return "\n".join(rows)
 
 
-def _describe_embedded_images(images: list[tuple[int, bytes, str]], on_figures=None) -> str:
-    """Describe raster pictures embedded in a document via Gemini (best-effort).
+def _prepare_embedded_image_pages(
+    images: list[tuple[int, bytes, str]]
+) -> list[tuple[int, bytes]]:
+    """Filter + normalize embedded raster images into (index, png_bytes) for vision.
 
-    Shared by the PPTX and DOCX paths — ``images`` is a list of
-    ``(index, blob, content_type)`` taken straight from the file (no page
-    rendering needed). ``on_figures`` (if given) is fired once, only when real
-    images survive filtering, right before the vision call — a progress hook,
-    never fatal.
+    Drops vector art Gemini can't read and tiny logos/icons/bullets, caps at
+    PDF_VISION_MAX_FIGURES, and downscales large images to keep the payload small.
     """
-    if not settings.PDF_VISION_EXTRACTION or not settings.GOOGLE_API_KEY or not images:
-        return ""
     from io import BytesIO
     from PIL import Image
 
-    pages = []
+    pages: list[tuple[int, bytes]] = []
     for slide_no, blob, content_type in images:
         if len(pages) >= settings.PDF_VISION_MAX_FIGURES:
             break
@@ -611,8 +688,35 @@ def _describe_embedded_images(images: list[tuple[int, bytes, str]], on_figures=N
             pages.append((slide_no, buf.getvalue()))
         except Exception:
             continue
+    return pages
+
+
+def _describe_or_ocr_embedded_images(
+    images: list[tuple[int, bytes, str]], text_layer_chars: int, on_figures=None
+) -> tuple[str, bool]:
+    """Vision pass for DOCX/PPTX embedded pictures (best-effort).
+
+    Returns ``(content, is_full_text)``:
+      - **Screenshot-style doc** — the text layer is near-empty relative to the
+        number of embedded images (e.g. a Word/PowerPoint file that is really just
+        pasted screenshots): full verbatim OCR of the images in their original
+        language, ``is_full_text=True`` → the caller uses it as the document body.
+      - **Normal doc** — brief spoken descriptions of the figures,
+        ``is_full_text=False`` → the caller appends them under a heading.
+    Returns ``("", False)`` when vision is unavailable or no usable images remain.
+    ``on_figures`` (if given) fires once, right before the vision call.
+    """
+    if not settings.PDF_VISION_EXTRACTION or not settings.GOOGLE_API_KEY or not images:
+        return "", False
+
+    pages = _prepare_embedded_image_pages(images)
     if not pages:
-        return ""
+        return "", False
+
+    scanned = (
+        settings.PDF_OCR_MIN_CHARS_PER_PAGE > 0
+        and text_layer_chars < settings.PDF_OCR_MIN_CHARS_PER_PAGE * len(pages)
+    )
 
     if on_figures is not None:
         try:
@@ -620,8 +724,16 @@ def _describe_embedded_images(images: list[tuple[int, bytes, str]], on_figures=N
         except Exception:  # noqa: BLE001 — a progress hook must never break extraction
             pass
 
+    if scanned:
+        logger.info(
+            f"[OCR] Scanned/image document detected ({len(pages)} image(s), "
+            f"text layer={text_layer_chars} chars) — running full-page OCR"
+        )
+        from app.services.image_service import transcribe_pdf_pages
+        return transcribe_pdf_pages(pages), True
+
     from app.services.image_service import describe_pdf_figures
-    return describe_pdf_figures(pages)
+    return describe_pdf_figures(pages), False
 
 
 def chunk_text(text: str, chunk_size: int = 1500, overlap: int = 200) -> list[str]:

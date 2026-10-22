@@ -814,8 +814,10 @@ async def document_stats(
     ready_count = 0
     longest_seconds = 0.0
     by_source: dict[str, int] = {}
-    by_month: dict[str, int] = {}
-    by_month_seconds: dict[str, float] = {}
+    # Daily buckets keyed by UTC date "YYYY-MM-DD" (created_at is tz-aware UTC), so
+    # the "over time" chart shows real dates (e.g. "Oct 13") instead of a month.
+    by_day: dict[str, int] = {}
+    by_day_seconds: dict[str, float] = {}
 
     for status_, source, filename, created_at, char_len, duration in result.all():
         total += 1
@@ -833,10 +835,10 @@ async def document_stats(
         by_source[src] = by_source.get(src, 0) + 1
 
         if created_at:
-            key = created_at.strftime("%Y-%m")
-            by_month[key] = by_month.get(key, 0) + 1
+            key = created_at.strftime("%Y-%m-%d")
+            by_day[key] = by_day.get(key, 0) + 1
             if st == "ready":
-                by_month_seconds[key] = by_month_seconds.get(key, 0.0) + float(duration or 0.0)
+                by_day_seconds[key] = by_day_seconds.get(key, 0.0) + float(duration or 0.0)
 
         if st == "ready":
             ready_count += 1
@@ -851,8 +853,8 @@ async def document_stats(
     total_words = int(total_chars / 5.7) if total_chars else 0
 
     over_time = [
-        {"month": m, "count": c, "seconds": round(by_month_seconds.get(m, 0.0))}
-        for m, c in sorted(by_month.items())
+        {"date": d, "count": c, "seconds": round(by_day_seconds.get(d, 0.0))}
+        for d, c in sorted(by_day.items())
     ]
     source_breakdown = [
         {"source": s, "count": c}

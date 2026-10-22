@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     PDF_VISION_EXTRACTION: bool = os.getenv("PDF_VISION_EXTRACTION", "1") not in ("0", "false", "False")
     PDF_VISION_MAX_PAGES: int = int(os.getenv("PDF_VISION_MAX_PAGES", "60"))
     PDF_VISION_MAX_FIGURES: int = int(os.getenv("PDF_VISION_MAX_FIGURES", "12"))
+    # Scanned / screenshot PDFs have NO selectable text layer (each page is just an
+    # image), so PyPDF2 reads ~0 chars and the podcast ends up empty. When a PDF's
+    # text layer averages fewer than this many chars per page AND the pages are
+    # images, we OCR every page (full verbatim transcription) instead of the brief
+    # figure-description pass. Set to "0" to disable scanned-PDF OCR.
+    PDF_OCR_MIN_CHARS_PER_PAGE: int = int(os.getenv("PDF_OCR_MIN_CHARS_PER_PAGE", "80"))
     # PDF table extraction: PyPDF2's plain text FLATTENS tables (a salary table
     # becomes a jumble of names and numbers with no row/column link), so financial
     # docs effectively lost their tables in the podcast. PyMuPDF's table finder

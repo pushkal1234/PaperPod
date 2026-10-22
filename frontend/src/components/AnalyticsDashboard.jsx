@@ -38,13 +38,15 @@ function formatDuration(seconds) {
   return `${s}s`;
 }
 
-function formatMonth(key) {
-  // key is "YYYY-MM". Render as "Oct '26" (apostrophe = year) so the label can't
-  // be misread as a day — "Oct 26" / "Aug 26" looked like the 26th of the month.
-  const [y, m] = key.split('-');
-  const d = new Date(Number(y), Number(m) - 1, 1);
-  const mon = d.toLocaleString('en-US', { month: 'short' });
-  return `${mon} '${String(y).slice(-2)}`;
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatDay(key) {
+  // key is a UTC date "YYYY-MM-DD". Render as "Oct 13" (date, no year) like other
+  // analytics dashboards. Parse the parts directly — do NOT build a Date from the
+  // string, which would reinterpret it in local time and shift the day.
+  const [, m, d] = key.split('-');
+  const mon = MONTHS_SHORT[Number(m) - 1] || '';
+  return `${mon} ${Number(d)}`;
 }
 
 function KpiCard({ icon: Icon, label, value, hint }) {
@@ -101,17 +103,19 @@ export default function AnalyticsDashboard() {
   const READING_WPM = 200;
   const readingSeconds = totals.words ? (totals.words / READING_WPM) * 60 : 0;
 
-  // This month's activity, pulled from the monthly buckets the API returns.
+  // This month's activity, summed from the daily UTC buckets the API returns.
   const now = new Date();
-  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const thisMonth = over_time.find((d) => d.month === monthKey) || { count: 0, seconds: 0 };
+  const monthPrefix = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  const thisMonth = over_time
+    .filter((d) => (d.date || '').startsWith(monthPrefix))
+    .reduce((acc, d) => ({ count: acc.count + d.count, seconds: acc.seconds + d.seconds }), { count: 0, seconds: 0 });
 
   const sourceData = by_source.map((d) => ({
     name: SOURCE_LABELS[d.source] || d.source,
     value: d.count,
   }));
   const statusData = status_breakdown.filter((d) => d.count > 0);
-  const timeData = over_time.map((d) => ({ name: formatMonth(d.month), count: d.count }));
+  const timeData = over_time.map((d) => ({ name: formatDay(d.date), count: d.count }));
 
   return (
     <div className="space-y-4">
@@ -150,7 +154,9 @@ export default function AnalyticsDashboard() {
         {/* Podcasts over time */}
         {timeData.length > 0 && (
           <div className="bg-white border border-paper-300 rounded-2xl p-4 shadow-soft">
-            <p className="text-sm font-semibold text-stone-700 mb-3">Podcasts over time</p>
+            <p className="text-sm font-semibold text-stone-700 mb-3">
+              Podcasts over time <span className="font-normal text-stone-400">· Dates in UTC</span>
+            </p>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={timeData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0ede6" vertical={false} />

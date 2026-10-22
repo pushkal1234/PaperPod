@@ -115,6 +115,60 @@ _FIGURE_DESC_PROMPT = (
 )
 
 
+_PDF_OCR_PROMPT = (
+    "These are page images from a scanned or screenshot PDF that has NO selectable "
+    "text layer. Transcribe ALL readable text from every page, verbatim and in full, "
+    "in natural reading order. Keep the text in its ORIGINAL language — do NOT "
+    "translate or summarize. Include headings, body paragraphs, bullet points, "
+    "numbered lists, table contents, captions, labels, and any text written inside "
+    "diagrams, charts, or timelines. Preserve paragraph breaks. For a meaningful "
+    "diagram or chart, after transcribing its text add one short '[Figure: ...]' "
+    "note (in the document's language) describing what it shows. Begin each page "
+    "with '--- Page N ---' using the page number I provide. Return ONLY the "
+    "transcribed text, with no extra commentary."
+)
+
+
+def transcribe_pdf_pages(pages: list[tuple[int, bytes]]) -> str:
+    """Full verbatim OCR of scanned/image-only PDF pages in one Gemini call.
+
+    Unlike :func:`describe_pdf_figures` (which writes a brief spoken *description*
+    of visuals), this transcribes EVERY word on the page in the original language —
+    for PDFs that are really photos/screenshots with no text layer. `pages` is a
+    list of (page_number, png_bytes). Never raises — returns "" on any failure.
+    """
+    if not _vision_client or not pages:
+        return ""
+
+    parts: list[dict] = [{"text": _PDF_OCR_PROMPT}]
+    for page_no, img_bytes in pages:
+        parts.append({"text": f"\n--- Page {page_no} ---"})
+        parts.append({
+            "inline_data": {
+                "mime_type": "image/png",
+                "data": base64.b64encode(img_bytes).decode("utf-8"),
+            }
+        })
+
+    try:
+        response = _vision_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": parts}],
+            config=types.GenerateContentConfig(
+                # Dense multi-page transcription needs a large output budget.
+                max_output_tokens=8192,
+                temperature=0.0,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        text = (response.text or "").strip()
+        logger.info(f"[OCR] Transcribed {len(pages)} scanned page(s) -> {len(text)} chars")
+        return text
+    except Exception as e:  # noqa: BLE001 — best-effort; caller handles empty
+        logger.warning(f"[OCR] Full-page PDF OCR failed ({e}); continuing without it")
+        return ""
+
+
 def describe_pdf_figures(pages: list[tuple[int, bytes]]) -> str:
     """Describe diagrams/charts/figures from rendered PDF pages in one Gemini call.
 
