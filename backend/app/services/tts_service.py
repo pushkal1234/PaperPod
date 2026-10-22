@@ -80,6 +80,7 @@ async def synthesize_speech(
     rate: str = "+0%",
     pitch: str = "+0Hz",
     allow_silence_fallback: bool = False,
+    fallback_voice: str | None = None,
 ):
     """Generate speech audio with retry and brand-safe error wrapping.
 
@@ -90,6 +91,12 @@ async def synthesize_speech(
     punctuation/symbols) is rendered as a short silence instead of failing — this
     keeps one degenerate line from sinking an entire multi-minute podcast. Q&A
     (single-clip) callers leave it False so a bad answer surfaces as an error.
+
+    `fallback_voice`: a safety-net voice (the English multilingual default) used
+    only when the primary voice fails for a NON-throttle reason (e.g. a bad/removed
+    native voice). The multilingual English voices can still read foreign text, so
+    the podcast completes in English rather than failing outright. We never fall
+    back on a rate-limit — the same service would throttle the fallback voice too.
     """
     # Non-speakable text (e.g. "...", "—") makes edge-tts return "No audio was
     # received" on EVERY attempt, so don't waste the throttle-backoff budget on
@@ -101,30 +108,54 @@ async def synthesize_speech(
             return
         raise RuntimeError(TTS_SERVICE_ERROR_MSG)
 
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            communicator = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-            await communicator.save(output_path)
+    async def _attempt(use_voice: str) -> tuple[str, Exception | None] | None:
+        """Try one voice with retries. Returns None on success, else
+        (kind, error) where kind is 'rate' (throttled) or 'service' (other)."""
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                communicator = edge_tts.Communicate(text, use_voice, rate=rate, pitch=pitch)
+                await communicator.save(output_path)
+                return None
+            except Exception as e:
+                last_error = e
+                err_msg = str(e)
+                if _is_tts_rate_limit(err_msg):
+                    # Don't sleep after the final attempt — the loop is about to
+                    # exit, so a trailing backoff is pure wasted wall-time.
+                    if attempt < max_retries - 1:
+                        # Exponential backoff + jitter: a burst of throttled clips
+                        # must NOT retry in lockstep (thundering herd), which just
+                        # re-trips the same throttle. Jitter spreads them out.
+                        wait = min(8.0, 1.5 * (2 ** attempt)) + random.uniform(0.0, 1.0)
+                        logger.warning(f"[TTS] Retry {attempt + 1}/{max_retries} for clip after {wait:.1f}s: {err_msg[:80]}")
+                        await asyncio.sleep(wait)
+                else:
+                    # Non-throttle (e.g. bad voice): retrying the same voice won't
+                    # help, so stop here and let the caller try the fallback voice.
+                    logger.error(f"[TTS] Voice {use_voice!r} error: {err_msg[:120]}")
+                    return ("service", e)
+        if last_error and _is_tts_rate_limit(str(last_error)):
+            return ("rate", last_error)
+        return ("service", last_error)
+
+    result = await _attempt(voice)
+    if result is None:
+        return
+
+    kind, err = result
+    # English safety net: only for voice/content failures, never for throttling.
+    if kind == "service" and fallback_voice and fallback_voice != voice:
+        logger.warning(
+            f"[TTS] Primary voice {voice!r} failed; falling back to English voice "
+            f"{fallback_voice!r} so the podcast still completes"
+        )
+        result = await _attempt(fallback_voice)
+        if result is None:
             return
-        except Exception as e:
-            last_error = e
-            err_msg = str(e)
-            if _is_tts_rate_limit(err_msg):
-                # Don't sleep after the final attempt — the loop is about to exit
-                # and raise, so a trailing backoff is pure wasted wall-time.
-                if attempt < max_retries - 1:
-                    # Exponential backoff + jitter: a burst of throttled clips must
-                    # NOT all retry in lockstep (thundering herd), which just
-                    # re-trips the same throttle. Jitter spreads them out.
-                    wait = min(8.0, 1.5 * (2 ** attempt)) + random.uniform(0.0, 1.0)
-                    logger.warning(f"[TTS] Retry {attempt + 1}/{max_retries} for clip after {wait:.1f}s: {err_msg[:80]}")
-                    await asyncio.sleep(wait)
-            else:
-                logger.error(f"[TTS] Unrecoverable error: {err_msg[:120]}")
-                raise RuntimeError(TTS_SERVICE_ERROR_MSG)
-    # All retries exhausted
-    if last_error and _is_tts_rate_limit(str(last_error)):
+        kind, err = result
+
+    if kind == "rate":
         raise RuntimeError(TTS_RATE_LIMIT_MSG)
     raise RuntimeError(TTS_SERVICE_ERROR_MSG)
 
@@ -137,11 +168,13 @@ async def _synthesize_one(
     idx: int,
     rate: str = "+0%",
     pitch: str = "+0Hz",
+    fallback_voice: str | None = None,
 ):
     """Synthesize a single clip with concurrency limit. Propagates errors."""
     async with sem:
         await synthesize_speech(
-            text, voice, clip_path, rate=rate, pitch=pitch, allow_silence_fallback=True
+            text, voice, clip_path, rate=rate, pitch=pitch,
+            allow_silence_fallback=True, fallback_voice=fallback_voice,
         )
 
 
@@ -185,14 +218,21 @@ async def generate_podcast_audio(
     tasks = []
     clip_paths = []
 
+    # English safety net per speaker: if a native voice fails for a non-throttle
+    # reason, the clip is re-rendered with the multilingual English default (which
+    # can still read foreign text) so the podcast always completes.
     for i, entry in enumerate(dialogue):
         is_host = entry["speaker"] == "Host"
         voice = host_voice if is_host else guest_voice
+        fallback = settings.TTS_VOICE_HOST if is_host else settings.TTS_VOICE_GUEST
         rate = settings.TTS_RATE_HOST if is_host else settings.TTS_RATE_GUEST
         pitch = settings.TTS_PITCH_HOST if is_host else settings.TTS_PITCH_GUEST
         clip_path = os.path.join(temp_dir, f"clip_{i:04d}.mp3")
         clip_paths.append(clip_path)
-        tasks.append(_synthesize_one(sem, entry["text"], voice, clip_path, i, rate=rate, pitch=pitch))
+        tasks.append(_synthesize_one(
+            sem, entry["text"], voice, clip_path, i, rate=rate, pitch=pitch,
+            fallback_voice=fallback,
+        ))
 
     logger.info(f"[{doc_id}] TTS: {len(tasks)} clips, concurrency={concurrency}")
     _t_synth = time.perf_counter()

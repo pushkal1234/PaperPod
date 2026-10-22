@@ -270,6 +270,7 @@ async def send_generation_alert_email(
     ok: bool,
     total_seconds: float | None = None,
     audio_seconds: float | None = None,
+    language: str | None = None,
     failing_service: str | None = None,
     error: str | None = None,
 ) -> bool:
@@ -286,6 +287,7 @@ async def send_generation_alert_email(
     display_name = (user_name or "").strip() or "(no name)"
     subject = _alert_subject(user_name)
     doc_name = (doc_name or "").strip() or "(untitled)"
+    language_txt = (language or "").strip() or "Unknown"
 
     if ok:
         heading = "Podcast ready on PaperPod"
@@ -294,6 +296,7 @@ async def send_generation_alert_email(
             ("Name", display_name),
             ("Email", user_email),
             ("Document", doc_name),
+            ("Language", language_txt),
             ("Status", "Ready"),
             ("Total time", _fmt_secs(total_seconds)),
             ("Podcast length", _fmt_secs(audio_seconds)),
@@ -305,6 +308,7 @@ async def send_generation_alert_email(
             ("Name", display_name),
             ("Email", user_email),
             ("Document", doc_name),
+            ("Language", language_txt),
             ("Status", "Failed"),
             ("Likely service", (failing_service or "").strip() or "(unknown)"),
             ("Total time", _fmt_secs(total_seconds)),

@@ -238,3 +238,50 @@ def detect_language(text: str) -> str:
         return code
     logger.info(f"[lang] detected '{code}' (no native support) — using English")
     return "en"
+
+
+# ISO 639-1 → English name, covering langdetect's supported set. Used only for the
+# admin notification label (detect_language_name), so it can show the document's
+# TRUE language even when the podcast itself falls back to English.
+_LANG_NAMES: dict[str, str] = {
+    "af": "Afrikaans", "ar": "Arabic", "bg": "Bulgarian", "bn": "Bengali",
+    "ca": "Catalan", "cs": "Czech", "cy": "Welsh", "da": "Danish", "de": "German",
+    "el": "Greek", "en": "English", "es": "Spanish", "et": "Estonian",
+    "fa": "Persian", "fi": "Finnish", "fr": "French", "gu": "Gujarati",
+    "he": "Hebrew", "hi": "Hindi", "hr": "Croatian", "hu": "Hungarian",
+    "id": "Indonesian", "it": "Italian", "ja": "Japanese", "kn": "Kannada",
+    "ko": "Korean", "lt": "Lithuanian", "lv": "Latvian", "mk": "Macedonian",
+    "ml": "Malayalam", "mr": "Marathi", "ne": "Nepali", "nl": "Dutch",
+    "no": "Norwegian", "pa": "Punjabi", "pl": "Polish", "pt": "Portuguese",
+    "ro": "Romanian", "ru": "Russian", "sk": "Slovak", "sl": "Slovenian",
+    "so": "Somali", "sq": "Albanian", "sv": "Swedish", "sw": "Swahili",
+    "ta": "Tamil", "te": "Telugu", "th": "Thai", "tl": "Tagalog",
+    "tr": "Turkish", "uk": "Ukrainian", "ur": "Urdu", "vi": "Vietnamese",
+    "zh-cn": "Chinese (Simplified)", "zh-tw": "Chinese (Traditional)",
+    "zh": "Chinese",
+}
+
+
+def detect_language_name(text: str) -> str:
+    """Human-readable language of a document, for admin notification emails.
+
+    Unlike :func:`detect_language`, this is INDEPENDENT of MULTILINGUAL_ENABLED and
+    of native-voice support — it reports the document's ACTUAL language (e.g.
+    "German (de)") even when the podcast itself falls back to English, so feedback
+    can be written in the user's language. Returns "Unknown" when detection isn't
+    possible (too little text, detector unavailable).
+    """
+    sample = (text or "").strip()
+    if len(sample) < 30:
+        return "Unknown"
+    try:
+        from langdetect import detect, DetectorFactory
+
+        DetectorFactory.seed = 0  # deterministic
+        raw = detect(sample[:3000]).lower()
+    except Exception as e:  # noqa: BLE001 — label is best-effort, never fatal
+        logger.warning(f"[lang] name detection failed ({e})")
+        return "Unknown"
+
+    name = _LANG_NAMES.get(raw) or _LANG_NAMES.get(raw.split("-")[0])
+    return f"{name} ({raw})" if name else raw

@@ -26,7 +26,7 @@ from app.services.document_service import save_upload, extract_text, chunk_text,
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
-from app.languages import detect_language, get_language_profile
+from app.languages import detect_language, get_language_profile, detect_language_name
 from app.services.email_service import send_upload_alert_email, send_generation_alert_email
 from app.mem_utils import trim_memory
 
@@ -168,6 +168,9 @@ async def _send_generation_alert(
                 return
             user = await session.get(User, doc.user_id) if doc.user_id else None
             doc_name = doc.filename
+            # True document language (e.g. "German (de)") for the notification —
+            # independent of multilingual support, so feedback can be personalised.
+            language = detect_language_name(doc.raw_text or "")
         await send_generation_alert_email(
             settings.LOGIN_ALERT_EMAIL,
             user.email if user else "(anonymous)",
@@ -176,6 +179,7 @@ async def _send_generation_alert(
             ok=ok,
             total_seconds=total_seconds,
             audio_seconds=audio_seconds,
+            language=language,
             failing_service=_service_for_step(failing_step) if failing_step else None,
             error=error,
         )
