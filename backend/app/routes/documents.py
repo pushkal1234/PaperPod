@@ -168,9 +168,20 @@ async def _send_generation_alert(
                 return
             user = await session.get(User, doc.user_id) if doc.user_id else None
             doc_name = doc.filename
-            # True document language (e.g. "German (de)") for the notification —
-            # independent of multilingual support, so feedback can be personalised.
-            language = detect_language_name(doc.raw_text or "")
+            # INPUT = the document's own language (e.g. "German (de)"), independent
+            # of multilingual support. OUTPUT = the language the podcast audio was
+            # actually produced in, detected from the generated script — English
+            # when we fell back for an unsupported language. Showing both lets us
+            # measure input-vs-output match rate for out-of-support languages.
+            input_language = detect_language_name(doc.raw_text or "")
+            output_language = None
+            if ok:
+                res = await session.execute(
+                    select(AudioFile).where(AudioFile.document_id == doc_id)
+                )
+                audio = res.scalar_one_or_none()
+                if audio and audio.dialogue_script:
+                    output_language = detect_language_name(audio.dialogue_script)
         await send_generation_alert_email(
             settings.LOGIN_ALERT_EMAIL,
             user.email if user else "(anonymous)",
@@ -179,7 +190,8 @@ async def _send_generation_alert(
             ok=ok,
             total_seconds=total_seconds,
             audio_seconds=audio_seconds,
-            language=language,
+            input_language=input_language,
+            output_language=output_language,
             failing_service=_service_for_step(failing_step) if failing_step else None,
             error=error,
         )

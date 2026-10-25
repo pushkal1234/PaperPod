@@ -250,6 +250,19 @@ async def send_upload_alert_email(
     )
 
 
+def _lang_base(label: str) -> str:
+    """Base language name from a label like "German (de)" or "Chinese (zh-cn)".
+
+    Compares on the ISO code when present (so "Chinese (zh-cn)" vs "Chinese (zh)"
+    still match on the name), else on the lowercased name.
+    """
+    label = (label or "").strip()
+    if "(" in label and label.endswith(")"):
+        code = label[label.rfind("(") + 1 : -1].strip().lower()
+        return code.split("-")[0] or label.lower()
+    return label.lower()
+
+
 def _fmt_secs(seconds: float | None) -> str:
     """Human-friendly duration, e.g. 190.4 -> "190.4s (3m 10s)"."""
     if seconds is None:
@@ -270,7 +283,8 @@ async def send_generation_alert_email(
     ok: bool,
     total_seconds: float | None = None,
     audio_seconds: float | None = None,
-    language: str | None = None,
+    input_language: str | None = None,
+    output_language: str | None = None,
     failing_service: str | None = None,
     error: str | None = None,
 ) -> bool:
@@ -287,7 +301,14 @@ async def send_generation_alert_email(
     display_name = (user_name or "").strip() or "(no name)"
     subject = _alert_subject(user_name)
     doc_name = (doc_name or "").strip() or "(untitled)"
-    language_txt = (language or "").strip() or "Unknown"
+    # Input = the document's language; Output = the language the podcast audio was
+    # actually produced in (English when we fell back for an unsupported language).
+    # Shown side by side so match-vs-fallback rate is visible at a glance.
+    in_lang = (input_language or "").strip() or "Unknown"
+    out_lang = (output_language or "").strip() or "Unknown"
+    match_note = "" if in_lang == "Unknown" or out_lang == "Unknown" else (
+        " ✓ match" if _lang_base(in_lang) == _lang_base(out_lang) else " ⚠︎ fallback"
+    )
 
     if ok:
         heading = "Podcast ready on PaperPod"
@@ -296,7 +317,8 @@ async def send_generation_alert_email(
             ("Name", display_name),
             ("Email", user_email),
             ("Document", doc_name),
-            ("Language", language_txt),
+            ("Input language", in_lang),
+            ("Output language", out_lang + match_note),
             ("Status", "Ready"),
             ("Total time", _fmt_secs(total_seconds)),
             ("Podcast length", _fmt_secs(audio_seconds)),
@@ -308,7 +330,7 @@ async def send_generation_alert_email(
             ("Name", display_name),
             ("Email", user_email),
             ("Document", doc_name),
-            ("Language", language_txt),
+            ("Input language", in_lang),
             ("Status", "Failed"),
             ("Likely service", (failing_service or "").strip() or "(unknown)"),
             ("Total time", _fmt_secs(total_seconds)),
