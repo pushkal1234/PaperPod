@@ -801,34 +801,45 @@ def _note_gemini_failure(model: str, err: Exception) -> None:
     logger.error(f"[LLM] Gemini model {model!r} failed: {s[:180]}")
 
 
-def _try_gemini_fallback(messages: list[dict], temperature: float, max_tokens: int):
-    """Try the Gemini fallback CHAIN. Never raises — returns text or None.
+def _call_gemini_chain(messages: list[dict], temperature: float, max_tokens: int) -> str:
+    """Run a chat request on the Gemini CHAIN. Raises if every model fails.
 
     Walks the configured models in order, skipping any whose daily quota is spent,
     and on a per-day 429 for one model immediately moves to the next (which has its
     own separate quota) rather than burning retries on a model that's dead for hours.
+    Used directly by callers that guard Gemini themselves (full-doc QA, single-pass
+    summarization); _try_gemini_fallback wraps it for the never-raise path.
     """
-    if not settings.GOOGLE_API_KEY:
-        return None
     now = time.time()
     with _gemini_cooldown_lock:
         cooldowns = dict(_gemini_model_cooldowns)
-    tried = False
+    last_err: Exception | None = None
     for model in _gemini_models():
         if cooldowns.get(model, 0) > now:
             continue  # still exhausted — skip without a doomed round-trip
-        tried = True
         try:
-            logger.warning(f"[LLM] Falling back to Gemini ({model})...")
+            logger.info(f"[LLM] Calling Gemini ({model})...")
             text = _call_gemini(messages, temperature, max_tokens, model)
-            logger.info(f"[LLM] Gemini fallback succeeded via {model} ({len(text)} chars)")
+            logger.info(f"[LLM] Gemini succeeded via {model} ({len(text)} chars)")
             return text
         except Exception as e:  # noqa: BLE001 — try the next model in the chain
             _note_gemini_failure(model, e)
-            continue
-    if not tried:
+            last_err = e
+    if last_err is None:
         logger.error("[LLM] All Gemini models are in daily-quota cooldown — none available")
-    return None
+        raise RuntimeError("All Gemini models are in daily-quota cooldown")
+    raise last_err
+
+
+def _try_gemini_fallback(messages: list[dict], temperature: float, max_tokens: int):
+    """Try the Gemini fallback CHAIN. Never raises — returns text or None."""
+    if not settings.GOOGLE_API_KEY:
+        return None
+    logger.warning("[LLM] Falling back to Gemini chain...")
+    try:
+        return _call_gemini_chain(messages, temperature, max_tokens)
+    except Exception:  # noqa: BLE001 — per-model failures already logged
+        return None
 
 
 def _log_groq_cache_usage(response) -> None:
@@ -1093,7 +1104,7 @@ def _summarize_full_document_gemini(
         f"condensing in a single {settings.LLM_FALLBACK_MODEL} pass"
     )
     try:
-        summary = _call_gemini(
+        summary = _call_gemini_chain(
             [
                 {"role": "system", "content": _FULL_SUMMARY_SYSTEM_PROMPT},
                 {"role": "user", "content": document_text},
@@ -1639,7 +1650,7 @@ def answer_question(question: str, context_chunks: list[str], full_document: str
 
     if full_document and gemini_ok and len(full_document) <= settings.QA_FULL_DOC_MAX_CHARS:
         try:
-            raw = _call_gemini(
+            raw = _call_gemini_chain(
                 messages=[
                     {"role": "system", "content": QA_SYSTEM_PROMPT},
                     {"role": "user", "content": (
