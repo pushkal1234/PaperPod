@@ -16,6 +16,15 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
     LLM_FALLBACK_MODEL: str = os.getenv("LLM_FALLBACK_MODEL", "gemini-2.5-flash")
+    # Gemini fallback CHAIN. Each free Gemini model has its OWN separate daily
+    # (RPD) quota, so when one hits its per-day limit (a 429 that retries/Groq
+    # can't fix for hours) we switch to the next model instead of dying. Tried in
+    # order; the primary LLM_FALLBACK_MODEL is always tried first. Comma-separated;
+    # override on Railway to match exactly the free models in your AI Studio quota.
+    LLM_FALLBACK_MODELS: str = os.getenv(
+        "LLM_FALLBACK_MODELS",
+        "gemini-2.5-flash,gemini-3-flash-preview,gemini-3.6-flash,gemini-3.8-flash,gemini-2.5-flash-lite",
+    )
     WHISPER_MODEL: str = "whisper-large-v3"
     # Voice casting — BOTH en-US so the whole episode is a natural US-English
     #   HOST  = drives the convo / asks questions   -> Andrew (US male)

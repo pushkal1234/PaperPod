@@ -696,9 +696,9 @@ def _get_gemini_client():
         return None
 
 
-def _call_gemini(messages: list[dict], temperature: float, max_tokens: int) -> str:
-    """Run the same chat request on Gemini. Converts OpenAI-style messages to
-    Gemini's contents + system_instruction. Raises on failure (caller guards)."""
+def _call_gemini(messages: list[dict], temperature: float, max_tokens: int, model: str) -> str:
+    """Run the same chat request on a SPECIFIC Gemini model. Converts OpenAI-style
+    messages to Gemini's contents + system_instruction. Raises on failure."""
     client = _get_gemini_client()
     if client is None:
         raise RuntimeError("Gemini fallback not configured")
@@ -723,7 +723,7 @@ def _call_gemini(messages: list[dict], temperature: float, max_tokens: int) -> s
         thinking_config=types.ThinkingConfig(thinking_budget=0),
     )
     response = client.models.generate_content(
-        model=settings.LLM_FALLBACK_MODEL,
+        model=model,
         contents=contents,
         config=config,
     )
@@ -734,18 +734,101 @@ def _call_gemini(messages: list[dict], temperature: float, max_tokens: int) -> s
     return text
 
 
+# --- Multi-model Gemini fallback chain --------------------------------------
+# Each free Gemini model has its OWN separate daily (RPD) quota. When one model
+# hits its per-day limit, a 429 that NO amount of retrying (or Groq) can fix for
+# hours, we cool that model down and switch to the next free model instead. This
+# maps model_id -> epoch time until which it's considered exhausted.
+_gemini_model_cooldowns: dict[str, float] = {}
+_gemini_cooldown_lock = threading.Lock()
+
+
+def _gemini_models() -> list[str]:
+    """Ordered, de-duped Gemini fallback chain (primary first)."""
+    raw = settings.LLM_FALLBACK_MODELS or settings.LLM_FALLBACK_MODEL or ""
+    models = [m.strip() for m in raw.split(",") if m.strip()]
+    primary = (settings.LLM_FALLBACK_MODEL or "").strip()
+    if primary:
+        models = [primary] + [m for m in models if m != primary]
+    seen, out = set(), []
+    for m in models:
+        if m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out
+
+
+def _parse_retry_delay(err: str) -> float | None:
+    """Seconds to wait from a Gemini 429 body, if present (e.g. 'retryDelay: 12617s'
+    or 'Please retry in 3h30m17s'). Returns None when not found."""
+    m = re.search(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s", err)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"retry in\s+(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?", err)
+    if m and any(m.groups()):
+        h = float(m.group(1) or 0)
+        mi = float(m.group(2) or 0)
+        s = float(m.group(3) or 0)
+        return h * 3600 + mi * 60 + s
+    return None
+
+
+def _note_gemini_failure(model: str, err: Exception) -> None:
+    """Record why a Gemini model failed so we skip it appropriately next time."""
+    s = str(err)
+    low = s.lower()
+    now = time.time()
+    if any(k in low for k in ["not_found", "404", "not found", "does not exist", "unknown name", "is not supported"]):
+        # Bad/unavailable model id (e.g. a chain entry that doesn't exist for this
+        # key) — disable for a day so we stop wasting round-trips on it.
+        with _gemini_cooldown_lock:
+            _gemini_model_cooldowns[model] = now + 24 * 3600
+        logger.error(f"[LLM] Gemini model {model!r} unavailable (bad id?); disabling 24h. {s[:140]}")
+        return
+    if "resource_exhausted" in low or _is_llm_rate_limit(low):
+        is_daily = any(k in low for k in ["per day", "perday", "requestsperday", "requests per day"])
+        secs = _parse_retry_delay(s)
+        if secs is None:
+            secs = 3 * 3600 if is_daily else 60.0
+        secs = min(secs, 24 * 3600)
+        with _gemini_cooldown_lock:
+            _gemini_model_cooldowns[model] = now + secs
+        logger.warning(
+            f"[LLM] Gemini {model!r} {'DAILY quota' if is_daily else 'rate'} exhausted; "
+            f"cooling down {secs:.0f}s and switching models"
+        )
+        return
+    logger.error(f"[LLM] Gemini model {model!r} failed: {s[:180]}")
+
+
 def _try_gemini_fallback(messages: list[dict], temperature: float, max_tokens: int):
-    """Attempt the Gemini fallback. Never raises — returns the text or None."""
-    if not settings.GOOGLE_API_KEY or not settings.LLM_FALLBACK_MODEL:
+    """Try the Gemini fallback CHAIN. Never raises — returns text or None.
+
+    Walks the configured models in order, skipping any whose daily quota is spent,
+    and on a per-day 429 for one model immediately moves to the next (which has its
+    own separate quota) rather than burning retries on a model that's dead for hours.
+    """
+    if not settings.GOOGLE_API_KEY:
         return None
-    try:
-        logger.warning(f"[LLM] Falling back to Gemini ({settings.LLM_FALLBACK_MODEL})...")
-        text = _call_gemini(messages, temperature, max_tokens)
-        logger.info(f"[LLM] Gemini fallback succeeded ({len(text)} chars)")
-        return text
-    except Exception as e:
-        logger.error(f"[LLM] Gemini fallback failed: {e}")
-        return None
+    now = time.time()
+    with _gemini_cooldown_lock:
+        cooldowns = dict(_gemini_model_cooldowns)
+    tried = False
+    for model in _gemini_models():
+        if cooldowns.get(model, 0) > now:
+            continue  # still exhausted — skip without a doomed round-trip
+        tried = True
+        try:
+            logger.warning(f"[LLM] Falling back to Gemini ({model})...")
+            text = _call_gemini(messages, temperature, max_tokens, model)
+            logger.info(f"[LLM] Gemini fallback succeeded via {model} ({len(text)} chars)")
+            return text
+        except Exception as e:  # noqa: BLE001 — try the next model in the chain
+            _note_gemini_failure(model, e)
+            continue
+    if not tried:
+        logger.error("[LLM] All Gemini models are in daily-quota cooldown — none available")
+    return None
 
 
 def _log_groq_cache_usage(response) -> None:
