@@ -16,6 +16,7 @@ export default function QAPanel({ docId }) {
   const [searchMode, setSearchMode] = useState('document');
   const [webSearchAvailable, setWebSearchAvailable] = useState(false);
   const [playingAudioUrl, setPlayingAudioUrl] = useState(null);
+  const [isAnswerPaused, setIsAnswerPaused] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
@@ -44,8 +45,18 @@ export default function QAPanel({ docId }) {
     const audio = answerAudioRef.current;
     if (!audio) return;
     const onEnded = () => setPlayingAudioUrl(null);
+    // Follow the element itself so the label stays right however playback is
+    // paused (our button, OS media keys, the browser).
+    const onPlay = () => setIsAnswerPaused(false);
+    const onPause = () => setIsAnswerPaused(true);
     audio.addEventListener('ended', onEnded);
-    return () => audio.removeEventListener('ended', onEnded);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    return () => {
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+    };
   }, []);
 
   // Allow Esc to exit the maximized (overlay) mode.
@@ -372,13 +383,18 @@ export default function QAPanel({ docId }) {
                     className="flex items-center gap-1.5 text-xs font-medium text-brand-700 hover:text-brand-800 transition-colors"
                   >
                     <Volume2 className="w-3.5 h-3.5" />
-                    {playingAudioUrl === msg.audioUrl ? 'Pause' : 'Play audio answer'}
+                    {playingAudioUrl !== msg.audioUrl
+                      ? 'Play audio answer'
+                      : isAnswerPaused
+                        ? 'Resume'
+                        : 'Pause'}
                   </button>
                   {playingAudioUrl === msg.audioUrl && (
                     <button
                       onClick={stopAnswerAudio}
-                      className="flex items-center gap-1 text-xs text-red-500 hover:text-red-600 transition-colors"
+                      className="flex items-center gap-1 text-xs text-stone-400 hover:text-stone-600 transition-colors"
                       title="Stop"
+                      aria-label="Stop audio answer"
                     >
                       <Square className="w-3 h-3" />
                     </button>
