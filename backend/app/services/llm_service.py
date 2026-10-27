@@ -1713,13 +1713,18 @@ def answer_question(question: str, context_chunks: list[str], full_document: str
 
 
 def answer_question_hybrid(
-    question: str, document_context: str, web_results: list[dict]
+    question: str,
+    document_context: str,
+    web_results: list[dict],
+    full_document: str | None = None,
 ) -> str:
-    """Answer using document context + SerpAPI web snippets via Groq."""
-    doc = (document_context or "")[:8000]
-    if doc and not _is_context_relevant(question, doc):
-        doc = ""
+    """Answer using document context + SerpAPI web snippets.
 
+    Preferred path (same as answer_question): when the WHOLE document fits
+    ``QA_FULL_DOC_MAX_CHARS``, the Gemini chain answers from the entire document
+    plus the web results. Fallback: Groq-first ``_call_llm`` on the trimmed
+    ``document_context`` (first 8K chars, relevance-gated).
+    """
     if web_results:
         web_block = "\n\n".join(
             f"[{i + 1}] {r.get('title', 'Result')}\n"
@@ -1729,6 +1734,32 @@ def answer_question_hybrid(
         )
     else:
         web_block = "(No web results returned for this query.)"
+    instructions = f"QUESTION: {question}\n\nAnswer in 2-4 short sentences (~90 words max) — it will be read aloud."
+
+    gemini_ok = bool(settings.GOOGLE_API_KEY and settings.LLM_FALLBACK_MODEL)
+    if full_document and gemini_ok and len(full_document) <= settings.QA_FULL_DOC_MAX_CHARS:
+        try:
+            raw = _call_gemini_chain(
+                messages=[
+                    {"role": "system", "content": _qa_system_prompt(HYBRID_QA_SYSTEM_PROMPT)},
+                    {"role": "user", "content": (
+                        f"DOCUMENT CONTEXT (the full document):\n\n{full_document}\n\n---\n\n"
+                        f"WEB SEARCH RESULTS:\n\n{web_block}\n\n---\n\n{instructions}"
+                    )},
+                ],
+                temperature=0.2,
+                max_tokens=400,
+            )
+            if raw and raw.strip():
+                logger.info(f"[QA] Hybrid answered from FULL document ({len(full_document)} chars) + web via Gemini")
+                return normalize_answer_text(raw)
+            logger.warning("[QA] Hybrid full-doc Gemini answer was empty — falling back to trimmed context")
+        except Exception as e:
+            logger.warning(f"[QA] Hybrid full-doc Gemini answer failed ({e}); falling back to trimmed context")
+
+    doc = (document_context or "")[:8000]
+    if doc and not _is_context_relevant(question, doc):
+        doc = ""
 
     raw = _call_llm(
         messages=[
@@ -1737,8 +1768,7 @@ def answer_question_hybrid(
                 "role": "user",
                 "content": (
                     f"DOCUMENT CONTEXT:\n\n{doc or '(None — unrelated or insufficient for this question)'}\n\n---\n\n"
-                    f"WEB SEARCH RESULTS:\n\n{web_block}\n\n---\n\n"
-                    f"QUESTION: {question}\n\nAnswer in 2-4 short sentences (~90 words max) — it will be read aloud."
+                    f"WEB SEARCH RESULTS:\n\n{web_block}\n\n---\n\n{instructions}"
                 ),
             },
         ],

@@ -157,14 +157,19 @@ async def ask_question(
     t0 = time.perf_counter()
     try:
         if mode == "hybrid" and serpapi_service.is_configured():
+            # The full document goes to the preferred Gemini path. document_context
+            # is only for the Groq fallback, which keeps its first 8K chars — so the
+            # question-matched chunks go FIRST, ahead of the document's opening.
             doc_context_parts = []
-            if doc.raw_text:
-                doc_context_parts.append(doc.raw_text[:8000])
             if context_chunks:
                 doc_context_parts.append("\n\n---\n\n".join(context_chunks))
+            if doc.raw_text:
+                doc_context_parts.append(doc.raw_text[:8000])
             document_context = "\n\n---\n\n".join(doc_context_parts) or "No document text available."
             try:
-                result = await run_in_threadpool(serpapi_service.answer_with_web_search, question_text, document_context)
+                result = await run_in_threadpool(
+                    serpapi_service.answer_with_web_search, question_text, document_context, doc.raw_text
+                )
                 answer_text = result["answer"]
                 citations = result.get("citations") or []
             except Exception as e:

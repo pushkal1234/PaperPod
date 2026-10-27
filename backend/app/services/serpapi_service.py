@@ -27,6 +27,18 @@ def _is_rate_limit(err_str: str) -> bool:
     return any(k in low for k in ["rate_limit", "429", "quota", "too many requests", "limit exceeded"])
 
 
+def _redact(msg: str) -> str:
+    """httpx errors embed the full request URL, which carries api_key — never log it."""
+    key = settings.SERPAPI_API_KEY.strip()
+    return msg.replace(key, "***") if key else msg
+
+
+# SerpAPI reports "Google found nothing" as an error in a 200 response. It's a
+# real answer, not a failure: retrying repeats the same empty search (spending
+# quota and ~30s of backoff), so treat it as zero results.
+_NO_RESULTS_MARKERS = ("hasn't returned any results", "has not returned any results", "no results")
+
+
 def search_web(query: str) -> list[dict]:
     """Run web search with retry. Returns [{title, link, snippet}, ...]."""
     if not is_configured():
@@ -54,6 +66,9 @@ def search_web(query: str) -> list[dict]:
 
             if data.get("error"):
                 err_msg = data["error"]
+                if any(m in err_msg.lower() for m in _NO_RESULTS_MARKERS):
+                    logger.info(f"[WebSearch] 0 results for query: {query[:80]}")
+                    return []
                 if _is_rate_limit(err_msg):
                     raise RuntimeError(WEB_RATE_LIMIT_MSG)
                 raise RuntimeError(WEB_SERVICE_ERROR_MSG)
@@ -68,7 +83,10 @@ def search_web(query: str) -> list[dict]:
                 link = item.get("link")
                 if not link:
                     continue
-                snippet = item.get("snippet") or item.get("snippet_highlighted", [""])[0] if isinstance(item.get("snippet_highlighted"), list) else (item.get("snippet") or "")
+                snippet = item.get("snippet") or ""
+                highlighted = item.get("snippet_highlighted")
+                if not snippet and isinstance(highlighted, list) and highlighted:
+                    snippet = highlighted[0] or ""
                 results.append({
                     "title": item.get("title") or link,
                     "link": link,
@@ -92,7 +110,7 @@ def search_web(query: str) -> list[dict]:
                 raise
             last_error = e
             wait = 5 * (attempt + 1)
-            logger.warning(f"[WebSearch] Retry {attempt + 1}/3 after {wait}s: {e}")
+            logger.warning(f"[WebSearch] Retry {attempt + 1}/3 after {wait}s: {_redact(str(e))}")
             time.sleep(wait)
         except httpx.TimeoutException as e:
             _httpx_logger.setLevel(_orig_level)
@@ -106,16 +124,18 @@ def search_web(query: str) -> list[dict]:
             err_str = str(e)
             if _is_rate_limit(err_str):
                 raise RuntimeError(WEB_RATE_LIMIT_MSG)
-            logger.error(f"[WebSearch] Unrecoverable error: {e}")
+            logger.error(f"[WebSearch] Unrecoverable error: {_redact(err_str)}")
             raise RuntimeError(WEB_SERVICE_ERROR_MSG)
 
     raise RuntimeError(WEB_SERVICE_ERROR_MSG)
 
 
-def answer_with_web_search(question: str, document_context: str) -> dict:
+def answer_with_web_search(
+    question: str, document_context: str, full_document: str | None = None
+) -> dict:
     """Search the web and answer using doc + web context."""
     web_results = search_web(question)
-    answer = answer_question_hybrid(question, document_context, web_results)
+    answer = answer_question_hybrid(question, document_context, web_results, full_document)
 
     citations = [
         {"url": r["link"], "title": r["title"]}
