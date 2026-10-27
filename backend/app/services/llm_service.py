@@ -592,9 +592,8 @@ Rules:
 2. Use web results for current facts, definitions, news, or gaps the document doesn't cover.
 3. Briefly distinguish what comes from the document vs the web when both are used.
 4. Only cite URLs that appear in the web results section — do not invent links.
-5. Be concise and conversational — suitable for spoken audio.
-6. Use plain text only — NO markdown (no **bold**, no bullets, no headers). Write as if speaking aloud.
-7. KEEP IT SHORT: 2-4 sentences, roughly 90 words or fewer. The answer is read aloud by a voice, so a long answer means a long, slow audio clip. Lead with the direct answer; add at most one sentence of supporting detail."""
+5. Be concise but thorough, and speak naturally as if explaining to a friend.
+6. Use plain text only — NO markdown (no **bold**, no bullets, no headers). Write as if speaking aloud."""
 
 
 def _qa_system_prompt(base: str) -> str:
@@ -1734,7 +1733,7 @@ def answer_question_hybrid(
         )
     else:
         web_block = "(No web results returned for this query.)"
-    instructions = f"QUESTION: {question}\n\nAnswer in 2-4 short sentences (~90 words max) — it will be read aloud."
+    instructions = f"QUESTION: {question}"
 
     gemini_ok = bool(settings.GOOGLE_API_KEY and settings.LLM_FALLBACK_MODEL)
     if full_document and gemini_ok and len(full_document) <= settings.QA_FULL_DOC_MAX_CHARS:
@@ -1748,7 +1747,7 @@ def answer_question_hybrid(
                     )},
                 ],
                 temperature=0.2,
-                max_tokens=400,
+                max_tokens=1024,
             )
             if raw and raw.strip():
                 logger.info(f"[QA] Hybrid answered from FULL document ({len(full_document)} chars) + web via Gemini")
@@ -1773,9 +1772,8 @@ def answer_question_hybrid(
             },
         ],
         temperature=0.2,
-        # Cap the length: this answer is spoken via TTS, and TTS time scales with
-        # length. A 1,500-char answer took ~53s to synthesize; ~90 words keeps it
-        # to a few seconds. The prompt also enforces brevity.
-        max_tokens=400,
+        # Same output budget as Doc only. Answer length no longer delays the user:
+        # the text is returned first and the audio is voiced in parallel chunks.
+        max_tokens=1024,
     )
     return normalize_answer_text(raw)
