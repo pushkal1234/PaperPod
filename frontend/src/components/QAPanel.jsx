@@ -1,8 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { Mic, MicOff, Send, MessageCircle, Volume2, Loader2, FileText, Globe, Square, Maximize2, Minimize2, Copy, Check } from 'lucide-react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import { askQuestion, getQAAudioUrl, getHealth } from '../api';
+import { askQuestion, getQAAudioUrl, getQAAudioStatus, getHealth } from '../api';
 import FormattedAnswer from './FormattedAnswer';
+
+// The answer text arrives first; its audio is synthesized in the background.
+// Poll until it's ready (long answers can take a couple of minutes).
+const AUDIO_POLL_MS = 3000;
+const AUDIO_POLL_MAX_MS = 15 * 60 * 1000;
 
 export default function QAPanel({ docId }) {
   const [messages, setMessages] = useState([]);
@@ -16,6 +21,14 @@ export default function QAPanel({ docId }) {
   const { isRecording, startRecording, stopRecording } = useAudioRecorder();
   const messagesEndRef = useRef(null);
   const answerAudioRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     getHealth()
@@ -63,6 +76,30 @@ export default function QAPanel({ docId }) {
     }
   };
 
+  const setAudioStatus = (qaId, audioStatus) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.qaId === qaId ? { ...m, audioStatus } : m))
+    );
+  };
+
+  const pollAnswerAudio = async (qaId) => {
+    const started = Date.now();
+    while (mountedRef.current && Date.now() - started < AUDIO_POLL_MAX_MS) {
+      await new Promise((resolve) => setTimeout(resolve, AUDIO_POLL_MS));
+      if (!mountedRef.current) return;
+      try {
+        const { status } = await getQAAudioStatus(qaId);
+        if (status !== 'pending') {
+          setAudioStatus(qaId, status);
+          return;
+        }
+      } catch {
+        // Transient network error — keep polling until the time limit.
+      }
+    }
+    if (mountedRef.current) setAudioStatus(qaId, 'failed');
+  };
+
   const submitQuestion = async ({ text, audioBlob }) => {
     setIsLoading(true);
     setMessages((prev) => [
@@ -77,6 +114,8 @@ export default function QAPanel({ docId }) {
 
     try {
       const res = await askQuestion(docId, { text, audioBlob, searchMode });
+      // Older backends synthesize before responding and send no audio_status.
+      const audioStatus = res.audio_status || 'ready';
       setMessages((prev) => {
         const updated = [...prev];
         if (audioBlob && updated.length > 0) {
@@ -87,12 +126,15 @@ export default function QAPanel({ docId }) {
           {
             type: 'answer',
             text: res.answer,
+            qaId: res.qa_id,
             audioUrl: getQAAudioUrl(res.qa_id),
+            audioStatus,
             searchMode: res.search_mode,
             citations: res.citations || [],
           },
         ];
       });
+      if (audioStatus === 'pending') pollAnswerAudio(res.qa_id);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -314,7 +356,16 @@ export default function QAPanel({ docId }) {
                   </button>
                 )}
               </div>
-              {msg.audioUrl && (
+              {msg.audioUrl && msg.audioStatus === 'pending' && (
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-stone-400">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Preparing audio answer…
+                </div>
+              )}
+              {msg.audioUrl && msg.audioStatus === 'failed' && (
+                <p className="mt-2 text-xs text-stone-400">Audio isn't available for this answer.</p>
+              )}
+              {msg.audioUrl && msg.audioStatus === 'ready' && (
                 <div className="mt-2 flex items-center gap-2">
                   <button
                     onClick={() => playAnswerAudio(msg.audioUrl)}

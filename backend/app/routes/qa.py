@@ -2,14 +2,16 @@ import os
 import uuid
 import time
 import logging
+from datetime import timedelta, timezone
 
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import get_db, Document, QASession, _utcnow
+from app.database import get_db, async_session, Document, QASession, _utcnow
+from app.languages import detect_language, get_language_profile
 from app.services.stt_service import transcribe_audio
 from app.services.vector_service import query_chunks, store_chunks
 from app.services.document_service import chunk_text
@@ -19,6 +21,14 @@ from app.services import serpapi_service
 
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 logger = logging.getLogger("paperpod")
+
+# The answer's audio is synthesized in the background after the text is returned.
+# Its state lives in QASession.answer_audio_path so every worker sees the same
+# thing: NULL = still synthesizing, "" = synthesis failed, a path = ready.
+_AUDIO_FAILED = ""
+# A NULL path older than this means the worker died mid-synthesis (restart or
+# redeploy), so the audio is never coming — report it as failed, not pending.
+_AUDIO_PENDING_TIMEOUT = timedelta(minutes=15)
 
 # Provider keywords that must never leak to the user
 _PROVIDER_KEYWORDS = ["groq", "whisper", "edge-tts", "edge_tts", "google", "gemini", "gtts", "g_tts", "serpapi", "azure"]
@@ -38,8 +48,53 @@ def _sanitize_error(msg: str) -> str:
     return clean
 
 
+def _audio_status(qa: QASession) -> str:
+    """'ready', 'pending' or 'failed' for a Q&A answer's audio."""
+    if qa.answer_audio_path:
+        return "ready" if os.path.exists(qa.answer_audio_path) else "failed"
+    if qa.answer_audio_path is None and qa.created_at:
+        created = qa.created_at
+        if created.tzinfo is None:  # SQLite hands back naive UTC datetimes
+            created = created.replace(tzinfo=timezone.utc)
+        if _utcnow() - created < _AUDIO_PENDING_TIMEOUT:
+            return "pending"
+    return "failed"
+
+
+async def _synthesize_answer_audio(qa_id: str, doc_id: str, answer_text: str):
+    """Background task: voice a saved answer, then record the MP3 path (or the
+    failure) on its QASession. Native voice follows the answer's language."""
+    t0 = time.perf_counter()
+    lang_code = await run_in_threadpool(detect_language, answer_text)
+    voice = get_language_profile(lang_code)["guest_voice"]
+    path = None
+    try:
+        path = await synthesize_answer(strip_markdown_for_speech(answer_text), doc_id, qa_id, voice=voice)
+    except Exception as e:
+        logger.error(f"[QA][{doc_id}] TTS failed for {qa_id}: {e}", exc_info=not isinstance(e, RuntimeError))
+
+    async with async_session() as session:
+        qa = await session.get(QASession, qa_id)
+        if qa is None:
+            # The document (and its Q&A) was deleted while we were synthesizing.
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            return
+        qa.answer_audio_path = path or _AUDIO_FAILED
+        await session.commit()
+
+    logger.info(
+        f"[QA][{doc_id}] ⏱️ TTS (background) — {time.perf_counter() - t0:.2f}s, "
+        f"lang={lang_code}, voice={voice}, ok={bool(path)}, chars={len(answer_text)}"
+    )
+
+
 @router.post("/ask")
 async def ask_question(
+    background_tasks: BackgroundTasks,
     doc_id: str = Form(...),
     question_text: str = Form(None),
     search_mode: str = Form("document"),
@@ -47,8 +102,9 @@ async def ask_question(
     db: AsyncSession = Depends(get_db),
 ):
     """Ask a question about a document. Accepts text or audio input.
-    
-    Returns answer text + audio URL.
+
+    Returns the answer text as soon as the LLM is done. The audio is synthesized
+    in the background: poll ``/api/qa/audio-status/{qa_id}`` until it's ready.
     """
     overall_start = time.perf_counter()
     step_times = {}
@@ -127,46 +183,49 @@ async def ask_question(
         raise HTTPException(status_code=503, detail=_sanitize_error("PaperPod's AI engine is temporarily busy. Please try again shortly."))
     step_times['llm'] = time.perf_counter() - t0
 
-    # TTS answer
-    t0 = time.perf_counter()
+    # Save the answer with no audio yet (NULL path = synthesizing), return the
+    # text now, and voice it in the background — TTS can take far longer than
+    # the LLM, and the user shouldn't wait for it to read the answer.
     qa_id = str(uuid.uuid4())
-    try:
-        answer_audio_path = await synthesize_answer(strip_markdown_for_speech(answer_text), doc_id, qa_id)
-    except RuntimeError as e:
-        raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
-    except Exception as e:
-        logger.error(f"[QA][{doc_id}] TTS failed: {e}", exc_info=True)
-        raise HTTPException(status_code=503, detail=_sanitize_error("PaperPod's voice engine is temporarily busy. Please try again shortly."))
-    step_times['tts'] = time.perf_counter() - t0
-
-    total = time.perf_counter() - overall_start
-    logger.info(
-        f"[QA][{doc_id}] ⏱️ TIMING — stt={step_times.get('stt', 0):.2f}s, "
-        f"retrieve={step_times['retrieve']:.2f}s, llm={step_times['llm']:.2f}s, "
-        f"tts={step_times['tts']:.2f}s, total={total:.2f}s, "
-        f"mode={mode}, chars_in={len(question_text)}, chars_out={len(answer_text)}"
-    )
-
     qa_session = QASession(
         id=qa_id,
         document_id=doc_id,
         question_text=question_text,
         answer_text=answer_text,
-        answer_audio_path=answer_audio_path,
+        answer_audio_path=None,
         created_at=_utcnow(),
     )
     db.add(qa_session)
     await db.commit()
+    background_tasks.add_task(_synthesize_answer_audio, qa_id, doc_id, answer_text)
+
+    total = time.perf_counter() - overall_start
+    logger.info(
+        f"[QA][{doc_id}] ⏱️ TIMING — stt={step_times.get('stt', 0):.2f}s, "
+        f"retrieve={step_times['retrieve']:.2f}s, llm={step_times['llm']:.2f}s, "
+        f"tts=background, total={total:.2f}s, "
+        f"mode={mode}, chars_in={len(question_text)}, chars_out={len(answer_text)}"
+    )
 
     return {
         "qa_id": qa_id,
         "question": question_text,
         "answer": answer_text,
         "answer_audio_url": f"/api/qa/audio/{qa_id}",
+        "audio_status": "pending",
         "search_mode": mode,
         "citations": citations,
         "web_search_available": serpapi_service.is_configured(),
     }
+
+
+@router.get("/audio-status/{qa_id}")
+async def get_qa_audio_status(qa_id: str, db: AsyncSession = Depends(get_db)):
+    """Whether a Q&A answer's background audio is 'pending', 'ready' or 'failed'."""
+    qa = await db.get(QASession, qa_id)
+    if not qa:
+        raise HTTPException(status_code=404, detail="Q&A not found")
+    return {"qa_id": qa_id, "status": _audio_status(qa)}
 
 
 @router.get("/audio/{qa_id}")
@@ -206,6 +265,7 @@ async def get_qa_history(doc_id: str, db: AsyncSession = Depends(get_db)):
                 "question": s.question_text,
                 "answer": s.answer_text,
                 "answer_audio_url": f"/api/qa/audio/{s.id}",
+                "audio_status": _audio_status(s),
                 "created_at": s.created_at.isoformat(),
             }
             for s in sessions

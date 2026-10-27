@@ -402,9 +402,113 @@ def _concat_clips_pydub(clip_paths: list[str], output_path: str) -> float:
     return len(combined) / 1000.0
 
 
-async def synthesize_answer(text: str, doc_id: str, qa_id: str) -> str:
-    """Synthesize a Q&A answer to MP3. Returns file path."""
+# One edge-tts call streams audio back at roughly real-time speed, so a long
+# answer voiced in a single call is slow (a 3.9K-char answer took ~190s). Long
+# answers are split at sentence boundaries and the pieces synthesized in parallel,
+# then stitched like podcast clips.
+_ANSWER_CHUNK_CHARS = 500
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?؟।])\s+|(?<=[。！？])|\n+")
+
+
+def _split_answer_for_tts(text: str, max_chars: int = _ANSWER_CHUNK_CHARS) -> list[str]:
+    """Group sentences into chunks of at most ~max_chars (a single longer
+    sentence stays whole)."""
+    chunks: list[str] = []
+    current = ""
+    for sentence in _SENTENCE_BREAK.split(text.strip()):
+        sentence = (sentence or "").strip()
+        if not sentence:
+            continue
+        if current and len(current) + 1 + len(sentence) > max_chars:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}" if current else sentence
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def synthesize_answer(text: str, doc_id: str, qa_id: str, voice: str | None = None) -> str:
+    """Synthesize a Q&A answer to MP3. Returns file path.
+
+    ``voice`` selects a native-accent voice for a non-English answer; the English
+    multilingual default is the safety net if that voice fails.
+    """
+    voice = voice or settings.TTS_VOICE_GUEST
     output_filename = f"{doc_id}_qa_{qa_id}.mp3"
     output_path = os.path.join(settings.AUDIO_DIR, output_filename)
-    await synthesize_speech(text, settings.TTS_VOICE_GUEST, output_path)
+
+    chunks = _split_answer_for_tts(text)
+    if len(chunks) <= 1:
+        await _voice_answer_clips([(text, output_path)], voice, allow_silence=False, doc_id=doc_id)
+        return output_path
+
+    temp_dir = os.path.join(settings.AUDIO_DIR, f"temp_qa_{qa_id}")
+    os.makedirs(temp_dir, exist_ok=True)
+    clip_paths = [os.path.join(temp_dir, f"clip_{i:04d}.mp3") for i in range(len(chunks))]
+    try:
+        await _voice_answer_clips(list(zip(chunks, clip_paths)), voice, allow_silence=True, doc_id=doc_id)
+    except Exception:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+    # Reuses the podcast merge (ffmpeg concat + cleanup); the transcript it
+    # builds is not needed for an answer.
+    dialogue = [{"speaker": "Guest", "text": chunk} for chunk in chunks]
+    await run_in_threadpool(_merge_clips_to_mp3, clip_paths, dialogue, output_path, temp_dir)
+    logger.info(f"[QA][{doc_id}] TTS: {len(chunks)} chunks (shared cap={settings.TTS_QA_CONCURRENCY}), voice={voice}")
     return output_path
+
+
+# One semaphore for ALL answer audio in this process (created on first use so it
+# binds to the server's event loop), capping total Q&A edge-tts calls at
+# TTS_QA_CONCURRENCY however many answers are being voiced at once.
+_qa_tts_sem: asyncio.Semaphore | None = None
+
+
+def _get_qa_tts_sem() -> asyncio.Semaphore:
+    global _qa_tts_sem
+    if _qa_tts_sem is None:
+        _qa_tts_sem = asyncio.Semaphore(settings.TTS_QA_CONCURRENCY)
+    return _qa_tts_sem
+
+
+async def _voice_clip(text: str, voice: str, path: str, allow_silence: bool):
+    async with _get_qa_tts_sem():
+        await synthesize_speech(
+            text, voice, path, allow_silence_fallback=allow_silence,
+            fallback_voice=settings.TTS_VOICE_GUEST,
+        )
+
+
+async def _voice_answer_clips(
+    clips: list[tuple[str, str]], voice: str, allow_silence: bool, doc_id: str
+):
+    """Voice (text, path) clips in parallel under the shared Q&A cap.
+
+    Each clip already gets synthesize_speech's own retries. Clips that still end
+    throttled get ONE more pass after a cooldown, one at a time, so a short
+    edge-tts rate window costs a few seconds instead of the whole answer's audio
+    (the clips that succeeded are kept). Any other failure is raised as-is.
+    """
+    results = await asyncio.gather(
+        *(_voice_clip(text, voice, path, allow_silence) for text, path in clips),
+        return_exceptions=True,
+    )
+    failed = [(clip, r) for clip, r in zip(clips, results) if isinstance(r, BaseException)]
+    if not failed:
+        return
+    for _, err in failed:
+        if not (isinstance(err, RuntimeError) and str(err) == TTS_RATE_LIMIT_MSG):
+            raise err
+
+    wait = settings.TTS_QA_RETRY_DELAY + random.uniform(0.0, 2.0)
+    logger.warning(
+        f"[QA][{doc_id}] TTS: {len(failed)}/{len(clips)} clips throttled; "
+        f"retrying them one at a time in {wait:.1f}s"
+    )
+    await asyncio.sleep(wait)
+    for (text, path), _ in failed:
+        await _voice_clip(text, voice, path, allow_silence)

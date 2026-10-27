@@ -174,6 +174,88 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "Guest: 关键在于理解这些观点之间的联系，以及它们在实际中的意义。"
         ),
     },
+    "lt": {
+        "name": "Lithuanian",
+        "host_voice": "lt-LT-LeonasNeural",
+        "guest_voice": "lt-LT-OnaNeural",
+        "host_signoff": "Host: Ačiū, kad klausėtės, iki kito karto!",
+        "fallback_takeaway": (
+            "Guest: Svarbiausia suprasti, kaip šios idėjos susijusios tarpusavyje ir "
+            "ką jos reiškia praktikoje."
+        ),
+    },
+    # Malay = Latin-script Bahasa Melayu (Malaysia). langdetect has no 'ms', so
+    # Malay docs come back as 'id' and are re-classified by _refine_code.
+    "ms": {
+        "name": "Malay",
+        "host_voice": "ms-MY-OsmanNeural",
+        "guest_voice": "ms-MY-YasminNeural",
+        "host_signoff": "Host: Terima kasih kerana mendengar, jumpa lagi lain kali!",
+        "fallback_takeaway": (
+            "Guest: Perkara penting ialah bagaimana idea-idea ini saling berkait dan "
+            "apa maknanya dalam amalan."
+        ),
+    },
+    # Indonesian is what langdetect's 'id' means; _refine_code only moves an 'id'
+    # result to Malay when Malay vocabulary outweighs Indonesian.
+    "id": {
+        "name": "Indonesian",
+        "host_voice": "id-ID-ArdiNeural",
+        "guest_voice": "id-ID-GadisNeural",
+        "host_signoff": "Host: Terima kasih sudah mendengarkan, sampai jumpa lagi!",
+        "fallback_takeaway": (
+            "Guest: Yang penting adalah bagaimana ide-ide ini saling terhubung dan "
+            "apa artinya dalam praktik."
+        ),
+    },
+    "cy": {
+        "name": "Welsh",
+        "host_voice": "cy-GB-AledNeural",
+        "guest_voice": "cy-GB-NiaNeural",
+        "host_signoff": "Host: Diolch am wrando, welwn ni chi y tro nesaf!",
+        "fallback_takeaway": (
+            "Guest: Y peth pwysig yw sut mae'r syniadau hyn yn cysylltu a beth maen "
+            "nhw'n ei olygu yn ymarferol."
+        ),
+    },
+    # Serbian is written in both scripts, so the script follows the document's
+    # (see _refine_code): 'sr' = Cyrillic, 'sr-latn' = Latin. Same native voices.
+    "sr": {
+        "name": "Serbian (Cyrillic script)",
+        "host_voice": "sr-RS-NicholasNeural",
+        "guest_voice": "sr-RS-SophieNeural",
+        "host_signoff": "Host: Хвала што сте слушали, до следећег пута!",
+        "fallback_takeaway": (
+            "Guest: Најважније је како су ове идеје повезане и шта значе у пракси."
+        ),
+    },
+    "sr-latn": {
+        "name": "Serbian (Latin script)",
+        "host_voice": "sr-RS-NicholasNeural",
+        "guest_voice": "sr-RS-SophieNeural",
+        "host_signoff": "Host: Hvala što ste slušali, do sledećeg puta!",
+        "fallback_takeaway": (
+            "Guest: Najvažnije je kako su ove ideje povezane i šta znače u praksi."
+        ),
+    },
+    "hr": {
+        "name": "Croatian",
+        "host_voice": "hr-HR-SreckoNeural",
+        "guest_voice": "hr-HR-GabrijelaNeural",
+        "host_signoff": "Host: Hvala što ste slušali, do sljedećeg puta!",
+        "fallback_takeaway": (
+            "Guest: Najvažnije je kako su ove ideje povezane i što znače u praksi."
+        ),
+    },
+    "mk": {
+        "name": "Macedonian",
+        "host_voice": "mk-MK-AleksandarNeural",
+        "guest_voice": "mk-MK-MarijaNeural",
+        "host_signoff": "Host: Ви благодариме што слушавте, до следниот пат!",
+        "fallback_takeaway": (
+            "Guest: Најважно е како овие идеи се поврзани и што значат во пракса."
+        ),
+    },
 }
 
 # Keep the English "Host:"/"Guest:" labels literal in EVERY language — they are
@@ -208,6 +290,68 @@ def get_language_profile(code: str | None) -> dict:
     return profile
 
 
+# langdetect has no Serbian or Malay model: Serbian Cyrillic comes back as
+# mk/bg/ru, Serbian Latin as hr/sl, and Malay as id. These marker sets tell them
+# apart from the language langdetect picked. Cyrillic Serbian vs Macedonian is
+# decided by letters unique to each alphabet; the Latin cases by common words
+# that differ in spelling (ekavian vs ijekavian, Malay vs Indonesian vocabulary).
+_SR_CYRL_LETTERS = set("ђћЂЋ")
+_MK_CYRL_LETTERS = set("ќѓѕЌЃЅ")
+_SR_LATN_WORDS = {
+    "sledeće", "sledeći", "sledećeg", "reč", "reči", "rečima", "vreme", "pre",
+    "posle", "deca", "dece", "dete", "lepo", "uvek", "ceo", "cela", "celog",
+    "primer", "vek", "veka", "tokom", "takođe", "hiljada", "hiljade", "opština",
+    "porodica", "porodice", "univerzitet", "nedelja", "nedelje", "hleb", "voz",
+    "tačka", "muzika", "istorija", "istorije", "evropa", "ko", "šta", "svet",
+    "sveta", "mleko", "reka", "reke", "mesto", "mesta",
+}
+_HR_WORDS = {
+    "sljedeće", "sljedeći", "sljedećeg", "riječ", "riječi", "riječima", "vrijeme",
+    "prije", "poslije", "djeca", "djece", "dijete", "lijepo", "uvijek", "cijeli",
+    "cijela", "primjer", "stoljeće", "tijekom", "također", "tisuća", "općina",
+    "obitelj", "obitelji", "sveučilište", "tjedan", "kruh", "vlak", "točka",
+    "glazba", "povijest", "povijesti", "europa", "tko", "svijet", "svijeta",
+    "mlijeko", "rijeka", "rijeke", "mjesto", "mjesta",
+}
+# Slovenian shares some ekavian spellings with Serbian ("mesto", "primer"), so a
+# langdetect 'sl' result only becomes Serbian when these Slovenian words are rarer.
+_SL_WORDS = {"tudi", "lahko", "zelo", "kot", "ki", "vendar", "oziroma", "torej", "bodo"}
+_MS_WORDS = {
+    "kerana", "sahaja", "selepas", "berbanding", "iaitu", "manakala", "baharu",
+    "wang", "percuma", "bahawa", "dimulakan", "peratus", "bilion", "antarabangsa",
+    "universiti", "polis", "sukan", "pejabat", "syarikat", "maklumat",
+    "pembaharuan", "kakitangan",
+}
+_ID_WORDS = {
+    "karena", "saja", "setelah", "uang", "gratis", "bahwa", "dimulai", "persen",
+    "miliar", "internasional", "universitas", "polisi", "olahraga", "kantor",
+    "perusahaan", "informasi", "pembaruan", "karyawan", "pemerintah", "yaitu",
+    "bisa", "mencakup",
+}
+
+
+def _word_hits(text: str, words: set[str]) -> int:
+    tokens = (t.strip(".,;:!?\"'()[]«»„“”—–-") for t in text.lower().split())
+    return sum(1 for t in tokens if t in words)
+
+
+def _refine_code(code: str, text: str) -> str:
+    """Re-classify langdetect's guess for languages it can't detect (Serbian,
+    Malay). Returns ``code`` unchanged for every other case."""
+    if code in ("mk", "bg", "ru"):
+        if sum(ch in _SR_CYRL_LETTERS for ch in text) > sum(ch in _MK_CYRL_LETTERS for ch in text):
+            return "sr"
+        return code
+    if code in ("hr", "sl"):
+        sr = _word_hits(text, _SR_LATN_WORDS)
+        if sr > _word_hits(text, _HR_WORDS) and (code == "hr" or sr > _word_hits(text, _SL_WORDS)):
+            return "sr-latn"
+        return code
+    if code == "id" and _word_hits(text, _MS_WORDS) > _word_hits(text, _ID_WORDS):
+        return "ms"
+    return code
+
+
 def detect_language(text: str) -> str:
     """Detect a document's base language code (e.g. 'de', 'fr', 'el', 'en').
 
@@ -232,6 +376,7 @@ def detect_language(text: str) -> str:
     except Exception as e:
         logger.warning(f"[lang] detection failed ({e}); defaulting to English")
         return "en"
+    code = _refine_code(code, sample[:3000])
 
     if code in LANGUAGE_PROFILES:
         logger.info(f"[lang] detected supported language '{code}' — native podcast")
@@ -255,6 +400,7 @@ _LANG_NAMES: dict[str, str] = {
     "no": "Norwegian", "pa": "Punjabi", "pl": "Polish", "pt": "Portuguese",
     "ro": "Romanian", "ru": "Russian", "sk": "Slovak", "sl": "Slovenian",
     "so": "Somali", "sq": "Albanian", "sv": "Swedish", "sw": "Swahili",
+    "sr": "Serbian", "sr-latn": "Serbian (Latin)", "ms": "Malay",
     "ta": "Tamil", "te": "Telugu", "th": "Thai", "tl": "Tagalog",
     "tr": "Turkish", "uk": "Ukrainian", "ur": "Urdu", "vi": "Vietnamese",
     "zh-cn": "Chinese (Simplified)", "zh-tw": "Chinese (Traditional)",
@@ -282,6 +428,7 @@ def detect_language_name(text: str) -> str:
     except Exception as e:  # noqa: BLE001 — label is best-effort, never fatal
         logger.warning(f"[lang] name detection failed ({e})")
         return "Unknown"
+    raw = _refine_code(raw, sample[:3000])
 
     name = _LANG_NAMES.get(raw) or _LANG_NAMES.get(raw.split("-")[0])
     return f"{name} ({raw})" if name else raw

@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # on tiny jobs, where the absolute time saved by more parallelism is small).
     TTS_CONCURRENCY_SMALL: int = int(os.getenv("TTS_CONCURRENCY_SMALL", "5"))
     TTS_SMALL_DOC_MAX_CLIPS: int = int(os.getenv("TTS_SMALL_DOC_MAX_CLIPS", "40"))
+    # Process-wide cap on parallel edge-tts calls for Q&A answer audio, shared by
+    # ALL answers being voiced at once (a long answer is split into chunks), so a
+    # burst of questions can't fan out into an unbounded number of calls.
+    TTS_QA_CONCURRENCY: int = int(os.getenv("TTS_QA_CONCURRENCY", "6"))
+    # Seconds to wait before one sequential retry pass over answer chunks that
+    # were throttled, giving edge-tts' rate window time to clear.
+    TTS_QA_RETRY_DELAY: float = float(os.getenv("TTS_QA_RETRY_DELAY", "5"))
     # Hard cap on dialogue turns fed to TTS — and, in practice, the EFFECTIVE
     # ceiling on episode length. The heavy-overshoot ceiling is
     # max_lines × HEAVY_OVERSHOOT_CEILING_FACTOR (1.75), clamped to
@@ -152,7 +159,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "25")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "26")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

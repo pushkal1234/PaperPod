@@ -174,6 +174,11 @@ export function getQAAudioUrl(qaId) {
   return `${API_BASE}/api/qa/audio/${qaId}`;
 }
 
+export async function getQAAudioStatus(qaId) {
+  const res = await api.get(`/qa/audio-status/${qaId}`);
+  return res.data;
+}
+
 export async function createShare(docId) {
   const res = await api.post(`/share/create/${docId}`);
   return res.data;

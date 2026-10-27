@@ -597,6 +597,27 @@ Rules:
 7. KEEP IT SHORT: 2-4 sentences, roughly 90 words or fewer. The answer is read aloud by a voice, so a long answer means a long, slow audio clip. Lead with the direct answer; add at most one sentence of supporting detail."""
 
 
+def _qa_system_prompt(base: str) -> str:
+    """Append the answer-language rule to a Q&A system prompt.
+
+    The answer follows the language of the QUESTION (not the document), for every
+    language with native podcast support; anything else gets English. With
+    MULTILINGUAL_ENABLED off the prompt is left exactly as before.
+    """
+    if not settings.MULTILINGUAL_ENABLED:
+        return base
+    from app.languages import LANGUAGE_PROFILES
+
+    names = sorted({p["name"].split(" (")[0] for p in LANGUAGE_PROFILES.values()})
+    return base + (
+        "\n\nLANGUAGE: Write the answer in the same language as the user's QUESTION, "
+        "not the language of the document. Supported answer languages: English, "
+        f"{', '.join(names)}. If the question is in any other language, answer in "
+        "English. For Serbian, use the same script (Cyrillic or Latin) as the "
+        "question. Malay means Bahasa Melayu in Latin script."
+    )
+
+
 def normalize_answer_text(text: str) -> str:
     """Collapse excessive newlines/whitespace while keeping paragraph breaks.
 
@@ -1652,7 +1673,7 @@ def answer_question(question: str, context_chunks: list[str], full_document: str
         try:
             raw = _call_gemini_chain(
                 messages=[
-                    {"role": "system", "content": QA_SYSTEM_PROMPT},
+                    {"role": "system", "content": _qa_system_prompt(QA_SYSTEM_PROMPT)},
                     {"role": "user", "content": (
                         f"Full document:\n\n{full_document}\n\n---\n\nQuestion: {question}"
                     )},
@@ -1682,7 +1703,7 @@ def answer_question(question: str, context_chunks: list[str], full_document: str
 
     raw = _call_llm(
         messages=[
-            {"role": "system", "content": QA_SYSTEM_PROMPT},
+            {"role": "system", "content": _qa_system_prompt(QA_SYSTEM_PROMPT)},
             {"role": "user", "content": user_content},
         ],
         temperature=0.5,
@@ -1711,7 +1732,7 @@ def answer_question_hybrid(
 
     raw = _call_llm(
         messages=[
-            {"role": "system", "content": HYBRID_QA_SYSTEM_PROMPT},
+            {"role": "system", "content": _qa_system_prompt(HYBRID_QA_SYSTEM_PROMPT)},
             {
                 "role": "user",
                 "content": (
