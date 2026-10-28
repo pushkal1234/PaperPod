@@ -15,6 +15,7 @@ LANGUAGE_PROFILES (name + two native voices + two outro lines).
 """
 
 import logging
+import re
 
 from app.config import settings
 
@@ -330,6 +331,31 @@ _ID_WORDS = {
 }
 
 
+# Design-tool PDFs (Canva, InDesign tracking) often extract with a space between
+# every letter: "T H E  F I L I P I N O  I N". langdetect only sees single
+# letters there and calls plain English Welsh with ~100% confidence. A space
+# between two single-character "words" is removed on lines that are mostly
+# single characters, so "T H E  F I L I P I N O" reads "THE FILIPINO".
+_SPACED_LETTER_GAP = re.compile(r"(?<=\b\w) (?=\w\b)")
+
+
+def _unspace_letters(text: str) -> str:
+    """Undo letter-spacing for language detection only (not for the LLM)."""
+    lines = []
+    for line in text.split("\n"):
+        tokens = line.split()
+        if len(tokens) >= 6 and sum(len(t) == 1 for t in tokens) / len(tokens) >= 0.6:
+            line = " ".join(_SPACED_LETTER_GAP.sub("", line).split())
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _detection_sample(text: str) -> str:
+    """The text langdetect sees: letter-spacing undone, first 3000 chars."""
+    # Letter-spaced text is ~2x longer, so normalize a larger slice first.
+    return _unspace_letters(text[:6000])[:3000]
+
+
 def _word_hits(text: str, words: set[str]) -> int:
     tokens = (t.strip(".,;:!?\"'()[]«»„“”—–-") for t in text.lower().split())
     return sum(1 for t in tokens if t in words)
@@ -368,15 +394,16 @@ def detect_language(text: str) -> str:
     sample = (text or "").strip()
     if len(sample) < 30:
         return "en"
+    sample = _detection_sample(sample)
     try:
         from langdetect import detect, DetectorFactory
 
         DetectorFactory.seed = 0  # deterministic across runs
-        code = detect(sample[:3000]).split("-")[0].lower()
+        code = detect(sample).split("-")[0].lower()
     except Exception as e:
         logger.warning(f"[lang] detection failed ({e}); defaulting to English")
         return "en"
-    code = _refine_code(code, sample[:3000])
+    code = _refine_code(code, sample)
 
     if code in LANGUAGE_PROFILES:
         logger.info(f"[lang] detected supported language '{code}' — native podcast")
@@ -420,15 +447,16 @@ def detect_language_name(text: str) -> str:
     sample = (text or "").strip()
     if len(sample) < 30:
         return "Unknown"
+    sample = _detection_sample(sample)
     try:
         from langdetect import detect, DetectorFactory
 
         DetectorFactory.seed = 0  # deterministic
-        raw = detect(sample[:3000]).lower()
+        raw = detect(sample).lower()
     except Exception as e:  # noqa: BLE001 — label is best-effort, never fatal
         logger.warning(f"[lang] name detection failed ({e})")
         return "Unknown"
-    raw = _refine_code(raw, sample[:3000])
+    raw = _refine_code(raw, sample)
 
     name = _LANG_NAMES.get(raw) or _LANG_NAMES.get(raw.split("-")[0])
     return f"{name} ({raw})" if name else raw
