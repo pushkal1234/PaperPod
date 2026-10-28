@@ -350,10 +350,50 @@ def _unspace_letters(text: str) -> str:
     return "\n".join(lines)
 
 
-def _detection_sample(text: str) -> str:
-    """The text langdetect sees: letter-spacing undone, first 3000 chars."""
-    # Letter-spaced text is ~2x longer, so normalize a larger slice first.
-    return _unspace_letters(text[:6000])[:3000]
+# Detection looks at the start, middle and end of a document rather than only its
+# opening, and a language wins only with a majority of those windows. One odd
+# section (a French abstract on an English report, a garbled page, a bilingual
+# cover) then can't decide the whole podcast's language. Docs too short for three
+# independent windows use one window over the whole text.
+_WINDOW_RAW_CHARS = 6000  # raw slice per window; letter-spaced text is ~2x longer
+_WINDOW_CHARS = 3000      # what langdetect sees per window
+_MULTI_WINDOW_MIN_CHARS = 4000
+
+
+def _detection_samples(text: str) -> list[str]:
+    """Windows langdetect sees: letter-spacing undone, up to 3000 chars each."""
+    n = len(text)
+    if n < _MULTI_WINDOW_MIN_CHARS:
+        slices = [text]
+    else:
+        span = min(_WINDOW_RAW_CHARS, n // 3)
+        mid = n // 2 - span // 2
+        slices = [text[:span], text[mid:mid + span], text[n - span:]]
+    samples = [_unspace_letters(s)[:_WINDOW_CHARS] for s in slices]
+    return [s for s in samples if len(s.strip()) >= 30]
+
+
+def _vote(text: str) -> tuple[str | None, list[str]]:
+    """Detect each window and return (majority code or None, per-window codes).
+
+    Raises if langdetect is unavailable or every window fails to detect.
+    """
+    from langdetect import detect, DetectorFactory
+
+    codes = []
+    for sample in _detection_samples(text):
+        DetectorFactory.seed = 0  # deterministic across runs
+        try:
+            raw = detect(sample).lower()
+        except Exception:  # noqa: BLE001 — one undetectable window just doesn't vote
+            continue
+        code = _refine_code(raw, sample)
+        # langdetect splits Chinese into zh-cn / zh-tw; they are one language here.
+        codes.append("zh" if code.startswith("zh-") else code)
+    if not codes:
+        raise RuntimeError("no detectable text")
+    best = max(set(codes), key=codes.count)
+    return (best if codes.count(best) * 2 > len(codes) else None), codes
 
 
 def _word_hits(text: str, words: set[str]) -> int:
@@ -394,16 +434,15 @@ def detect_language(text: str) -> str:
     sample = (text or "").strip()
     if len(sample) < 30:
         return "en"
-    sample = _detection_sample(sample)
     try:
-        from langdetect import detect, DetectorFactory
-
-        DetectorFactory.seed = 0  # deterministic across runs
-        code = detect(sample).split("-")[0].lower()
+        winner, codes = _vote(sample)
     except Exception as e:
         logger.warning(f"[lang] detection failed ({e}); defaulting to English")
         return "en"
-    code = _refine_code(code, sample)
+    if winner is None:
+        logger.info(f"[lang] windows disagree {codes} — using English")
+        return "en"
+    code = winner
 
     if code in LANGUAGE_PROFILES:
         logger.info(f"[lang] detected supported language '{code}' — native podcast")
@@ -447,16 +486,18 @@ def detect_language_name(text: str) -> str:
     sample = (text or "").strip()
     if len(sample) < 30:
         return "Unknown"
-    sample = _detection_sample(sample)
     try:
-        from langdetect import detect, DetectorFactory
-
-        DetectorFactory.seed = 0  # deterministic
-        raw = detect(sample).lower()
+        winner, codes = _vote(sample)
     except Exception as e:  # noqa: BLE001 — label is best-effort, never fatal
         logger.warning(f"[lang] name detection failed ({e})")
         return "Unknown"
-    raw = _refine_code(raw, sample)
 
-    name = _LANG_NAMES.get(raw) or _LANG_NAMES.get(raw.split("-")[0])
-    return f"{name} ({raw})" if name else raw
+    def _label(raw: str) -> str:
+        name = _LANG_NAMES.get(raw) or _LANG_NAMES.get(raw.split("-")[0])
+        return f"{name} ({raw})" if name else raw
+
+    if winner is None:
+        # No majority — show every window's language so the admin can see why
+        # the podcast fell back to English.
+        return "Mixed: " + " / ".join(_label(c) for c in dict.fromkeys(codes))
+    return _label(winner)
