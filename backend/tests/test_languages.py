@@ -165,6 +165,80 @@ class TestMixedDocuments(_MultilingualOn):
 
 
 # --------------------------------------------------------------------------- #
+# English safety check (independent of langdetect)
+# --------------------------------------------------------------------------- #
+ENGLISH_PROSE = {
+    "plain": ENGLISH * 3,
+    "workplace": WORKPLACE * 6,
+    "letter-spaced": letter_spaced(WORKPLACE * 6),
+    "all caps": (ENGLISH * 3).upper(),
+    "local terms": TestEnglishStaysEnglish.CASES["local terms"],
+}
+
+
+class TestEnglishSafetyCheck(_MultilingualOn):
+    def test_english_prose_clears_the_bar(self):
+        for name, text in ENGLISH_PROSE.items():
+            with self.subTest(case=name):
+                share = languages._english_share(languages._detection_samples(text)[0])
+                self.assertGreaterEqual(share, languages._ENGLISH_SHARE_MIN)
+
+    def test_foreign_languages_stay_well_below_the_bar(self):
+        mixed = {
+            "de + 25% English": SAMPLES["de"] * 3 + " " + ENGLISH,
+            "fr + 25% English": SAMPLES["fr"] * 4 + " " + ENGLISH,
+            "ru + English quote": SAMPLES["ru"] * 4 + ' "' + ENGLISH[:120] + '"',
+            "zh + English terms": SAMPLES["zh"] * 4 + " machine learning, PDF, API",
+        }
+        for name, text in {**{k: v * 3 for k, v in SAMPLES.items()}, **mixed}.items():
+            with self.subTest(case=name):
+                share = languages._english_share(languages._detection_samples(text)[0])
+                self.assertLess(share, languages._ENGLISH_SHARE_MIN / 1.5)
+
+    def test_english_stays_english_even_when_langdetect_is_wrong(self):
+        """The disaster case: langdetect calls an English document Welsh."""
+        import langdetect
+
+        real = langdetect.detect
+        langdetect.detect = lambda text: "cy"
+        try:
+            for name, text in ENGLISH_PROSE.items():
+                with self.subTest(case=name):
+                    self.assertEqual(detect_language(text), "en")
+                    self.assertEqual(detect_language(text * 40), "en")  # 3-window path
+        finally:
+            langdetect.detect = real
+
+    def test_foreign_with_english_quotes_keeps_its_language(self):
+        self.assertEqual(detect_language(SAMPLES["ru"] * 4 + ' "' + ENGLISH[:120] + '"'), "ru")
+        self.assertEqual(detect_language(SAMPLES["zh"] * 4 + " machine learning, PDF, API"), "zh")
+
+
+# --------------------------------------------------------------------------- #
+# Detection row in the admin notification email
+# --------------------------------------------------------------------------- #
+class TestDetectionConfidence(_MultilingualOn):
+    def test_labels(self):
+        conf = languages.detection_confidence
+        self.assertEqual(conf(ENGLISH * 3), "1 sample (short document)")
+        self.assertEqual(conf(SAMPLES["fr"] * 90), "3/3 samples agree")
+        self.assertEqual(
+            conf(SAMPLES["fr"] * 90 + "\n\nReferences\n" + ENGLISH * 25),
+            "⚠︎ 2/3 samples agree (fr, fr, en)",
+        )
+        self.assertEqual(
+            conf(SAMPLES["de"] * 30 + SAMPLES["fr"] * 33 + SAMPLES["es"] * 37),
+            "⚠︎ no majority (de, fr, es) — English used",
+        )
+        self.assertEqual(conf("Hi"), "Unknown (too little text)")
+
+    def test_flags_letter_spaced_text(self):
+        doc = letter_spaced(WORKPLACE * 40)
+        self.assertEqual(detect_language(doc), "en")
+        self.assertEqual(languages.detection_confidence(doc), "3/3 samples agree · ⚠︎ letter-spaced text fixed")
+
+
+# --------------------------------------------------------------------------- #
 # Guards and helpers
 # --------------------------------------------------------------------------- #
 class TestGuards(unittest.TestCase):

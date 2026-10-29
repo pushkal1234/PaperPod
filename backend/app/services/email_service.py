@@ -285,6 +285,7 @@ async def send_generation_alert_email(
     audio_seconds: float | None = None,
     input_language: str | None = None,
     output_language: str | None = None,
+    language_detection: str | None = None,
     failing_service: str | None = None,
     error: str | None = None,
 ) -> bool:
@@ -309,6 +310,8 @@ async def send_generation_alert_email(
     match_note = "" if in_lang == "Unknown" or out_lang == "Unknown" else (
         " ✓ match" if _lang_base(in_lang) == _lang_base(out_lang) else " ⚠︎ fallback"
     )
+    # How sure the language pick was (see app.languages.detection_confidence).
+    detection_txt = (language_detection or "").strip() or "Unknown"
 
     if ok:
         heading = "Podcast ready on PaperPod"
@@ -319,6 +322,7 @@ async def send_generation_alert_email(
             ("Document", doc_name),
             ("Input language", in_lang),
             ("Output language", out_lang + match_note),
+            ("Detection", detection_txt),
             ("Status", "Ready"),
             ("Total time", _fmt_secs(total_seconds)),
             ("Podcast length", _fmt_secs(audio_seconds)),
@@ -331,6 +335,7 @@ async def send_generation_alert_email(
             ("Email", user_email),
             ("Document", doc_name),
             ("Input language", in_lang),
+            ("Detection", detection_txt),
             ("Status", "Failed"),
             ("Likely service", (failing_service or "").strip() or "(unknown)"),
             ("Total time", _fmt_secs(total_seconds)),

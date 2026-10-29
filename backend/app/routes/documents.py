@@ -26,7 +26,7 @@ from app.services.document_service import save_upload, extract_text, chunk_text,
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script
 from app.services.tts_service import generate_podcast_audio
-from app.languages import detect_language, get_language_profile, detect_language_name
+from app.languages import detect_language, get_language_profile, detect_language_name, detection_confidence
 from app.services.email_service import send_upload_alert_email, send_generation_alert_email
 from app.mem_utils import trim_memory
 
@@ -174,6 +174,7 @@ async def _send_generation_alert(
             # when we fell back for an unsupported language. Showing both lets us
             # measure input-vs-output match rate for out-of-support languages.
             input_language = detect_language_name(doc.raw_text or "")
+            language_detection = detection_confidence(doc.raw_text or "")
             output_language = None
             if ok:
                 res = await session.execute(
@@ -192,6 +193,7 @@ async def _send_generation_alert(
             audio_seconds=audio_seconds,
             input_language=input_language,
             output_language=output_language,
+            language_detection=language_detection,
             failing_service=_service_for_step(failing_step) if failing_step else None,
             error=error,
         )

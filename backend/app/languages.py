@@ -360,17 +360,53 @@ _WINDOW_CHARS = 3000      # what langdetect sees per window
 _MULTI_WINDOW_MIN_CHARS = 4000
 
 
-def _detection_samples(text: str) -> list[str]:
-    """Windows langdetect sees: letter-spacing undone, up to 3000 chars each."""
+def _detection_slices(text: str) -> list[str]:
+    """Raw start / middle / end slices (one slice for short docs)."""
     n = len(text)
     if n < _MULTI_WINDOW_MIN_CHARS:
-        slices = [text]
-    else:
-        span = min(_WINDOW_RAW_CHARS, n // 3)
-        mid = n // 2 - span // 2
-        slices = [text[:span], text[mid:mid + span], text[n - span:]]
-    samples = [_unspace_letters(s)[:_WINDOW_CHARS] for s in slices]
+        return [text]
+    span = min(_WINDOW_RAW_CHARS, n // 3)
+    mid = n // 2 - span // 2
+    return [text[:span], text[mid:mid + span], text[n - span:]]
+
+
+def _detection_samples(text: str) -> list[str]:
+    """Windows langdetect sees: letter-spacing undone, up to 3000 chars each."""
+    samples = [_unspace_letters(s)[:_WINDOW_CHARS] for s in _detection_slices(text)]
     return [s for s in samples if len(s.strip()) >= 30]
+
+
+# English safety check, independent of langdetect. Calling an English document
+# another language is the costly mistake (the whole podcast is unintelligible to
+# the user); the reverse just falls back to English. Real English prose is ~20-35%
+# these function words, every supported language measures 0-4%, and a foreign doc
+# with a quarter English mixed in ~7% — so a sample at >= 15% is English, whatever
+# langdetect says. Words that also exist in a supported language ("in", "is", "to",
+# "for", "on", "or", "an", "at", "was", "will", "her", "die"...) are left out.
+_ENGLISH_FUNCTION_WORDS = {
+    "the", "of", "and", "that", "it", "with", "by", "this", "are", "from", "which",
+    "but", "have", "they", "you", "we", "has", "their", "been", "were", "would",
+    "there", "can", "more", "also", "these", "than", "not", "its", "our", "what",
+    "when", "who", "how", "about", "into", "other", "such", "only", "some", "his",
+    "she", "them", "then", "if", "one", "may", "should", "could", "because",
+    "between", "through", "each", "those", "your",
+}
+_ENGLISH_SHARE_MIN = 0.15
+_WORD_RE = re.compile(r"[^\W\d_]+")
+_CJK_RE = re.compile(r"[぀-ヿ一-鿿가-힯]")
+
+
+def _english_share(sample: str) -> float:
+    """Fraction of words that are English function words (0 for < 20 words).
+
+    Counts words in every script (CJK characters one each), so English quotes
+    inside a Russian or Chinese document stay a small share.
+    """
+    words = _WORD_RE.findall(sample.lower())
+    total = sum(len(_CJK_RE.findall(w)) or 1 for w in words)
+    if total < 20:
+        return 0.0
+    return sum(w in _ENGLISH_FUNCTION_WORDS for w in words) / total
 
 
 def _vote(text: str) -> tuple[str | None, list[str]]:
@@ -382,6 +418,9 @@ def _vote(text: str) -> tuple[str | None, list[str]]:
 
     codes = []
     for sample in _detection_samples(text):
+        if _english_share(sample) >= _ENGLISH_SHARE_MIN:
+            codes.append("en")
+            continue
         DetectorFactory.seed = 0  # deterministic across runs
         try:
             raw = detect(sample).lower()
@@ -501,3 +540,35 @@ def detect_language_name(text: str) -> str:
         # the podcast fell back to English.
         return "Mixed: " + " / ".join(_label(c) for c in dict.fromkeys(codes))
     return _label(winner)
+
+
+def detection_confidence(text: str) -> str:
+    """How sure the language pick was, for the admin notification email.
+
+    Uses the same windows and vote as :func:`detect_language`, so the row always
+    describes the decision the podcast was actually made with. "⚠︎" marks the cases
+    worth a quick listen: samples disagreed, or the text was letter-spaced (the
+    pattern behind the English-read-as-Welsh bug). A wrong pick and the podcast it
+    produces always "match" each other, so the input/output rows can't show this.
+    """
+    sample = (text or "").strip()
+    if len(sample) < 30:
+        return "Unknown (too little text)"
+    try:
+        winner, codes = _vote(sample)
+    except Exception:  # noqa: BLE001 — label is best-effort, never fatal
+        return "Unknown"
+
+    n = len(codes)
+    votes = ", ".join(codes)
+    if n == 1:
+        summary = "1 sample (short document)"
+    elif winner is None:
+        summary = f"⚠︎ no majority ({votes}) — English used"
+    elif codes.count(winner) == n:
+        summary = f"{n}/{n} samples agree"
+    else:
+        summary = f"⚠︎ {codes.count(winner)}/{n} samples agree ({votes})"
+    if any(_unspace_letters(s) != s for s in _detection_slices(sample)):
+        summary += " · ⚠︎ letter-spaced text fixed"
+    return summary
