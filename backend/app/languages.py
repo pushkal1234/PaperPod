@@ -175,6 +175,26 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "Guest: 关键在于理解这些观点之间的联系，以及它们在实际中的意义。"
         ),
     },
+    "uk": {
+        "name": "Ukrainian",
+        "host_voice": "uk-UA-OstapNeural",
+        "guest_voice": "uk-UA-PolinaNeural",
+        "host_signoff": "Host: Дякуємо, що слухали, до зустрічі в наступному випуску!",
+        "fallback_takeaway": (
+            "Guest: Головне — зрозуміти, як ці ідеї пов'язані між собою і що вони "
+            "означають на практиці."
+        ),
+    },
+    "tr": {
+        "name": "Turkish",
+        "host_voice": "tr-TR-AhmetNeural",
+        "guest_voice": "tr-TR-EmelNeural",
+        "host_signoff": "Host: Dinlediğiniz için teşekkürler, bir sonraki bölümde görüşmek üzere!",
+        "fallback_takeaway": (
+            "Guest: Önemli olan, bu fikirlerin birbirine nasıl bağlandığı ve pratikte "
+            "ne anlama geldiği."
+        ),
+    },
     "lt": {
         "name": "Lithuanian",
         "host_voice": "lt-LT-LeonasNeural",
@@ -540,6 +560,17 @@ def detect_language_name(text: str) -> str:
         # the podcast fell back to English.
         return "Mixed: " + " / ".join(_label(c) for c in dict.fromkeys(codes))
     return _label(winner)
+
+
+def expected_language_label(text: str) -> str:
+    """The language the podcast was SUPPOSED to be in, e.g. "Turkish (tr)".
+
+    The pipeline's own decision (:func:`detect_language` + profile), so it is
+    English for English and for every unsupported language. The admin email checks
+    the generated script against this rather than against the input language.
+    """
+    code = detect_language(text)
+    return f"{get_language_profile(code)['name']} ({code})"
 
 
 def detection_confidence(text: str) -> str:

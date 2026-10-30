@@ -285,6 +285,7 @@ async def send_generation_alert_email(
     audio_seconds: float | None = None,
     input_language: str | None = None,
     output_language: str | None = None,
+    expected_language: str | None = None,
     language_detection: str | None = None,
     failing_service: str | None = None,
     error: str | None = None,
@@ -307,9 +308,24 @@ async def send_generation_alert_email(
     # Shown side by side so match-vs-fallback rate is visible at a glance.
     in_lang = (input_language or "").strip() or "Unknown"
     out_lang = (output_language or "").strip() or "Unknown"
-    match_note = "" if in_lang == "Unknown" or out_lang == "Unknown" else (
-        " ✓ match" if _lang_base(in_lang) == _lang_base(out_lang) else " ⚠︎ fallback"
-    )
+    # The podcast must be fully in its intended language: the document's own when
+    # supported, otherwise English. Judge the script against THAT, so an English
+    # podcast for an unsupported language reads as correct and a script in any
+    # other language is flagged.
+    exp_lang = (expected_language or "").strip()
+    if out_lang == "Unknown":
+        match_note = ""
+    elif exp_lang:
+        if _lang_base(out_lang) != _lang_base(exp_lang):
+            match_note = f" ⚠︎ expected {exp_lang}"
+        elif _lang_base(exp_lang) == _lang_base(in_lang):
+            match_note = " ✓ match"
+        else:
+            match_note = " ✓ English (language not supported)"
+    else:
+        match_note = "" if in_lang == "Unknown" else (
+            " ✓ match" if _lang_base(in_lang) == _lang_base(out_lang) else " ⚠︎ fallback"
+        )
     # How sure the language pick was (see app.languages.detection_confidence).
     detection_txt = (language_detection or "").strip() or "Unknown"
 

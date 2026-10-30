@@ -545,7 +545,17 @@ def _build_podcast_prompt(
             f"these two labels) — they are required formatting tags, not spoken words.\n"
         )
     else:
-        language_rule = ""
+        # English documents AND every unsupported language land here. Without an
+        # explicit rule the model writes in whatever language the document is in,
+        # which yields a native-language script with English voices and an English
+        # outro. A podcast is either fully English or fully a supported language.
+        language_rule = (
+            "\n\nLANGUAGE — ABSOLUTE REQUIREMENT: Write EVERY spoken line entirely in "
+            "English, even when the source document is written in another language — "
+            "explain its content in English. Do NOT write any line in the document's "
+            "language (proper names and short terms may stay as written). Keep the "
+            "speaker labels exactly as \"Host:\" and \"Guest:\".\n"
+        )
 
     return f"""You are a world-class podcast script writer.
 Given the document provided by the user, create an engaging, conversational podcast-style dialogue between two speakers:
@@ -1519,9 +1529,15 @@ def generate_podcast_script(
         f"NOT exceed. As you near {max_lines}, wrap up with the closing exchange instead "
         f"of starting new points. Count your lines and stay inside the range."
     )
+    # Same for the language: the document itself (often in another language) is
+    # the last thing the model reads, so restate the target language after it.
+    language_reminder = (
+        f"\n\nWrite every spoken line in {language_name}, keeping the \"Host:\" and "
+        f"\"Guest:\" labels as they are."
+    )
     first_messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Create a podcast conversation based on this document:\n\n{source_text}{length_reminder}"},
+        {"role": "user", "content": f"Create a podcast conversation based on this document:\n\n{source_text}{length_reminder}{language_reminder}"},
     ]
     full_script = _generate_transcript(first_messages, podcast_temp, max_out, prefer_gemini)
 
