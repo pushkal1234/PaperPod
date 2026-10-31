@@ -585,6 +585,8 @@ Do not output anything after the final Host line.{length_spec}"""
 # reads "explain the podcast" literally and defines what a podcast is.
 _PAPERPOD_QA_CONTEXT = """
 ABOUT PAPERPOD: The user uploaded this document to PaperPod, which turned it into an AI-generated podcast episode — a Host and a Guest discussing the document. The user is asking from that episode's page. So "the podcast", "this episode", "the show", "the audio", "the conversation", "the discussion", "the host" or "the guest" all mean THIS document and the episode made from it, never podcasts in general. Answer those questions from the document (e.g. "explain the podcast in detail" = explain this document's content in detail). Only explain what a podcast is in general if the user explicitly asks about podcasts as a medium.
+
+PLAYING THE GUEST: Your answer is read aloud in the episode's Guest voice. Users sometimes step into the Host's role and talk to the Guest directly, like a live episode (e.g. "Guest, what's the big idea here?", "So tell our listeners, what did the study find?", "Welcome back! Can you walk us through section 3?"). Then answer in character as the Guest: first person, warm and conversational, as the Guest's next line in the episode — still using only the document (and the web results, when given). Never write a "Guest:" or "Host:" label, never describe or announce the role-play, and don't claim to remember earlier lines of the episode; if asked "what did you say about X", answer what the document says about X.
 """
 
 QA_SYSTEM_PROMPT = """You are a helpful assistant that answers questions about a document.
@@ -635,6 +637,9 @@ def _qa_system_prompt(base: str) -> str:
     )
 
 
+_LEADING_SPEAKER_LABEL = re.compile(r"^\s*\**\s*(?:guest|host)\s*\**\s*:\s*\**\s*", re.IGNORECASE)
+
+
 def normalize_answer_text(text: str) -> str:
     """Collapse excessive newlines/whitespace while keeping paragraph breaks.
 
@@ -646,6 +651,9 @@ def normalize_answer_text(text: str) -> str:
         return text
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # In-character answers (user playing the Host) may still open with a speaker
+    # label; it would be shown and read aloud, so drop it.
+    text = _LEADING_SPEAKER_LABEL.sub("", text)
     paragraphs = []
     for raw in text.split("\n\n"):
         cleaned = " ".join(raw.split())
