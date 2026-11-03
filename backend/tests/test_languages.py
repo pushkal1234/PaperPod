@@ -38,6 +38,7 @@ SAMPLES = {
     "hi": "सरकार ने आज शिक्षा पर एक नया कानून पारित किया। मंत्री के अनुसार, यह सुधार अगले साल शुरू होगा और देश के सभी प्राथमिक विद्यालयों को शामिल करेगा।",
     "vi": "Chính phủ hôm nay đã thông qua một luật giáo dục mới. Theo bộ trưởng, cải cách sẽ bắt đầu vào năm tới và áp dụng cho tất cả các trường tiểu học trong cả nước.",
     "da": "Regeringen har i dag vedtaget en ny lov om uddannelse. Ifølge ministeren begynder reformen næste år og omfatter alle landets folkeskoler.",
+    "no": "Regjeringen la i dag fram en ny lov om utdanning. Ifølge statsråden skal reformen starte neste år og omfatte alle barneskoler i landet. Lærerne er positive til planen, men sier at det trengs mer penger.",
     "fa": "دولت امروز قانون جدیدی درباره آموزش تصویب کرد. به گفته وزیر، این اصلاحات از سال آینده آغاز می‌شود و همه مدارس ابتدایی کشور را در بر می‌گیرد.",
     "ar": "اعتمدت الحكومة اليوم قانونًا جديدًا للتعليم. ووفقًا للوزير، ستبدأ الإصلاحات العام المقبل وستشمل جميع المدارس الابتدائية.",
     "ur": "حکومت نے آج تعلیم کے بارے میں ایک نیا قانون منظور کیا۔ وزیر کے مطابق یہ اصلاحات اگلے سال شروع ہوں گی اور ملک کے تمام پرائمری اسکولوں پر لاگو ہوں گی۔",
@@ -108,6 +109,13 @@ class TestSupportedLanguages(_MultilingualOn):
         for code, text in SAMPLES.items():
             with self.subTest(code=code):
                 self.assertEqual(detect_language(text * 60), code)
+
+    def test_danish_and_norwegian_stay_apart(self):
+        for code in ("da", "no"):
+            with self.subTest(code=code):
+                self.assertEqual(detect_language(SAMPLES[code] * 60), code)
+        nynorsk = "Regjeringa la i dag fram ei ny lov om utdanning. Ifølgje statsråden skal reforma starte neste år og omfatte alle barneskular i landet. Lærarane er positive til planen, men seier at det trengst meir pengar."
+        self.assertEqual(detect_language(nynorsk * 3), "no")
 
     def test_unsupported_lookalikes_stay_english(self):
         self.assertEqual(detect_language(BULGARIAN * 3), "en")

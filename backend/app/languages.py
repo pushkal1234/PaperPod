@@ -117,6 +117,17 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "betyder i praksis."
         ),
     },
+    # Norwegian = Bokmål voices (langdetect's 'no' also covers Nynorsk documents).
+    "no": {
+        "name": "Norwegian",
+        "host_voice": "nb-NO-FinnNeural",
+        "guest_voice": "nb-NO-PernilleNeural",
+        "host_signoff": "Host: Takk for at du lyttet, vi ses i neste episode!",
+        "fallback_takeaway": (
+            "Guest: Det viktigste er hvordan disse ideene henger sammen, og hva de "
+            "betyr i praksis."
+        ),
+    },
     "fa": {
         "name": "Persian",
         "host_voice": "fa-IR-FaridNeural",
