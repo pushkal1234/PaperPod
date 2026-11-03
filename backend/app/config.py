@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # override on Railway to match exactly the free models in your AI Studio quota.
     LLM_FALLBACK_MODELS: str = os.getenv(
         "LLM_FALLBACK_MODELS",
-        "gemini-2.5-flash,gemini-3-flash-preview,gemini-3.6-flash,gemini-3.8-flash,gemini-2.5-flash-lite",
+        "gemini-2.5-flash,gemini-3-flash-preview,gemini-3.6-flash,gemini-3.8-flash",
     )
     WHISPER_MODEL: str = "whisper-large-v3"
     # Voice casting — BOTH en-US so the whole episode is a natural US-English
@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # Seconds to wait before one sequential retry pass over answer chunks that
     # were throttled, giving edge-tts' rate window time to clear.
     TTS_QA_RETRY_DELAY: float = float(os.getenv("TTS_QA_RETRY_DELAY", "5"))
+    # Same second pass for podcast clips, which come in much bigger bursts (100+
+    # clips), so give Edge's rate window a little longer to clear.
+    TTS_PODCAST_RETRY_DELAY: float = float(os.getenv("TTS_PODCAST_RETRY_DELAY", "8"))
     # Hard cap on dialogue turns fed to TTS — and, in practice, the EFFECTIVE
     # ceiling on episode length. The heavy-overshoot ceiling is
     # max_lines × HEAVY_OVERSHOOT_CEILING_FACTOR (1.75), clamped to
@@ -159,7 +162,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "27")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "28")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

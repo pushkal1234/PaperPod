@@ -295,6 +295,75 @@ def _parse_transcript_segments(audio: AudioFile | None) -> list[dict] | None:
         return None
 
 
+# A podcast that fails at the AUDIO step (Edge TTS throttling, a voice error) has
+# already paid for its script, and re-uploading the same file would only write the
+# same script again (another 40-90s of LLM time and a scarce Gemini request). So
+# that script is kept on disk, keyed by the upload's content hash (which folds in
+# GENERATION_VERSION) and its uploader (same scoping as dedup), and the next
+# upload of that file skips straight to audio. Removed once a podcast succeeds,
+# when the document is deleted, or after the TTL.
+_SCRIPT_CACHE_DIR = os.path.join(settings.AUDIO_DIR, "script_cache")
+_SCRIPT_CACHE_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _script_cache_path(content_hash: str | None, user_id: str | None) -> str | None:
+    if not content_hash:
+        return None
+    key = hashlib.sha256(f"{content_hash}:{user_id or 'anon'}".encode()).hexdigest()
+    return os.path.join(_SCRIPT_CACHE_DIR, f"{key}.json")
+
+
+def _load_kept_script(path: str | None, lang_code: str) -> str | None:
+    """The script kept from an earlier failed attempt, if it is still valid for
+    this language. Best-effort: any problem just means generating afresh."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        if time.time() - os.path.getmtime(path) > _SCRIPT_CACHE_TTL_SECONDS:
+            os.remove(path)
+            return None
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("lang") != lang_code or not data.get("script"):
+            return None
+        return data["script"]
+    except (OSError, ValueError):
+        return None
+
+
+def _keep_script(path: str | None, script: str | None, lang_code: str) -> bool:
+    """Save a finished script after the audio step failed (best-effort).
+    Returns whether it was saved."""
+    if not path or not script:
+        return False
+    try:
+        os.makedirs(_SCRIPT_CACHE_DIR, exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"lang": lang_code, "script": script}, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        return False
+    # Sweep entries nobody came back for.
+    try:
+        now = time.time()
+        for name in os.listdir(_SCRIPT_CACHE_DIR):
+            p = os.path.join(_SCRIPT_CACHE_DIR, name)
+            if now - os.path.getmtime(p) > _SCRIPT_CACHE_TTL_SECONDS:
+                os.remove(p)
+    except OSError:
+        pass
+    return True
+
+
+def _drop_kept_script(path: str | None) -> None:
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 async def _process_document(doc_id: str, file_path: str, content_type: str):
     """Background entrypoint (file upload) — concurrency-limited pipeline."""
     async with _job_semaphore:
@@ -332,6 +401,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
     overall_start = time.perf_counter()
     step_times = {}
     current_step = "initializing"
+    script, kept_path, lang_code = None, None, "en"
     try:
         current_step = "extracting text from PDF"
         t0 = time.perf_counter()
@@ -363,6 +433,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
             if doc:
                 doc.raw_text = raw_text
                 doc.num_chunks = len(chunks)
+                kept_path = _script_cache_path(doc.content_hash, doc.user_id)
                 await session.commit()
 
         # Detect the document's language so the script is written in it and voiced
@@ -372,12 +443,19 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
 
         current_step = "generating podcast script"
         t0 = time.perf_counter()
-        logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM ({lang_profile['name']})...")
-        _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
-        # The Groq client is synchronous/blocking — run it off the event loop.
-        script = await run_in_threadpool(generate_podcast_script, raw_text, page_count, lang_profile)
+        script = _load_kept_script(kept_path, lang_code)
+        if script:
+            logger.info(
+                f"[{doc_id}] Step 3/4: Reusing the script kept from an earlier attempt whose "
+                f"audio failed ({len(script)} chars) — skipping the LLM"
+            )
+        else:
+            logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM ({lang_profile['name']})...")
+            _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
+            # The Groq client is synchronous/blocking — run it off the event loop.
+            script = await run_in_threadpool(generate_podcast_script, raw_text, page_count, lang_profile)
         step_times['llm'] = time.perf_counter() - t0
-        logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
+        logger.info(f"[{doc_id}] Script ready ({len(script)} chars) in {step_times['llm']:.2f}s")
 
         current_step = "synthesizing audio"
         t0 = time.perf_counter()
@@ -422,6 +500,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
             f"tts={step_times['tts']:.2f}s, total={total:.2f}s, "
             f"chars={len(raw_text)}, chunks={len(chunks)}, turns={len([l for l in script.split(chr(10)) if l.strip()])}"
         )
+        _drop_kept_script(kept_path)
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
         _fire_and_forget_alert(_send_generation_alert(doc_id, ok=True, total_seconds=total, audio_seconds=duration))
 
@@ -430,6 +509,8 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
         error_detail = _sanitize_error(f"Failed while {current_step}: {e}")
         logger.error(f"[{doc_id}] ❌ {error_detail} (total elapsed: {total:.2f}s)")
         logger.error(traceback.format_exc())
+        if current_step == "synthesizing audio" and _keep_script(kept_path, script, lang_code):
+            logger.info(f"[{doc_id}] Kept the finished script so a re-upload skips the LLM")
         # Mark as failed so frontend stops polling
         try:
             async with async_session() as session:
@@ -678,6 +759,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
     overall_start = time.perf_counter()
     step_times = {}
     current_step = "initializing"
+    script, kept_path, lang_code = None, None, "en"
     try:
         current_step = "chunking and storing text"
         t0 = time.perf_counter()
@@ -690,6 +772,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
             doc = await session.get(Document, doc_id)
             if doc:
                 doc.num_chunks = len(chunks)
+                kept_path = _script_cache_path(doc.content_hash, doc.user_id)
                 await session.commit()
 
         # Detect the pasted text's language (native script + voices when supported).
@@ -698,12 +781,19 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
 
         current_step = "generating podcast script"
         t0 = time.perf_counter()
-        logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM ({lang_profile['name']})...")
-        _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
-        # The Groq client is synchronous/blocking — run it off the event loop.
-        script = await run_in_threadpool(generate_podcast_script, raw_text, None, lang_profile)
+        script = _load_kept_script(kept_path, lang_code)
+        if script:
+            logger.info(
+                f"[{doc_id}] Step 3/4: Reusing the script kept from an earlier attempt whose "
+                f"audio failed ({len(script)} chars) — skipping the LLM"
+            )
+        else:
+            logger.info(f"[{doc_id}] Step 3/4: Generating podcast script via LLM ({lang_profile['name']})...")
+            _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
+            # The Groq client is synchronous/blocking — run it off the event loop.
+            script = await run_in_threadpool(generate_podcast_script, raw_text, None, lang_profile)
         step_times['llm'] = time.perf_counter() - t0
-        logger.info(f"[{doc_id}] Script generated ({len(script)} chars) in {step_times['llm']:.2f}s")
+        logger.info(f"[{doc_id}] Script ready ({len(script)} chars) in {step_times['llm']:.2f}s")
 
         current_step = "synthesizing audio"
         t0 = time.perf_counter()
@@ -747,6 +837,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
             f"tts={step_times['tts']:.2f}s, total={total:.2f}s, "
             f"chars={len(raw_text)}, chunks={len(chunks)}"
         )
+        _drop_kept_script(kept_path)
         logger.info(f"[{doc_id}] ✅ DONE — podcast ready (audio_id={audio_id})")
         _fire_and_forget_alert(_send_generation_alert(doc_id, ok=True, total_seconds=total, audio_seconds=duration))
 
@@ -755,6 +846,8 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
         error_detail = _sanitize_error(f"Failed while {current_step}: {e}")
         logger.error(f"[{doc_id}] ❌ {error_detail} (total elapsed: {total:.2f}s)")
         logger.error(traceback.format_exc())
+        if current_step == "synthesizing audio" and _keep_script(kept_path, script, lang_code):
+            logger.info(f"[{doc_id}] Kept the finished script so a re-upload skips the LLM")
         try:
             async with async_session() as session:
                 doc = await session.get(Document, doc_id)
@@ -991,8 +1084,10 @@ async def delete_document(
     doc.deleted_at = _utcnow()
     await db.commit()
 
-    # Remove in-memory chunks (if present)
+    # Remove in-memory chunks (if present) and any script kept from a failed
+    # attempt, so a deleted document leaves nothing reusable behind.
     delete_chunks(doc_id)
+    _drop_kept_script(_script_cache_path(doc.content_hash, doc.user_id))
 
     # Delete files after commit (best-effort)
     deleted_files = 0

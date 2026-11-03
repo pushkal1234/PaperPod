@@ -81,6 +81,7 @@ async def synthesize_speech(
     pitch: str = "+0Hz",
     allow_silence_fallback: bool = False,
     fallback_voice: str | None = None,
+    limiter: "_AdaptiveLimiter | None" = None,
 ):
     """Generate speech audio with retry and brand-safe error wrapping.
 
@@ -97,6 +98,11 @@ async def synthesize_speech(
     native voice). The multilingual English voices can still read foreign text, so
     the podcast completes in English rather than failing outright. We never fall
     back on a rate-limit — the same service would throttle the fallback voice too.
+
+    `limiter`: a podcast's _AdaptiveLimiter. Each request to Edge holds one of its
+    slots only while in flight (the backoff sleep does not), so retries also obey
+    a lowered cap, and every throttled attempt is reported to it. Q&A leaves it
+    unset and caps its calls itself.
     """
     # Non-speakable text (e.g. "...", "—") makes edge-tts return "No audio was
     # received" on EVERY attempt, so don't waste the throttle-backoff budget on
@@ -115,12 +121,18 @@ async def synthesize_speech(
         for attempt in range(max_retries):
             try:
                 communicator = edge_tts.Communicate(text, use_voice, rate=rate, pitch=pitch)
-                await communicator.save(output_path)
+                if limiter is None:
+                    await communicator.save(output_path)
+                else:
+                    async with limiter:
+                        await communicator.save(output_path)
                 return None
             except Exception as e:
                 last_error = e
                 err_msg = str(e)
                 if _is_tts_rate_limit(err_msg):
+                    if limiter is not None:
+                        limiter.on_throttle()
                     # Don't sleep after the final attempt — the loop is about to
                     # exit, so a trailing backoff is pure wasted wall-time.
                     if attempt < max_retries - 1:
@@ -160,8 +172,60 @@ async def synthesize_speech(
     raise RuntimeError(TTS_SERVICE_ERROR_MSG)
 
 
+class _AdaptiveLimiter:
+    """Concurrency cap for one podcast's edge-tts calls that backs off when Edge
+    throttles ("No audio was received").
+
+    A fixed cap kept all 8 workers firing while one clip backed off, so the
+    throttle window never cleared and a clip could exhaust its retries. Here each
+    throttled attempt halves the cap (never below ``minimum``), and every
+    ``recover_after`` consecutive successful clips raise it by one again, back up
+    to ``maximum``. A slot is held per request to Edge, not per clip, so a clip
+    sleeping in backoff frees its slot. Lowering the cap never interrupts requests
+    already in flight; it only holds back new ones (first tries and retries alike).
+    """
+
+    def __init__(self, maximum: int, minimum: int = 2, recover_after: int = 10):
+        self.maximum = maximum
+        self.minimum = min(minimum, maximum)
+        self.limit = maximum
+        self.lowest = maximum
+        self.throttles = 0
+        self._recover_after = recover_after
+        self._streak = 0
+        self._active = 0
+        self._cond = asyncio.Condition()
+
+    async def __aenter__(self):
+        async with self._cond:
+            await self._cond.wait_for(lambda: self._active < self.limit)
+            self._active += 1
+
+    async def __aexit__(self, *exc):
+        async with self._cond:
+            self._active -= 1
+            self._cond.notify_all()
+
+    def on_throttle(self) -> None:
+        self.throttles += 1
+        self._streak = 0
+        new_limit = max(self.minimum, self.limit // 2)
+        if new_limit < self.limit:
+            self.limit = new_limit
+            self.lowest = min(self.lowest, new_limit)
+            logger.warning(f"[TTS] Edge throttling — lowering podcast concurrency to {new_limit}")
+
+    async def on_success(self) -> None:
+        async with self._cond:
+            self._streak += 1
+            if self._streak >= self._recover_after and self.limit < self.maximum:
+                self.limit += 1
+                self._streak = 0
+                self._cond.notify_all()
+
+
 async def _synthesize_one(
-    sem: asyncio.Semaphore,
+    limiter: _AdaptiveLimiter,
     text: str,
     voice: str,
     clip_path: str,
@@ -170,12 +234,13 @@ async def _synthesize_one(
     pitch: str = "+0Hz",
     fallback_voice: str | None = None,
 ):
-    """Synthesize a single clip with concurrency limit. Propagates errors."""
-    async with sem:
-        await synthesize_speech(
-            text, voice, clip_path, rate=rate, pitch=pitch,
-            allow_silence_fallback=True, fallback_voice=fallback_voice,
-        )
+    """Synthesize a single clip under the podcast's limiter. Propagates errors."""
+    await synthesize_speech(
+        text, voice, clip_path, rate=rate, pitch=pitch,
+        allow_silence_fallback=True, fallback_voice=fallback_voice,
+        limiter=limiter,
+    )
+    await limiter.on_success()
 
 
 async def generate_podcast_audio(
@@ -214,8 +279,8 @@ async def generate_podcast_audio(
     concurrency = TTS_CONCURRENCY
     if len(dialogue) <= TTS_SMALL_DOC_MAX_CLIPS:
         concurrency = min(TTS_CONCURRENCY, TTS_CONCURRENCY_SMALL)
-    sem = asyncio.Semaphore(concurrency)
-    tasks = []
+    limiter = _AdaptiveLimiter(concurrency)
+    jobs = []
     clip_paths = []
 
     # English safety net per speaker: if a native voice fails for a non-throttle
@@ -229,14 +294,25 @@ async def generate_podcast_audio(
         pitch = settings.TTS_PITCH_HOST if is_host else settings.TTS_PITCH_GUEST
         clip_path = os.path.join(temp_dir, f"clip_{i:04d}.mp3")
         clip_paths.append(clip_path)
-        tasks.append(_synthesize_one(
-            sem, entry["text"], voice, clip_path, i, rate=rate, pitch=pitch,
-            fallback_voice=fallback,
-        ))
+        jobs.append((entry["text"], voice, clip_path, rate, pitch, fallback))
 
-    logger.info(f"[{doc_id}] TTS: {len(tasks)} clips, concurrency={concurrency}")
+    logger.info(f"[{doc_id}] TTS: {len(jobs)} clips, concurrency={concurrency}")
     _t_synth = time.perf_counter()
-    await asyncio.gather(*tasks)
+    results = await asyncio.gather(
+        *(
+            _synthesize_one(limiter, text, voice, path, i, rate=rate, pitch=pitch, fallback_voice=fallback)
+            for i, (text, voice, path, rate, pitch, fallback) in enumerate(jobs)
+        ),
+        return_exceptions=True,
+    )
+    failed = [i for i, r in enumerate(results) if isinstance(r, BaseException)]
+    try:
+        if failed:
+            await _retry_throttled_clips(doc_id, jobs, results, failed)
+    except BaseException:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
     synth_secs = time.perf_counter() - _t_synth
 
     output_filename = f"{doc_id}_podcast.mp3"
@@ -253,11 +329,39 @@ async def generate_podcast_audio(
     # network fan-out (tune via TTS_CONCURRENCY) or the local ffmpeg/pydub merge
     # (a CPU/IO concern) — otherwise the two are indistinguishable in timing.
     logger.info(
-        f"[{doc_id}] TTS breakdown — synth={synth_secs:.2f}s ({len(tasks)} clips @ "
-        f"concurrency={concurrency}), merge={merge_secs:.2f}s"
+        f"[{doc_id}] TTS breakdown — synth={synth_secs:.2f}s ({len(jobs)} clips @ "
+        f"concurrency={concurrency}, throttles={limiter.throttles}, lowest={limiter.lowest}, "
+        f"second-pass={len(failed)}), merge={merge_secs:.2f}s"
     )
 
     return output_path, duration, transcript_segments
+
+
+async def _retry_throttled_clips(doc_id: str, jobs: list[tuple], results: list, failed: list[int]):
+    """Second pass for podcast clips that were still throttled after their own
+    retries: wait for Edge's rate window to clear, then redo them one at a time.
+
+    The clips that succeeded are kept, so one stubborn clip no longer throws away
+    an entire episode (a 165-clip podcast once failed on a single clip). Any
+    non-throttle failure is raised as before; so is a clip still throttled here.
+    """
+    for i in failed:
+        err = results[i]
+        if not (isinstance(err, RuntimeError) and str(err) == TTS_RATE_LIMIT_MSG):
+            raise err
+    wait = settings.TTS_PODCAST_RETRY_DELAY + random.uniform(0.0, 2.0)
+    logger.warning(
+        f"[{doc_id}] TTS: {len(failed)}/{len(jobs)} clips still throttled; "
+        f"retrying them one at a time in {wait:.1f}s"
+    )
+    await asyncio.sleep(wait)
+    for i in failed:
+        text, voice, path, rate, pitch, fallback = jobs[i]
+        await synthesize_speech(
+            text, voice, path, rate=rate, pitch=pitch,
+            allow_silence_fallback=True, fallback_voice=fallback,
+        )
+    logger.info(f"[{doc_id}] TTS: second pass recovered {len(failed)} clip(s)")
 
 
 _PAUSE_MS = 400
