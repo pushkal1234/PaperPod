@@ -146,7 +146,10 @@ async def _user_full(user: User, db: AsyncSession) -> dict:
 
 
 async def _auth_response(user: User, db: AsyncSession) -> dict:
-    return {"token": create_access_token(user.id), "user": await _user_full(user, db)}
+    return {
+        "token": create_access_token(user.id, user.token_version or 0),
+        "user": await _user_full(user, db),
+    }
 
 
 @router.post("/register")
@@ -243,6 +246,21 @@ async def google_sign_in(
     if user:
         # Backfill Google fields on an existing account.
         if not user.google_sub:
+            if not getattr(user, "email_verified", False):
+                # Account pre-hijacking guard: an unverified account was created by
+                # someone who never proved they own this inbox, and Google has just
+                # proven THIS person does. Drop the password and pending codes the
+                # creator set, and revoke their sessions, so only the inbox owner
+                # keeps access.
+                user.password_hash = None
+                user.verification_code_hash = None
+                user.reset_code_hash = None
+                user.reset_sent_at = None
+                user.token_version = (user.token_version or 0) + 1
+                logger.warning(
+                    f"[auth] Google linked to unverified account {user.id}; "
+                    f"cleared its password and revoked existing sessions"
+                )
             user.google_sub = google_sub
         if not user.name and name:
             user.name = name
@@ -407,6 +425,9 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
     user.reset_code_hash = None
     user.reset_attempts = 0
     user.reset_sent_at = None
+    # Sign out every other session (e.g. someone who knew the old password); the
+    # response below carries a fresh token for this one.
+    user.token_version = (user.token_version or 0) + 1
     # Proving the code confirms the inbox — safe to treat the email as verified.
     user.email_verified = True
     await db.commit()

@@ -50,23 +50,25 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 # ── JWT ──
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: str, token_version: int = 0) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
+        # Must match User.token_version at use time (see get_optional_user).
+        "tv": int(token_version or 0),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(days=settings.JWT_EXPIRE_DAYS)).timestamp()),
     }
     return jwt.encode(payload, _JWT_SECRET, algorithm=settings.JWT_ALG)
 
 
-def decode_access_token(token: str) -> str | None:
-    """Return the user id from a valid token, or None if invalid/expired."""
+def decode_access_token(token: str) -> dict | None:
+    """Return the claims of a valid token, or None if invalid/expired."""
     try:
         payload = jwt.decode(token, _JWT_SECRET, algorithms=[settings.JWT_ALG])
-        return payload.get("sub")
     except jwt.PyJWTError:
         return None
+    return payload if payload.get("sub") else None
 
 
 # ── Google Sign-In ──
@@ -98,6 +100,11 @@ def verify_google_id_token(id_token_str: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid Google token issuer.")
     if not claims.get("email"):
         raise HTTPException(status_code=401, detail="Google account has no email.")
+    # Sign-in links to existing accounts by email, so the email must be one Google
+    # has verified for this person — otherwise anyone could claim an address.
+    # google-auth returns a bool; older tokens may carry the string "true".
+    if claims.get("email_verified") not in (True, "true", "True"):
+        raise HTTPException(status_code=401, detail="Please verify your Google account's email first.")
     return claims
 
 
@@ -130,10 +137,15 @@ async def get_optional_user(
     """
     if not credentials or not credentials.credentials:
         return None
-    user_id = decode_access_token(credentials.credentials)
-    if not user_id:
+    claims = decode_access_token(credentials.credentials)
+    if not claims:
         return None
-    return await db.get(User, user_id)
+    user = await db.get(User, claims["sub"])
+    # A revoked session: the account's token_version was bumped after this token
+    # was issued. Tokens from before versioning carry no "tv" and count as 0.
+    if user is None or int(claims.get("tv", 0)) != (user.token_version or 0):
+        return None
+    return user
 
 
 async def get_current_user(

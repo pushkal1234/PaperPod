@@ -70,6 +70,12 @@ class User(Base):
     reset_sent_at = Column(DateTime(timezone=True), nullable=True)
     reset_attempts = Column(Integer, nullable=False, default=0)
 
+    # --- Session revocation ---
+    # Copied into every JWT as "tv". Bumping it signs out every existing session
+    # (a password reset, or Google taking over an account whose password holder
+    # never proved the inbox), since stateless JWTs can't otherwise be revoked.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
+
 
 class Document(Base):
     __tablename__ = "documents"
@@ -349,6 +355,12 @@ async def _migrate_schema_sqlite(conn):
                 text("ALTER TABLE users ADD COLUMN reset_attempts INTEGER NOT NULL DEFAULT 0")
             )
 
+        # Session-revocation counter (see User.token_version).
+        if "token_version" not in user_cols:
+            sync_conn.execute(
+                text("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
+            )
+
     await conn.run_sync(_migrate)
 
 
@@ -455,6 +467,10 @@ async def _migrate_schema_postgres(conn):
     )
     await conn.execute(
         text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_attempts INTEGER NOT NULL DEFAULT 0")
+    )
+    # Session-revocation counter (see User.token_version).
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0")
     )
 
 
