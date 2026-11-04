@@ -254,11 +254,17 @@ def _lang_base(label: str) -> str:
     """Base language name from a label like "German (de)" or "Chinese (zh-cn)".
 
     Compares on the ISO code when present (so "Chinese (zh-cn)" vs "Chinese (zh)"
-    still match on the name), else on the lowercased name.
+    still match on the name), else on the lowercased name. Script variants that
+    are separate podcast languages stay distinct, so a Traditional-Chinese or
+    Latin-Serbian document voiced in the other script is flagged, not "✓ match".
     """
     label = (label or "").strip()
     if "(" in label and label.endswith(")"):
         code = label[label.rfind("(") + 1 : -1].strip().lower()
+        if code == "zh-cn":
+            code = "zh"
+        if code in ("zh-tw", "sr-latn"):
+            return code
         return code.split("-")[0] or label.lower()
     return label.lower()
 

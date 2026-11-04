@@ -47,6 +47,13 @@ SAMPLES = {
     "zh": "政府今天通过了一项新的教育法。部长表示，改革将于明年开始，并覆盖全国所有小学。教师们欢迎这项计划，但表示需要更多资金。",
     "cs": "Vláda dnes schválila nový zákon o vzdělávání. Podle ministra začne reforma příští rok a bude se týkat všech základních škol v zemi. Učitelé plán vítají, ale říkají, že je potřeba více peněz.",
     "sk": "Vláda dnes schválila nový zákon o vzdelávaní. Podľa ministra sa reforma začne budúci rok a bude sa týkať všetkých základných škôl v krajine. Učitelia plán vítajú, ale hovoria, že je potrebných viac peňazí.",
+    "zh-tw": "政府今天通過了一項新的教育法。部長表示，改革將於明年開始，並覆蓋全國所有小學。教師們歡迎這項計劃，但表示需要更多資金。",
+    "ja": "政府は本日、新しい教育法を可決した。大臣によると、改革は来年から始まり、全国のすべての小学校が対象となる。",
+    "fi": "Hallitus hyväksyi tänään uuden koulutuslain. Ministerin mukaan uudistus alkaa ensi vuonna ja koskee kaikkia maan peruskouluja.",
+    "et": "Valitsus kiitis täna heaks uue haridusseaduse. Ministri sõnul algab reform järgmisel aastal ja hõlmab kõiki riigi põhikoole.",
+    "az": "Hökumət bu gün təhsil haqqında yeni qanun qəbul etdi. Nazirin sözlərinə görə, islahat gələn il başlayacaq və ölkənin bütün ibtidai məktəblərini əhatə edəcək.",
+    "ko": "정부는 오늘 새로운 교육법을 통과시켰다. 장관에 따르면 개혁은 내년에 시작되며 전국의 모든 초등학교에 적용될 예정이다.",
+    "hu": "A kormány ma új oktatási törvényt fogadott el. A miniszter szerint a reform jövőre kezdődik, és az ország összes általános iskolájára kiterjed.",
     "pl": "Rząd przyjął dzisiaj nową ustawę o edukacji. Według ministra reforma rozpocznie się w przyszłym roku i obejmie wszystkie szkoły podstawowe w kraju.",
     "sl": "Vlada je danes sprejela nov zakon o izobraževanju. Po besedah ministra se bo reforma začela prihodnje leto in bo zajela vse osnovne šole v državi.",
     "bg": "Правителството днес прие нов закон за образованието. Според министъра реформата ще започне догодина и ще обхване всички основни училища в страната.",
@@ -75,7 +82,167 @@ WORKPLACE = (
 )
 # Unsupported languages that look like supported ones: must stay English.
 ROMANIAN = "Guvernul a adoptat astăzi o nouă lege a educației. Potrivit ministrului, reforma va începe anul viitor și va cuprinde toate școlile primare din țară."
-HUNGARIAN = "A kormány ma új oktatási törvényt fogadott el. A miniszter szerint a reform jövőre kezdődik, és az ország összes általános iskolájára kiterjed."
+
+# CJK and Uralic/Turkic lanes. Six parallel texts each; LANE_EXPECTED is the
+# language the podcast must be in (unsupported look-alikes -> English). Chinese
+# Traditional must be Chinese: langdetect alone calls it Korean.
+LANES = {
+    "zh": [
+        "政府今天通过了一项新的教育法。部长表示，改革将于明年开始，并覆盖全国所有小学。",
+        "要解释为什么有些人比其他人更有动力并不容易。但研究表明，良好的习惯和充足的睡眠有很大影响。",
+        "该公司去年的收入增长了百分之十二，主要得益于海外的新客户。",
+        "病人因高烧和头痛住院。医生给他开了抗生素，并建议他休息。",
+        "本章介绍光合作用是如何进行的，以及植物为什么对地球上的生命如此重要。",
+        "周三以多云为主，下午局部有阵雨，气温在十五度左右。",
+    ],
+    "zh-trad": [
+        "政府今天通過了一項新的教育法。部長表示，改革將於明年開始，並覆蓋全國所有小學。",
+        "要解釋為什麼有些人比其他人更有動力並不容易。但研究表明，良好的習慣和充足的睡眠有很大影響。",
+        "該公司去年的收入增長了百分之十二，主要得益於海外的新客戶。",
+        "病人因高燒和頭痛住院。醫生給他開了抗生素，並建議他休息。",
+        "本章介紹光合作用是如何進行的，以及植物為什麼對地球上的生命如此重要。",
+        "週三以多雲為主，下午局部有陣雨，氣溫在十五度左右。",
+    ],
+    "ja": [
+        "政府は本日、新しい教育法を可決した。大臣によると、改革は来年から始まり、全国のすべての小学校が対象となる。",
+        "なぜ一部の人が他の人よりも意欲的なのかを説明するのは簡単ではない。しかし研究によれば、良い習慣と十分な睡眠が大きな影響を与える。",
+        "同社は昨年、海外の新規顧客のおかげで売上を12パーセント伸ばした。",
+        "患者は高熱と頭痛で入院した。医師は抗生物質を処方し、安静を勧めた。",
+        "この章では、光合成がどのように行われるのか、そして植物が地球上の生命にとってなぜ重要なのかを説明する。",
+        "水曜日はおおむね曇りで、午後は所により雨が降り、気温は15度前後となる見込みだ。",
+    ],
+    "ko": [
+        "정부는 오늘 새로운 교육법을 통과시켰다. 장관에 따르면 개혁은 내년에 시작되며 전국의 모든 초등학교에 적용될 예정이다.",
+        "왜 어떤 사람들이 다른 사람들보다 더 동기 부여가 되는지 설명하기는 쉽지 않다. 그러나 연구에 따르면 좋은 습관과 충분한 수면이 큰 영향을 미친다.",
+        "회사는 작년에 해외 신규 고객 덕분에 매출을 12퍼센트 늘렸다.",
+        "환자는 고열과 두통으로 병원에 입원했다. 의사들은 항생제를 처방하고 휴식을 권했다.",
+        "이 장에서는 광합성이 어떻게 일어나는지, 그리고 식물이 지구상의 생명에 왜 중요한지를 설명한다.",
+        "수요일에는 대체로 흐리고 오후에는 곳곳에 소나기가 내리며 기온은 15도 안팎이 되겠다.",
+    ],
+    "hu": [
+        "A kormány ma új oktatási törvényt fogadott el. A miniszter szerint a reform jövőre kezdődik, és az ország összes általános iskolájára kiterjed.",
+        "Nem könnyű megmagyarázni, miért motiváltabbak egyes emberek másoknál. A kutatások azonban azt mutatják, hogy a jó szokások és az elegendő alvás nagy hatással vannak.",
+        "A vállalat tavaly tizenkét százalékkal növelte bevételét, főként a külföldi új ügyfeleknek köszönhetően.",
+        "A beteget magas lázzal és fejfájással vették fel a kórházba. Az orvosok antibiotikumot írtak fel neki, és pihenést javasoltak.",
+        "Ez a fejezet bemutatja, hogyan zajlik a fotoszintézis, és miért olyan fontosak a növények a földi élet szempontjából.",
+        "Szerdán többnyire felhős lesz az ég, délután helyenként záporok várhatók, a hőmérséklet tizenöt fok körül alakul.",
+    ],
+    "fi": [
+        "Hallitus hyväksyi tänään uuden koulutuslain. Ministerin mukaan uudistus alkaa ensi vuonna ja koskee kaikkia maan peruskouluja.",
+        "Ei ole helppo selittää, miksi jotkut ihmiset ovat motivoituneempia kuin toiset. Tutkimukset kuitenkin osoittavat, että hyvillä tavoilla ja riittävällä unella on suuri vaikutus.",
+        "Yhtiö kasvatti viime vuonna liikevaihtoaan kaksitoista prosenttia, pääasiassa uusien ulkomaisten asiakkaiden ansiosta.",
+        "Potilas otettiin sairaalaan korkean kuumeen ja päänsäryn vuoksi. Lääkärit määräsivät hänelle antibiootteja ja suosittelivat lepoa.",
+        "Tässä luvussa kuvataan, miten fotosynteesi tapahtuu ja miksi kasvit ovat niin tärkeitä elämälle maapallolla.",
+        "Keskiviikkona on enimmäkseen pilvistä, iltapäivällä paikoin sadekuuroja ja lämpötila noin viisitoista astetta.",
+    ],
+    "et": [
+        "Valitsus kiitis täna heaks uue haridusseaduse. Ministri sõnul algab reform järgmisel aastal ja hõlmab kõiki riigi põhikoole.",
+        "Pole lihtne seletada, miks mõned inimesed on teistest motiveeritumad. Uuringud näitavad siiski, et headel harjumustel ja piisaval unel on suur mõju.",
+        "Ettevõte suurendas eelmisel aastal käivet kaksteist protsenti, peamiselt tänu uutele välismaistele klientidele.",
+        "Patsient võeti haiglasse kõrge palaviku ja peavaluga. Arstid määrasid talle antibiootikume ja soovitasid puhkust.",
+        "Selles peatükis kirjeldatakse, kuidas fotosüntees toimub ja miks taimed on elu jaoks Maal nii olulised.",
+        "Kolmapäeval on peamiselt pilves, pärastlõunal kohati hoovihmad ja temperatuur on umbes viisteist kraadi.",
+    ],
+    "az": [
+        "Hökumət bu gün təhsil haqqında yeni qanun qəbul etdi. Nazirin sözlərinə görə, islahat gələn il başlayacaq və ölkənin bütün ibtidai məktəblərini əhatə edəcək.",
+        "Bəzi insanların niyə digərlərindən daha motivasiyalı olduğunu izah etmək asan deyil. Lakin araşdırmalar göstərir ki, yaxşı vərdişlər və kifayət qədər yuxu böyük təsir göstərir.",
+        "Şirkət keçən il əsasən xaricdəki yeni müştərilər sayəsində gəlirini on iki faiz artırdı.",
+        "Xəstə yüksək hərarət və baş ağrısı ilə xəstəxanaya yerləşdirildi. Həkimlər ona antibiotik yazdı və istirahət tövsiyə etdi.",
+        "Bu fəsil fotosintezin necə baş verdiyini və bitkilərin Yer üzündə həyat üçün niyə bu qədər vacib olduğunu izah edir.",
+        "Çərşənbə günü hava əsasən buludlu olacaq, günortadan sonra bəzi yerlərdə leysan yağışları gözlənilir və temperatur on beş dərəcə ətrafında olacaq.",
+    ],
+    "tr": [
+        "Hükümet bugün eğitimle ilgili yeni bir yasa kabul etti. Bakana göre reform gelecek yıl başlayacak ve ülkedeki tüm ilkokulları kapsayacak.",
+        "Bazı insanların neden diğerlerinden daha motive olduğunu açıklamak kolay değil. Ancak araştırmalar, iyi alışkanlıkların ve yeterli uykunun büyük etkisi olduğunu gösteriyor.",
+        "Şirket geçen yıl, özellikle yurt dışındaki yeni müşteriler sayesinde gelirini yüzde on iki artırdı.",
+        "Hasta yüksek ateş ve baş ağrısıyla hastaneye kaldırıldı. Doktorlar ona antibiyotik yazdı ve dinlenmesini önerdi.",
+        "Bu bölüm, fotosentezin nasıl gerçekleştiğini ve bitkilerin Dünya'daki yaşam için neden bu kadar önemli olduğunu açıklıyor.",
+        "Çarşamba günü hava çoğunlukla bulutlu olacak, öğleden sonra yer yer sağanak yağış bekleniyor ve sıcaklık on beş derece civarında olacak.",
+    ],
+}
+LANE_EXPECTED = {"zh": "zh", "zh-trad": "zh-tw", "ja": "ja", "ko": "ko", "hu": "hu", "fi": "fi", "et": "et", "tr": "tr", "az": "az"}
+LANE_SIBLINGS = {
+    "zh": ["ja", "ko"], "zh-trad": ["ja", "ko"], "ja": ["zh-cn", "ko"], "ko": ["zh-cn", "ja"],
+    "hu": ["fi", "et", "tr", "sk"], "fi": ["hu", "et"], "et": ["hu", "fi"], "tr": ["hu", "az"], "az": ["tr", "hu"],
+}
+# Unsupported languages next to supported ones: every one must give English.
+UNSUPPORTED = {
+    "mr": ["सरकारने आज शिक्षणाबाबत नवीन कायदा मंजूर केला. मंत्र्यांच्या म्हणण्यानुसार ही सुधारणा पुढील वर्षी सुरू होईल आणि देशातील सर्व प्राथमिक शाळांना लागू होईल.",
+           "बुधवारी आकाश मुख्यतः ढगाळ राहील, दुपारी काही ठिकाणी पावसाच्या सरी पडतील आणि तापमान सुमारे पंधरा अंश राहील.",
+           "रुग्णाला ताप आणि डोकेदुखीमुळे रुग्णालयात दाखल करण्यात आले. डॉक्टरांनी त्याला प्रतिजैविके दिली आणि विश्रांती घेण्याचा सल्ला दिला."],
+    "ne": ["सरकारले आज शिक्षासम्बन्धी नयाँ कानुन पारित गर्‍यो। मन्त्रीका अनुसार सुधार अर्को वर्ष सुरु हुनेछ र देशका सबै प्राथमिक विद्यालयमा लागू हुनेछ।",
+           "बुधबार आकाश प्रायः बादल लागेको रहनेछ, दिउँसो केही ठाउँमा वर्षा हुनेछ र तापक्रम करिब पन्ध्र डिग्री रहनेछ।",
+           "बिरामीलाई ज्वरो र टाउको दुखाइका कारण अस्पताल भर्ना गरियो। डाक्टरहरूले उनलाई एन्टिबायोटिक दिए र आराम गर्न सल्लाह दिए।"],
+    "ca": ["El govern ha aprovat avui una nova llei d'educació. Segons el ministre, la reforma començarà l'any vinent i afectarà totes les escoles primàries del país.",
+           "Dimecres estarà majoritàriament ennuvolat, a la tarda hi haurà ruixats en alguns punts i les temperatures seran d'uns quinze graus.",
+           "El pacient va ingressar a l'hospital amb febre alta i mal de cap. Els metges li van receptar antibiòtics i li van recomanar repòs."],
+    "sv": ["Regeringen har i dag antagit en ny lag om utbildning. Enligt ministern börjar reformen nästa år och omfattar alla grundskolor i landet.",
+           "På onsdag blir det mestadels mulet, på eftermiddagen lokala skurar och temperaturer runt femton grader.",
+           "Patienten lades in på sjukhuset med hög feber och huvudvärk. Läkarna skrev ut antibiotika och rekommenderade vila."],
+    "af": ["Die regering het vandag 'n nuwe wet oor onderwys aanvaar. Volgens die minister sal die hervorming volgende jaar begin en alle laerskole in die land insluit.",
+           "Woensdag sal dit meestal bewolk wees, met plek-plek buie in die middag en temperature van ongeveer vyftien grade.",
+           "Die pasiënt is met hoë koors en hoofpyn in die hospitaal opgeneem. Die dokters het antibiotika voorgeskryf en rus aanbeveel."],
+    "lv": ["Valdība šodien pieņēma jaunu izglītības likumu. Pēc ministra teiktā, reforma sāksies nākamgad un aptvers visas valsts pamatskolas.",
+           "Trešdien būs pārsvarā mākoņains, pēcpusdienā vietām lietusgāzes, un temperatūra būs ap piecpadsmit grādiem.",
+           "Pacients tika ievietots slimnīcā ar augstu drudzi un galvassāpēm. Ārsti viņam izrakstīja antibiotikas un ieteica atpūtu."],
+    "ro": ["Guvernul a adoptat astăzi o nouă lege a educației. Potrivit ministrului, reforma va începe anul viitor și va cuprinde toate școlile primare din țară.",
+           "Miercuri va fi în mare parte înnorat, după-amiază vor fi averse pe alocuri, iar temperaturile vor fi în jur de cincisprezece grade.",
+           "Pacientul a fost internat în spital cu febră mare și dureri de cap. Medicii i-au prescris antibiotice și i-au recomandat odihnă."],
+    "bn": ["সরকার আজ শিক্ষা বিষয়ে একটি নতুন আইন পাস করেছে। মন্ত্রীর মতে, সংস্কার আগামী বছর শুরু হবে এবং দেশের সব প্রাথমিক বিদ্যালয়ে প্রযোজ্য হবে।"],
+    "gu": ["સરકારે આજે શિક્ષણ અંગે નવો કાયદો પસાર કર્યો. મંત્રીના જણાવ્યા અનુસાર સુધારો આવતા વર્ષે શરૂ થશે અને દેશની તમામ પ્રાથમિક શાળાઓને લાગુ પડશે."],
+    "pa": ["ਸਰਕਾਰ ਨੇ ਅੱਜ ਸਿੱਖਿਆ ਬਾਰੇ ਇੱਕ ਨਵਾਂ ਕਾਨੂੰਨ ਪਾਸ ਕੀਤਾ। ਮੰਤਰੀ ਦੇ ਅਨੁਸਾਰ ਸੁਧਾਰ ਅਗਲੇ ਸਾਲ ਸ਼ੁਰੂ ਹੋਵੇਗਾ ਅਤੇ ਦੇਸ਼ ਦੇ ਸਾਰੇ ਪ੍ਰਾਇਮਰੀ ਸਕੂਲਾਂ 'ਤੇ ਲਾਗੂ ਹੋਵੇਗਾ।"],
+    "he": ["הממשלה אישרה היום חוק חינוך חדש. לדברי השר, הרפורמה תתחיל בשנה הבאה ותחול על כל בתי הספר היסודיים בארץ."],
+    "th": ["รัฐบาลได้อนุมัติกฎหมายการศึกษาฉบับใหม่ในวันนี้ รัฐมนตรีกล่าวว่าการปฏิรูปจะเริ่มในปีหน้าและครอบคลุมโรงเรียนประถมทุกแห่งในประเทศ"],
+    "sq": ["Qeveria miratoi sot një ligj të ri për arsimin. Sipas ministrit, reforma do të fillojë vitin e ardhshëm dhe do të përfshijë të gjitha shkollat fillore në vend."],
+    "sw": ["Serikali leo imepitisha sheria mpya ya elimu. Kwa mujibu wa waziri, mageuzi yataanza mwaka ujao na yatahusu shule zote za msingi nchini."],
+    "tl": ["Inaprubahan ngayon ng pamahalaan ang isang bagong batas sa edukasyon. Ayon sa ministro, magsisimula ang reporma sa susunod na taon at sasaklawin nito ang lahat ng paaralang elementarya sa bansa."],
+    "so": ["Dowladdu maanta waxay meel marisay sharci cusub oo ku saabsan waxbarashada. Sida uu sheegay wasiirku, dib-u-habeyntu waxay bilaabaneysaa sanadka soo socda."],
+    "ta": ["அரசு இன்று கல்வி தொடர்பான புதிய சட்டத்தை நிறைவேற்றியது. அமைச்சரின் கூற்றுப்படி, சீர்திருத்தம் அடுத்த ஆண்டு தொடங்கி நாட்டின் அனைத்து தொடக்கப் பள்ளிகளுக்கும் பொருந்தும்."],
+    "te": ["ప్రభుత్వం ఈరోజు విద్యపై కొత్త చట్టాన్ని ఆమోదించింది. మంత్రి ప్రకారం, సంస్కరణ వచ్చే సంవత్సరం ప్రారంభమై దేశంలోని అన్ని ప్రాథమిక పాఠశాలలకు వర్తిస్తుంది."],
+    "kn": ["ಸರ್ಕಾರ ಇಂದು ಶಿಕ್ಷಣದ ಕುರಿತು ಹೊಸ ಕಾನೂನನ್ನು ಅಂಗೀಕರಿಸಿದೆ. ಸಚಿವರ ಪ್ರಕಾರ ಸುಧಾರಣೆ ಮುಂದಿನ ವರ್ಷ ಆರಂಭವಾಗಲಿದ್ದು ದೇಶದ ಎಲ್ಲಾ ಪ್ರಾಥಮಿಕ ಶಾಲೆಗಳಿಗೆ ಅನ್ವಯಿಸಲಿದೆ."],
+    "ml": ["സർക്കാർ ഇന്ന് വിദ്യാഭ്യാസം സംബന്ധിച്ച പുതിയ നിയമം പാസാക്കി. മന്ത്രിയുടെ അഭിപ്രായത്തിൽ പരിഷ്കരണം അടുത്ത വർഷം ആരംഭിക്കുകയും രാജ്യത്തെ എല്ലാ പ്രാഥമിക വിദ്യാലയങ്ങൾക്കും ബാധകമാവുകയും ചെയ്യും."],
+}
+# Page 198 of a real upload (a Simplified-Chinese clinical mind map) as OCR returns it.
+MIND_MAP_PAGE = """临床医学综合能力（西医）思维导图
+★★★ 腹部损伤（0~3题）
+检查
+腹腔穿刺：首选、金标准
+“外科腹部损伤章节有腹穿选腹穿”
+（2017、2022、2024）
+①抽出不凝血→脾、肝（含胆汁）、胰（含淀粉酶）
+②抽出消化液
+③结肠损伤行腹腔灌洗：含大量细菌的消化液
+影像学
+（2012、2021、2025）
+B超和CT：脾、肝、胰损伤首选B超（否则CT），肾损伤首选CT
+X线
+①可有膈下新月形游离气体：胃前壁、十二指肠1部、结肠、空回肠损伤
+②可有腹膜后积气：胃后壁、十二指肠2/3部损伤
+剖腹探查（正中切口）
+（2012、2021、2024、2025）
+探查顺序：肝脾→胃→十二指肠1段、空回肠、大肠→盆腔→胃后壁、胰→十二指肠剩余段
+救治顺序：完整探查后→救重的→救轻的
+不要分离黏连组织（以免感染扩散）
+198
+"""
+HINDI_TEXTS = [
+    "सरकार ने आज शिक्षा पर एक नया कानून पारित किया। मंत्री के अनुसार, यह सुधार अगले साल शुरू होगा और देश के सभी प्राथमिक विद्यालयों को शामिल करेगा।",
+    "मरीज़ को तेज़ बुखार और सिरदर्द के कारण अस्पताल में भर्ती किया गया। डॉक्टरों ने उसे एंटीबायोटिक दवाएं दीं और आराम करने की सलाह दी।",
+    "बुधवार को आसमान ज़्यादातर बादलों से घिरा रहेगा, दोपहर में कुछ जगहों पर बारिश होगी और तापमान लगभग पंद्रह डिग्री रहेगा।",
+]
+FRENCH_LINE = "Le gouvernement a adopté aujourd'hui une nouvelle loi sur l'éducation. Selon le ministre, la réforme commencera l'année prochaine. "
+# Real-world script mixes, with the language each must produce.
+MIXED_SCRIPT_CASES = {
+    "zh + English tech terms": ("我们使用 Python 和 machine learning 模型来分析用户数据，并通过 API 提供实时结果。" * 6, "zh"),
+    "zh with ・ foreign names": ("迈克尔・乔丹和勒布朗・詹姆斯都是篮球历史上最伟大的球员之一，他们的比赛影响了几代人。" * 6, "zh"),
+    "Chinese tech doc, half English": ("这个系统 uses a distributed cache and a message queue 来处理高并发请求，并且 supports horizontal scaling 和自动故障转移。" * 6, "zh"),
+    "ja kanji-heavy": ("政府、新教育法を可決　全国小学校対象　来年度改革開始へ　文部科学大臣発表" * 6, "ja"),
+    "ko with hanja": ("大韓民國 정부는 오늘 새로운 敎育法을 통과시켰다. 장관에 따르면 改革은 내년에 시작된다." * 6, "ko"),
+    "ko + English terms": ("우리는 Python과 machine learning 모델을 사용하여 사용자 데이터를 분석하고 API로 결과를 제공한다." * 6, "ko"),
+    "zh quoting Korean": ("这本书介绍了韩国文化。书中引用了一句话：“안녕하세요”，意思是你好。作者认为语言是了解文化的关键。" * 6, "en"),
+    "en with a few CJK words": ("The word 你好 means hello in Chinese, and 안녕 is the Korean greeting. Both appear in this guide to travel phrases for beginners." * 6, "en"),
+    "fr with a few Chinese words": ((FRENCH_LINE + "Le mot 教育 signifie éducation. ") * 5, "fr"),
+}
 
 # Close Slavic neighbours, all supported: a mix-up gives the neighbouring language
 # instead of an English fallback. Six parallel texts each (same topics, so shared
@@ -226,7 +393,67 @@ class TestSupportedLanguages(_MultilingualOn):
 
     def test_unsupported_lookalikes_stay_english(self):
         self.assertEqual(detect_language(ROMANIAN * 3), "en")
-        self.assertEqual(detect_language(HUNGARIAN * 3), "en")
+        for key, texts in UNSUPPORTED.items():
+            for text in texts:
+                for label, doc in (("3x", text * 3), ("long", text * 60), ("letter-spaced", letter_spaced(text * 3))):
+                    with self.subTest(language=key, text=text[:20], form=label):
+                        self.assertEqual(detect_language(doc), "en")
+
+    def test_chinese_simplified_vs_traditional(self):
+        for key, want in (("zh", "zh"), ("zh-trad", "zh-tw")):
+            doc = " ".join(LANES[key]) * 10
+            with self.subTest(script=key):
+                self.assertEqual(detect_language(doc), want)
+        self.assertEqual(detect_language_name(" ".join(LANES["zh-trad"]) * 10), "Chinese (Traditional) (zh-tw)")
+
+    def test_real_mind_map_upload_is_chinese(self):
+        """langdetect called this real upload's text Korean in production."""
+        self.assertEqual(detect_language(MIND_MAP_PAGE * 12), "zh")
+
+    def test_hindi_marathi_nepali_overrule_a_wrong_langdetect_call(self):
+        import langdetect
+
+        real = langdetect.detect
+        try:
+            for texts, want in ((HINDI_TEXTS, "hi"), (UNSUPPORTED["mr"], "en"), (UNSUPPORTED["ne"], "en")):
+                for forced in ("hi", "mr", "ne"):
+                    langdetect.detect = lambda text, forced=forced: forced
+                    for text in texts:
+                        with self.subTest(want=want, forced=forced, text=text[:20]):
+                            self.assertEqual(detect_language(text * 3), want)
+        finally:
+            langdetect.detect = real
+
+    def test_cjk_and_uralic_lanes(self):
+        for key, texts in LANES.items():
+            want = LANE_EXPECTED[key]
+            for text in texts:
+                forms = [("3x", text * 3), ("long", text * 60), ("letter-spaced", letter_spaced(text * 3))]
+                if len(text) >= 30:  # shorter than the 30-char minimum is English by design
+                    forms.append(("1x", text))
+                for label, doc in forms:
+                    with self.subTest(language=key, text=text[:20], form=label):
+                        self.assertEqual(detect_language(doc), want)
+
+    def test_lane_tie_breakers_overrule_a_wrong_langdetect_call(self):
+        """Scripts (CJK) and unique letters/words (Hungarian lane) decide, not langdetect."""
+        import langdetect
+
+        real = langdetect.detect
+        try:
+            for key, siblings in LANE_SIBLINGS.items():
+                for wrong in siblings:
+                    langdetect.detect = lambda text, wrong=wrong: wrong
+                    for text in LANES[key]:
+                        with self.subTest(language=key, forced=wrong, text=text[:20]):
+                            self.assertEqual(detect_language(text * 3), LANE_EXPECTED[key])
+        finally:
+            langdetect.detect = real
+
+    def test_mixed_script_documents(self):
+        for name, (text, want) in MIXED_SCRIPT_CASES.items():
+            with self.subTest(case=name):
+                self.assertEqual(detect_language(text), want)
 
     def test_slavic_neighbours_stay_apart(self):
         for code, texts in SLAVIC.items():

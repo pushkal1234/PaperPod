@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     # images, we OCR every page (full verbatim transcription) instead of the brief
     # figure-description pass. Set to "0" to disable scanned-PDF OCR.
     PDF_OCR_MIN_CHARS_PER_PAGE: int = int(os.getenv("PDF_OCR_MIN_CHARS_PER_PAGE", "80"))
+    # Scanned pages are OCR'd in batches of this many pages per Gemini call (one
+    # call per document capped the output, so long scans came back truncated),
+    # with up to PDF_OCR_PARALLEL batches in flight. Each batch is one Gemini
+    # request against the daily quota: 54 pages = 9 requests at the default.
+    PDF_OCR_BATCH_PAGES: int = int(os.getenv("PDF_OCR_BATCH_PAGES", "6"))
+    PDF_OCR_PARALLEL: int = int(os.getenv("PDF_OCR_PARALLEL", "3"))
     # PDF table extraction: PyPDF2's plain text FLATTENS tables (a salary table
     # becomes a jumble of names and numbers with no row/column link), so financial
     # docs effectively lost their tables in the podcast. PyMuPDF's table finder
@@ -162,7 +168,7 @@ class Settings(BaseSettings):
     # Bump this whenever the generation pipeline changes (extraction, prompts,
     # LLM/TTS logic). It's folded into the dedup content_hash so re-uploads MISS
     # caches produced by an older, buggy pipeline and regenerate with new code.
-    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "28")
+    GENERATION_VERSION: str = os.getenv("GENERATION_VERSION", "29")
     # Quality gate: a podcast below these thresholds is marked "failed" instead of
     # "ready", so degenerate output (e.g. a 9-second outro-only clip) is never
     # cached or served — the next upload regenerates instead of deduping to it.

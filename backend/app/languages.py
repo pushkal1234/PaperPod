@@ -177,13 +177,85 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "wat ze in de praktijk betekenen."
         ),
     },
+    # Chinese is split by SCRIPT (see _cjk_code): Simplified (Mainland voices)
+    # and Traditional (Taiwan voices), so a Traditional document is never
+    # rewritten in Simplified characters, or the reverse.
     "zh": {
-        "name": "Chinese",
+        "name": "Chinese (Simplified)",
         "host_voice": "zh-CN-YunxiNeural",
         "guest_voice": "zh-CN-XiaoxiaoNeural",
         "host_signoff": "Host: 感谢收听，我们下期再见！",
         "fallback_takeaway": (
             "Guest: 关键在于理解这些观点之间的联系，以及它们在实际中的意义。"
+        ),
+    },
+    "zh-tw": {
+        "name": "Chinese (Traditional)",
+        "host_voice": "zh-TW-YunJheNeural",
+        "guest_voice": "zh-TW-HsiaoChenNeural",
+        "host_signoff": "Host: 感謝收聽，我們下期再見！",
+        "fallback_takeaway": (
+            "Guest: 關鍵在於理解這些觀點之間的聯繫，以及它們在實際中的意義。"
+        ),
+    },
+    "ja": {
+        "name": "Japanese",
+        "host_voice": "ja-JP-KeitaNeural",
+        "guest_voice": "ja-JP-NanamiNeural",
+        "host_signoff": "Host: お聞きいただきありがとうございました。また次回お会いしましょう！",
+        "fallback_takeaway": (
+            "Guest: 大切なのは、これらの考えがどのようにつながり、実際に何を意味するのかということです。"
+        ),
+    },
+    "ko": {
+        "name": "Korean",
+        "host_voice": "ko-KR-InJoonNeural",
+        "guest_voice": "ko-KR-SunHiNeural",
+        "host_signoff": "Host: 들어주셔서 감사합니다. 다음에 또 만나요!",
+        "fallback_takeaway": (
+            "Guest: 중요한 것은 이 아이디어들이 서로 어떻게 연결되고 실제로 어떤 "
+            "의미를 갖는지입니다."
+        ),
+    },
+    "fi": {
+        "name": "Finnish",
+        "host_voice": "fi-FI-HarriNeural",
+        "guest_voice": "fi-FI-NooraNeural",
+        "host_signoff": "Host: Kiitos kuuntelemisesta, kuullaan taas ensi kerralla!",
+        "fallback_takeaway": (
+            "Guest: Olennaista on, miten nämä ajatukset liittyvät toisiinsa ja mitä ne "
+            "tarkoittavat käytännössä."
+        ),
+    },
+    "et": {
+        "name": "Estonian",
+        "host_voice": "et-EE-KertNeural",
+        "guest_voice": "et-EE-AnuNeural",
+        "host_signoff": "Host: Aitäh kuulamast, kohtumiseni järgmisel korral!",
+        "fallback_takeaway": (
+            "Guest: Oluline on see, kuidas need mõtted omavahel seotud on ja mida need "
+            "praktikas tähendavad."
+        ),
+    },
+    # Azerbaijani: langdetect has no model for it; "ə" identifies it (see _refine_code).
+    "az": {
+        "name": "Azerbaijani",
+        "host_voice": "az-AZ-BabekNeural",
+        "guest_voice": "az-AZ-BanuNeural",
+        "host_signoff": "Host: Dinlədiyiniz üçün təşəkkür edirik, növbəti dəfə görüşənədək!",
+        "fallback_takeaway": (
+            "Guest: Əsas məsələ bu fikirlərin bir-biri ilə necə bağlı olduğu və "
+            "praktikada nə demək olduğudur."
+        ),
+    },
+    "hu": {
+        "name": "Hungarian",
+        "host_voice": "hu-HU-TamasNeural",
+        "guest_voice": "hu-HU-NoemiNeural",
+        "host_signoff": "Host: Köszönjük, hogy meghallgattak, legközelebb találkozunk!",
+        "fallback_takeaway": (
+            "Guest: A lényeg az, hogy ezek a gondolatok hogyan kapcsolódnak "
+            "egymáshoz, és mit jelentenek a gyakorlatban."
         ),
     },
     "cs": {
@@ -398,6 +470,100 @@ _BG_CYRL_WORDS = {"в", "ще", "че", "това", "които", "който", 
 _RU_CYRL_WORDS = {"что", "это", "был", "была", "было", "который", "которые", "также", "почему", "для", "его"}
 
 
+# Hungarian / Turkish / Finnish-Estonian / Azerbaijani each use letters the others
+# never do: ő ű / ğ ı / ä õ / ə.
+_HU_LETTERS = set("őűŐŰ")
+_TR_LETTERS = set("ğıĞİ")
+_FI_ET_LETTERS = set("äõÄÕ")
+_AZ_LETTERS = set("əƏ")
+# For sentences that happen to contain none of those letters.
+_HU_FUNCTION_WORDS = {"és", "az", "hogy", "egy", "nem", "azt", "ez", "egyes", "miért", "olyan", "vagy", "csak", "már", "még", "pedig", "amely", "szerint", "között", "után", "neki"}
+_FI_ET_FUNCTION_WORDS = {"ja", "on", "ei", "että", "se", "ovat", "kuin", "mutta", "myös", "tai", "joka", "kun", "niin", "et", "see", "ka", "kui", "aga", "või", "mis", "nii", "oma", "miks", "kuidas"}
+_TR_FUNCTION_WORDS = {"ve", "bir", "bu", "için", "ile", "çok", "daha", "olarak", "gibi", "değil", "olan"}
+# Finnish vs Estonian (both supported): Estonian uses "õ", Finnish never does;
+# words that exist in only one of them ("että"/"et", "kuin"/"kui", "se"/"see").
+_ET_LETTERS = set("õÕüÜ")  # Estonian writes "ü" where Finnish writes "y"
+_FI_LETTERS = set("yY")
+# Hindi vs Marathi vs Nepali share Devanagari. Marathi uses "ळ", which Hindi never
+# does; each also has its own everyday words ("है"/"आहे"/"छ" = is).
+_MR_LETTERS = set("ळ")
+_HI_DEVA_WORDS = {"है", "हैं", "और", "में", "से", "यह", "था", "थी", "थे", "लिए", "करने", "किया"}
+_MR_DEVA_WORDS = {"आहे", "आहेत", "आणि", "होते", "होती", "करण्यात", "म्हणून", "त्या", "हा", "ही"}
+_NE_DEVA_WORDS = {"छ", "छन्", "र", "हुनेछ", "लाई", "ले", "भएको", "गरेको", "पनि", "हो", "गर्न"}
+_FI_ONLY_WORDS = {
+    "että", "ovat", "kuin", "mutta", "myös", "tai", "joka", "kun", "niin", "hän", "se",
+    "tämä", "ole", "olla", "noin", "mukaan", "kanssa", "vain", "jo", "nyt", "sekä",
+    "eli", "jos", "koska", "ennen", "jälkeen", "aikana", "paljon", "hyvin",
+}
+_ET_ONLY_WORDS = {
+    "et", "see", "ka", "kui", "aga", "või", "mis", "nii", "oma", "miks", "kuidas",
+    "ning", "seda", "umbes", "järgi", "koos", "ainult", "juba", "nüüd", "sest",
+    "pärast", "ajal", "palju", "hästi",
+}
+
+# Chinese / Japanese / Korean are decided by WRITING SYSTEM, not statistics:
+# Hangul is Korean-only, Kana is Japanese-only (and in every normal Japanese
+# sentence), and Chinese is Han characters with neither. langdetect alone calls
+# Traditional Chinese Korean, so for CJK text it is not consulted at all.
+_HANGUL_RE = re.compile("[가-힣ᄀ-ᇿ㄰-㆏]")
+# Kana, minus U+30FB "・" which Chinese also uses between parts of foreign names.
+_KANA_RE = re.compile("[぀-ゟ゠-ヺー-ヿㇰ-ㇿｦ-ﾟ]")
+_HAN_RE = re.compile("[㐀-䶿一-鿿豈-﫿]")
+_CJK_CODES = ("zh", "zh-cn", "zh-tw", "ja", "ko")
+# Simplified vs Traditional Chinese: the same Han script, but these very common
+# characters are written differently (position i in one string is the other's
+# counterpart). Characters both standards share (里, 后, 台, 面...) are left out.
+_ZH_SIMPLIFIED = (
+    "个们这来时为说国会对发过还进动现么样经开问点学关题从间头实种机长业与东车门见让认应"
+    "产气书体万专医药疗术断诊检验证脑肠胆脏伤节线织组细结级处变压静脉华语话读写听买卖钱"
+    "银铁电网页图报纸场广区县乡农员师爱亲观历岁难欢乐劳务统计设议论讲课试选达运远边连适"
+    "递际陆阳阴险鸡鱼鸟马龙风云阵无刚别则刘创显质负贵费资贸赛贡购赶轻较辅输办励劝势单卫"
+    "厂厅双号叶复"
+)
+_ZH_TRADITIONAL = (
+    "個們這來時為說國會對發過還進動現麼樣經開問點學關題從間頭實種機長業與東車門見讓認應"
+    "產氣書體萬專醫藥療術斷診檢驗證腦腸膽臟傷節線織組細結級處變壓靜脈華語話讀寫聽買賣錢"
+    "銀鐵電網頁圖報紙場廣區縣鄉農員師愛親觀歷歲難歡樂勞務統計設議論講課試選達運遠邊連適"
+    "遞際陸陽陰險雞魚鳥馬龍風雲陣無剛別則劉創顯質負貴費資貿賽貢購趕輕較輔輸辦勵勸勢單衛"
+    "廠廳雙號葉復"
+)
+_ZH_SIMPLIFIED_SET = set(_ZH_SIMPLIFIED) - set(_ZH_TRADITIONAL)
+_ZH_TRADITIONAL_SET = set(_ZH_TRADITIONAL) - set(_ZH_SIMPLIFIED)
+
+
+def _cjk_code(sample: str) -> str | None:
+    """'zh' / 'ja' / 'ko' for text that is mostly CJK characters, 'cjk-mixed' when
+    the scripts don't clearly fit one language (so it falls back to English), and
+    None for text that isn't mostly CJK."""
+    hangul = len(_HANGUL_RE.findall(sample))
+    kana = len(_KANA_RE.findall(sample))
+    han = len(_HAN_RE.findall(sample))
+    cjk = hangul + kana + han
+    if cjk < 20:
+        return None
+    # One CJK character carries about as much as 3-4 Latin letters, so weigh it 3x
+    # when deciding whether the text is mostly CJK (a Chinese doc full of English
+    # terms like "Python" or "API" still is).
+    latin = sum(ch.isalpha() for ch in sample) - cjk
+    if cjk * 3 < latin:
+        # Substantial CJK in a mostly-Latin text (~a third or more by weight):
+        # never let langdetect put a Latin-script label (e.g. Vietnamese) on it.
+        # A few CJK words in, say, French prose are left to normal detection.
+        return "cjk-mixed" if cjk * 10 >= latin else None
+    if kana >= max(5, 0.02 * cjk):
+        return "ja" if hangul <= 0.01 * cjk else "cjk-mixed"
+    if hangul >= 0.6 * cjk:
+        return "ko"
+    if hangul <= 0.01 * cjk:
+        # Chinese: Traditional only when its distinct characters clearly
+        # outnumber the Simplified ones; Simplified otherwise (the far larger
+        # audience, and the safe default for text with few distinct characters).
+        trad = sum(ch in _ZH_TRADITIONAL_SET for ch in sample)
+        simp = sum(ch in _ZH_SIMPLIFIED_SET for ch in sample)
+        return "zh-tw" if trad >= 2 and trad > 3 * simp else "zh"
+    return "cjk-mixed"
+
+
 def _dominant(scores: dict[str, int]) -> str | None:
     """The key whose count is at least 2 and over 3x every other, else None."""
     best = max(scores, key=scores.get)
@@ -469,7 +635,10 @@ _ID_WORDS = {
 # letters there and calls plain English Welsh with ~100% confidence. A space
 # between two single-character "words" is removed on lines that are mostly
 # single characters, so "T H E  F I L I P I N O" reads "THE FILIPINO".
-_SPACED_LETTER_GAP = re.compile(r"(?<=\b\w) (?=\w\b)")
+# On such a line every single space is a letter gap and the wider gaps are word
+# breaks. Removing single spaces (not \w-based) works for every script, including
+# Devanagari, whose vowel signs aren't regex "word characters".
+_SINGLE_SPACE = re.compile(r"(?<! ) (?! )")
 
 
 def _unspace_letters(text: str) -> str:
@@ -478,7 +647,7 @@ def _unspace_letters(text: str) -> str:
     for line in text.split("\n"):
         tokens = line.split()
         if len(tokens) >= 6 and sum(len(t) == 1 for t in tokens) / len(tokens) >= 0.6:
-            line = " ".join(_SPACED_LETTER_GAP.sub("", line).split())
+            line = " ".join(_SINGLE_SPACE.sub("", line).split())
         lines.append(line)
     return "\n".join(lines)
 
@@ -554,14 +723,18 @@ def _vote(text: str) -> tuple[str | None, list[str]]:
         if _english_share(sample) >= _ENGLISH_SHARE_MIN:
             codes.append("en")
             continue
+        cjk = _cjk_code(sample)
+        if cjk:
+            codes.append(cjk)
+            continue
         DetectorFactory.seed = 0  # deterministic across runs
         try:
             raw = detect(sample).lower()
         except Exception:  # noqa: BLE001 — one undetectable window just doesn't vote
             continue
         code = _refine_code(raw, sample)
-        # langdetect splits Chinese into zh-cn / zh-tw; they are one language here.
-        codes.append("zh" if code.startswith("zh-") else code)
+        # Simplified Chinese's profile key is "zh"; Traditional keeps "zh-tw".
+        codes.append("zh" if code == "zh-cn" else code)
     if not codes:
         raise RuntimeError("no detectable text")
     best = max(set(codes), key=codes.count)
@@ -580,13 +753,46 @@ def _refine_code(code: str, text: str) -> str:
     Polish, Slovenian / Croatian, Serbian / Macedonian / Bulgarian / Russian /
     Ukrainian) by letters or function words only one of them uses. Returns
     ``code`` unchanged for every other case."""
+    if code in ("hi", "mr", "ne"):
+        # Only Hindi is supported: Marathi/Nepali misread as Hindi would get a
+        # Hindi podcast, so their own letters/words move them back (to English).
+        return _dominant({
+            "hi": _word_hits(text, _HI_DEVA_WORDS),
+            "mr": sum(ch in _MR_LETTERS for ch in text) + _word_hits(text, _MR_DEVA_WORDS),
+            "ne": _word_hits(text, _NE_DEVA_WORDS),
+        }) or code
+    if code in _CJK_CODES:
+        # A CJK label on text that isn't mostly CJK characters has no evidence
+        # behind it (CJK text never reaches langdetect, see _vote).
+        return _cjk_code(text) or "und"
     if code in ("cs", "sk", "pl"):
-        # Czech / Slovak / Polish each use letters the other two don't.
+        # Czech / Slovak / Polish each use letters the other two don't; ő/ű
+        # catches Hungarian misread as one of them.
         return _dominant({
             "cs": sum(ch in _CS_LETTERS for ch in text),
             "sk": sum(ch in _SK_LETTERS for ch in text),
             "pl": sum(ch in _PL_LETTERS for ch in text),
+            "hu": sum(ch in _HU_LETTERS for ch in text) + _word_hits(text, _HU_FUNCTION_WORDS),
         }) or code
+    if code in ("hu", "tr", "fi", "et", "az"):
+        # Azerbaijani shares Turkish's ğ/ı, but "ə" alone is decisive: Turkish
+        # never uses it (Azerbaijani is unsupported, so this means English).
+        if sum(ch in _AZ_LETTERS for ch in text) >= 2:
+            return "az"
+        best = _dominant({
+            "hu": sum(ch in _HU_LETTERS for ch in text) + _word_hits(text, _HU_FUNCTION_WORDS),
+            "tr": sum(ch in _TR_LETTERS for ch in text) + _word_hits(text, _TR_FUNCTION_WORDS),
+            "fi": sum(ch in _FI_ET_LETTERS for ch in text) + _word_hits(text, _FI_ET_FUNCTION_WORDS),
+        })
+        if best == "fi":
+            # Finnic: tell Finnish from Estonian. If neither clearly wins, the
+            # text is still known to be one of the two, so trust langdetect only
+            # when it picked one of them; otherwise undetermined (English).
+            return _dominant({
+                "fi": sum(ch in _FI_LETTERS for ch in text) + _word_hits(text, _FI_ONLY_WORDS),
+                "et": sum(ch in _ET_LETTERS for ch in text) + _word_hits(text, _ET_ONLY_WORDS),
+            }) or (code if code in ("fi", "et") else "und")
+        return best or code
     if code in ("mk", "bg", "ru", "uk"):
         if sum(ch in _NOT_SR_MK_LETTERS for ch in text) < 3:
             # Written in the Serbian/Macedonian alphabet: decide between those
@@ -687,7 +893,8 @@ _LANG_NAMES: dict[str, str] = {
     "ta": "Tamil", "te": "Telugu", "th": "Thai", "tl": "Tagalog",
     "tr": "Turkish", "uk": "Ukrainian", "ur": "Urdu", "vi": "Vietnamese",
     "zh-cn": "Chinese (Simplified)", "zh-tw": "Chinese (Traditional)",
-    "zh": "Chinese",
+    "zh": "Chinese (Simplified)",
+    "cjk-mixed": "Mixed Chinese/Japanese/Korean", "und": "Undetermined",
 }
 
 

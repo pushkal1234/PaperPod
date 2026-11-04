@@ -633,7 +633,8 @@ def _qa_system_prompt(base: str) -> str:
         "not the language of the document. Supported answer languages: English, "
         f"{', '.join(names)}. If the question is in any other language, answer in "
         "English. For Serbian, use the same script (Cyrillic or Latin) as the "
-        "question. Malay means Bahasa Melayu in Latin script."
+        "question, and for Chinese the same script (Simplified or Traditional). "
+        "Malay means Bahasa Melayu in Latin script."
     )
 
 

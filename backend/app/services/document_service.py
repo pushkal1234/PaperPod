@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import time
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -178,9 +179,44 @@ def extract_text(file_path: str, content_type: str, on_figures=None) -> str:
     return clean_extracted_text(text)
 
 
+def _quick_text_layer(file_path: str) -> tuple[int, int] | None:
+    """(text-layer chars, page count) via PyMuPDF's fast C text reader, or None
+    if it can't tell (PyMuPDF missing, unreadable, or password-locked)."""
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        return None
+    try:
+        with fitz.open(file_path) as doc:
+            if getattr(doc, "needs_pass", False) and not doc.authenticate(""):
+                return None
+            return sum(len(page.get_text().strip()) for page in doc), doc.page_count
+    except Exception:  # noqa: BLE001 — best-effort pre-check; the normal path decides
+        return None
+
+
 def _extract_pdf(file_path: str, on_figures=None) -> str:
+    t_start = time.perf_counter()
+    # Scanned / image-only PDFs have no text layer, so PyPDF2 (pure Python, slow
+    # on heavy pages) and per-page table detection can't find anything in them —
+    # yet they took ~3 minutes on a 54-page scanned mind map before OCR started.
+    # Check the text layer with PyMuPDF first and go straight to OCR when empty.
+    quick = _quick_text_layer(file_path)
+    ocr_attempted = False
+    if quick and quick[1] and quick[0] < settings.PDF_OCR_MIN_CHARS_PER_PAGE * quick[1]:
+        ocr_attempted = True
+        ocr = _ocr_scanned_pdf(file_path, quick[0], on_figures)
+        if ocr:
+            logger.info(
+                f"[PDF] timing — scanned fast path: {quick[1]} pages, text layer "
+                f"{quick[0]} chars; skipped text/table extraction; total "
+                f"{time.perf_counter() - t_start:.2f}s"
+            )
+            return ocr
+
     # Keep page texts aligned by index (including empty pages) so we can swap in
     # table-cleaned prose per page below.
+    t0 = time.perf_counter()
     pypdf_pages: list[str] = []
     with open(file_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
@@ -204,13 +240,16 @@ def _extract_pdf(file_path: str, on_figures=None) -> str:
                 )
         for page in reader.pages:
             pypdf_pages.append(page.extract_text() or "")
+    t_pypdf = time.perf_counter() - t0
 
     # STRUCTURED tables + per-page prose with table regions removed. PyPDF2 flattens
     # tables into unreadable runs (a salary table loses which number belongs to
     # whom), so for every page that HAS a table we use PyMuPDF's prose (table area
     # excluded) instead of PyPDF2's text — the clean grid is appended once at the
     # end, with no duplicated jumble. Pages without tables keep PyPDF2 text as-is.
+    t0 = time.perf_counter()
     table_blocks, table_page_prose = _extract_pdf_tables(file_path)
+    t_tables = time.perf_counter() - t0
 
     parts: list[str] = []
     for i, pytext in enumerate(pypdf_pages):
@@ -229,15 +268,29 @@ def _extract_pdf(file_path: str, on_figures=None) -> str:
     # near-empty here, so the podcast would be built from nothing. Detect that and
     # OCR every page — transcribing ALL text verbatim in its original language —
     # and use that as the document body instead of the empty text layer.
-    ocr = _ocr_scanned_pdf(file_path, len(text.strip()), on_figures)
+    # (Skipped when the fast path above already ran the same check.)
+    t0 = time.perf_counter()
+    ocr = "" if ocr_attempted else _ocr_scanned_pdf(file_path, len(text.strip()), on_figures)
+    t_ocr = time.perf_counter() - t0
     if ocr:
+        logger.info(
+            f"[PDF] timing — pypdf={t_pypdf:.2f}s tables={t_tables:.2f}s ocr={t_ocr:.2f}s "
+            f"total={time.perf_counter() - t_start:.2f}s ({len(pypdf_pages)} pages)"
+        )
         return ocr
 
     # Enrich with spoken-language descriptions of diagrams/charts/figures that
     # PyPDF2 (text layer only) cannot read, so the podcast can narrate visuals.
+    t0 = time.perf_counter()
     visuals = _describe_pdf_visuals(file_path, on_figures)
+    t_visuals = time.perf_counter() - t0
     if visuals:
         text = f"{text}\n\n## Visual elements (diagrams, charts, and figures)\n{visuals}"
+    # Per-step cost, so a slow upload shows exactly which step it was.
+    logger.info(
+        f"[PDF] timing — pypdf={t_pypdf:.2f}s tables={t_tables:.2f}s ocr-check={t_ocr:.2f}s "
+        f"visuals={t_visuals:.2f}s total={time.perf_counter() - t_start:.2f}s ({len(pypdf_pages)} pages)"
+    )
     return text
 
 

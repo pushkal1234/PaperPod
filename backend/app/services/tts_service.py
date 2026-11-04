@@ -177,21 +177,38 @@ class _AdaptiveLimiter:
     throttles ("No audio was received").
 
     A fixed cap kept all 8 workers firing while one clip backed off, so the
-    throttle window never cleared and a clip could exhaust its retries. Here each
-    throttled attempt halves the cap (never below ``minimum``), and every
-    ``recover_after`` consecutive successful clips raise it by one again, back up
-    to ``maximum``. A slot is held per request to Edge, not per clip, so a clip
-    sleeping in backoff frees its slot. Lowering the cap never interrupts requests
-    already in flight; it only holds back new ones (first tries and retries alike).
+    throttle window never cleared and a clip could exhaust its retries. Halving on
+    every throttle overreacted the other way: a single blip that recovered on its
+    first retry cut a 25-clip podcast from 5 to 2 for good (~90s slower). So:
+
+    - a throttle steps the cap down by ONE; one or two more within
+      ``burst_seconds`` are the same blip and don't step it again;
+    - ``storm_hits`` throttles inside that window, or a step-down within
+      ``sustained_seconds`` of the previous one, mean real throttling, so the cap
+      HALVES instead (a storm still backs off within a fraction of a second);
+    - every ``recover_after`` consecutive successful clips raise it by one again,
+      back up to ``maximum``. It never goes below ``minimum``.
+
+    A slot is held per request to Edge, not per clip, so a clip sleeping in
+    backoff frees its slot. Lowering the cap never interrupts requests already in
+    flight; it only holds back new ones (first tries and retries alike).
     """
 
-    def __init__(self, maximum: int, minimum: int = 2, recover_after: int = 10):
+    def __init__(
+        self, maximum: int, minimum: int = 2, recover_after: int = 3,
+        burst_seconds: float = 3.0, sustained_seconds: float = 15.0, storm_hits: int = 3,
+    ):
         self.maximum = maximum
         self.minimum = min(minimum, maximum)
         self.limit = maximum
         self.lowest = maximum
         self.throttles = 0
         self._recover_after = recover_after
+        self._burst_seconds = burst_seconds
+        self._sustained_seconds = sustained_seconds
+        self._storm_hits = storm_hits
+        self._last_drop: float | None = None
+        self._burst_hits = 0
         self._streak = 0
         self._active = 0
         self._cond = asyncio.Condition()
@@ -209,7 +226,18 @@ class _AdaptiveLimiter:
     def on_throttle(self) -> None:
         self.throttles += 1
         self._streak = 0
-        new_limit = max(self.minimum, self.limit // 2)
+        now = time.monotonic()
+        since_drop = None if self._last_drop is None else now - self._last_drop
+        if since_drop is not None and since_drop < self._burst_seconds:
+            self._burst_hits += 1
+            if self._burst_hits < self._storm_hits:
+                return  # same blip as the last step-down
+            halve = True  # many throttles at once: a storm, not a blip
+        else:
+            halve = since_drop is not None and since_drop < self._sustained_seconds
+        self._last_drop = now
+        self._burst_hits = 0
+        new_limit = max(self.minimum, self.limit // 2 if halve else self.limit - 1)
         if new_limit < self.limit:
             self.limit = new_limit
             self.lowest = min(self.lowest, new_limit)
@@ -308,7 +336,7 @@ async def generate_podcast_audio(
     failed = [i for i, r in enumerate(results) if isinstance(r, BaseException)]
     try:
         if failed:
-            await _retry_throttled_clips(doc_id, jobs, results, failed)
+            await _retry_throttled_clips(doc_id, jobs, results, failed, limiter)
     except BaseException:
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -337,9 +365,14 @@ async def generate_podcast_audio(
     return output_path, duration, transcript_segments
 
 
-async def _retry_throttled_clips(doc_id: str, jobs: list[tuple], results: list, failed: list[int]):
+async def _retry_throttled_clips(
+    doc_id: str, jobs: list[tuple], results: list, failed: list[int], limiter: _AdaptiveLimiter
+):
     """Second pass for podcast clips that were still throttled after their own
-    retries: wait for Edge's rate window to clear, then redo them one at a time.
+    retries: wait for Edge's rate window to clear, then redo them under the
+    podcast's limiter (which is at or near its floor after throttling and climbs
+    back as clips succeed — one-at-a-time would take ~30 min if a long storm
+    failed every clip).
 
     The clips that succeeded are kept, so one stubborn clip no longer throws away
     an entire episode (a 165-clip podcast once failed on a single clip). Any
@@ -352,15 +385,19 @@ async def _retry_throttled_clips(doc_id: str, jobs: list[tuple], results: list, 
     wait = settings.TTS_PODCAST_RETRY_DELAY + random.uniform(0.0, 2.0)
     logger.warning(
         f"[{doc_id}] TTS: {len(failed)}/{len(jobs)} clips still throttled; "
-        f"retrying them one at a time in {wait:.1f}s"
+        f"retrying them in {wait:.1f}s at concurrency {limiter.limit}"
     )
     await asyncio.sleep(wait)
-    for i in failed:
-        text, voice, path, rate, pitch, fallback = jobs[i]
-        await synthesize_speech(
-            text, voice, path, rate=rate, pitch=pitch,
-            allow_silence_fallback=True, fallback_voice=fallback,
-        )
+    retried = await asyncio.gather(
+        *(
+            _synthesize_one(limiter, *jobs[i][:3], i, rate=jobs[i][3], pitch=jobs[i][4], fallback_voice=jobs[i][5])
+            for i in failed
+        ),
+        return_exceptions=True,
+    )
+    for err in retried:
+        if isinstance(err, BaseException):
+            raise err
     logger.info(f"[{doc_id}] TTS: second pass recovered {len(failed)} clip(s)")
 
 
