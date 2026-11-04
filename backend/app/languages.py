@@ -186,6 +186,56 @@ LANGUAGE_PROFILES: dict[str, dict] = {
             "Guest: 关键在于理解这些观点之间的联系，以及它们在实际中的意义。"
         ),
     },
+    "cs": {
+        "name": "Czech",
+        "host_voice": "cs-CZ-AntoninNeural",
+        "guest_voice": "cs-CZ-VlastaNeural",
+        "host_signoff": "Host: Děkujeme za poslech, uslyšíme se příště!",
+        "fallback_takeaway": (
+            "Guest: Podstatné je, jak spolu tyto myšlenky souvisejí a co znamenají "
+            "v praxi."
+        ),
+    },
+    "sk": {
+        "name": "Slovak",
+        "host_voice": "sk-SK-LukasNeural",
+        "guest_voice": "sk-SK-ViktoriaNeural",
+        "host_signoff": "Host: Ďakujeme za počúvanie, dovidenia nabudúce!",
+        "fallback_takeaway": (
+            "Guest: Podstatné je, ako tieto myšlienky navzájom súvisia a čo znamenajú "
+            "v praxi."
+        ),
+    },
+    "pl": {
+        "name": "Polish",
+        "host_voice": "pl-PL-MarekNeural",
+        "guest_voice": "pl-PL-ZofiaNeural",
+        "host_signoff": "Host: Dziękujemy za wysłuchanie, do usłyszenia następnym razem!",
+        "fallback_takeaway": (
+            "Guest: Najważniejsze jest to, jak te idee łączą się ze sobą i co oznaczają "
+            "w praktyce."
+        ),
+    },
+    "sl": {
+        "name": "Slovenian",
+        "host_voice": "sl-SI-RokNeural",
+        "guest_voice": "sl-SI-PetraNeural",
+        "host_signoff": "Host: Hvala, ker ste poslušali, se slišimo prihodnjič!",
+        "fallback_takeaway": (
+            "Guest: Bistveno je, kako so te ideje povezane med seboj in kaj pomenijo "
+            "v praksi."
+        ),
+    },
+    "bg": {
+        "name": "Bulgarian",
+        "host_voice": "bg-BG-BorislavNeural",
+        "guest_voice": "bg-BG-KalinaNeural",
+        "host_signoff": "Host: Благодарим ви, че слушахте, до следващия път!",
+        "fallback_takeaway": (
+            "Guest: Най-важното е как тези идеи са свързани помежду си и какво "
+            "означават на практика."
+        ),
+    },
     "uk": {
         "name": "Ukrainian",
         "host_voice": "uk-UA-OstapNeural",
@@ -329,6 +379,45 @@ def get_language_profile(code: str | None) -> dict:
 # that differ in spelling (ekavian vs ijekavian, Malay vs Indonesian vocabulary).
 _SR_CYRL_LETTERS = set("ђћЂЋ")
 _MK_CYRL_LETTERS = set("ќѓѕЌЃЅ")
+# Letters the Serbian and Macedonian alphabets don't have at all, but Russian,
+# Ukrainian and Bulgarian use constantly. A text without them can only be one of
+# those two; a text with them can't be either. Within each group, letters only
+# one language uses decide when langdetect picks the wrong sibling.
+_NOT_SR_MK_LETTERS = set("йъыьэщёяюєіїґЙЪЫЬЭЩЁЯЮЄІЇҐ")
+_RU_LETTERS = set("ыэёЫЭЁ")
+_UK_LETTERS = set("іїєґІЇЄҐ")
+_BG_LETTERS = set("ъЪ")
+# Serbian vs Macedonian function words, for sentences with no ђ/ћ/ќ/ѓ/ѕ at all
+# (e.g. Serbian "је"/"су"/"у" vs Macedonian "е"/"во"/"со"/"ќе").
+_SR_CYRL_WORDS = {"је", "су", "није", "у", "ово", "који", "које", "шта", "када", "веома", "између", "године", "после"}
+_MK_CYRL_WORDS = {"е", "во", "со", "ќе", "кој", "кое", "сите", "многу", "денеска", "бидејќи", "кога", "нема", "ги", "го", "овој", "сум", "дека", "сепак", "зошто", "толку"}
+# Bulgarian vs Russian (and vs Macedonian/Serbian when a short Bulgarian sentence
+# happens to contain none of its tell-tale letters): "в" (in) and "ще"/"че" are
+# Bulgarian; Macedonian says "во", Serbian "у", Russian "что"/"это".
+_BG_CYRL_WORDS = {"в", "ще", "че", "това", "които", "който", "която", "беше", "защо", "също", "според"}
+_RU_CYRL_WORDS = {"что", "это", "был", "была", "было", "который", "которые", "также", "почему", "для", "его"}
+
+
+def _dominant(scores: dict[str, int]) -> str | None:
+    """The key whose count is at least 2 and over 3x every other, else None."""
+    best = max(scores, key=scores.get)
+    rest = max((v for k, v in scores.items() if k != best), default=0)
+    return best if scores[best] >= 2 and scores[best] > 3 * rest else None
+# Czech and Slovak are both supported and very close, so a wrong call would give
+# the neighbouring language instead of falling back to English. Each has letters
+# the other doesn't use: an independent check on top of langdetect.
+_CS_LETTERS = set("ěřůĚŘŮ")
+_SK_LETTERS = set("äľĺŕôÄĽĹŔÔ")
+_PL_LETTERS = set("ąęłśźżńĄĘŁŚŹŻŃ")
+# Slovenian vs Croatian: Slovenian never uses ć/đ, and their everyday function
+# words differ ("in"/"i" = and, "so"/"su" = are, "v"/"u" = in, "ki"/"koji" = which).
+_HR_LETTERS = set("ćđĆĐ")
+_SL_FUNCTION_WORDS = {
+    "in", "so", "bo", "bodo", "ki", "kot", "tudi", "zelo", "pa", "ni", "v", "z",
+    "zaradi", "predvsem", "lahko", "zakaj", "vendar", "oziroma", "torej",
+    "odstotkov", "odstotka", "odstotke",
+}
+_HR_FUNCTION_WORDS = {"i", "su", "nije", "će", "ali", "što", "koji", "koja", "koje", "u"}
 _SR_LATN_WORDS = {
     "sledeće", "sledeći", "sledećeg", "reč", "reči", "rečima", "vreme", "pre",
     "posle", "deca", "dece", "dete", "lepo", "uvek", "ceo", "cela", "celog",
@@ -336,6 +425,13 @@ _SR_LATN_WORDS = {
     "porodica", "porodice", "univerzitet", "nedelja", "nedelje", "hleb", "voz",
     "tačka", "muzika", "istorija", "istorije", "evropa", "ko", "šta", "svet",
     "sveta", "mleko", "reka", "reke", "mesto", "mesta",
+    # Vocabulary that differs outright (Serbian / Croatian): uticaj/utjecaj,
+    # kompanija/tvrtka, procenat/posto, lekar/liječnik, inostranstvo/inozemstvo...
+    "uticaj", "uticaja", "uticaju", "kompanija", "kompanije", "kompaniji", "procenat",
+    "procenata", "procenta", "lekar", "lekari", "lekara", "lekaru", "inostranstvo",
+    "inostranstvu", "inostranstva", "bezbednost", "bezbednosti", "saradnja",
+    "saradnje", "saradnji", "hiljadu", "sedmica", "sedmice", "celu", "celom",
+    "funkcioniše", "funkcionišu", "vazduh", "fabrika", "pozorište",
 }
 _HR_WORDS = {
     "sljedeće", "sljedeći", "sljedećeg", "riječ", "riječi", "riječima", "vrijeme",
@@ -344,6 +440,12 @@ _HR_WORDS = {
     "obitelj", "obitelji", "sveučilište", "tjedan", "kruh", "vlak", "točka",
     "glazba", "povijest", "povijesti", "europa", "tko", "svijet", "svijeta",
     "mlijeko", "rijeka", "rijeke", "mjesto", "mjesta",
+    "utjecaj", "utjecaja", "utjecaju", "tvrtka", "tvrtke", "tvrtki", "tvrtku", "posto",
+    "postotak", "postotaka", "liječnik", "liječnici", "liječnika", "liječniku",
+    "inozemstvo", "inozemstvu", "inozemstva", "sigurnost", "sigurnosti", "suradnja",
+    "suradnje", "suradnji", "tisuću", "cijelu", "cijelom", "funkcionira",
+    "funkcioniraju", "zrak", "tvornica", "kazalište", "srijeda", "srijedu",
+    "poslijepodne", "mjestimice", "stupnjeva",
 }
 # Slovenian shares some ekavian spellings with Serbian ("mesto", "primer"), so a
 # langdetect 'sl' result only becomes Serbian when these Slovenian words are rarer.
@@ -471,16 +573,61 @@ def _word_hits(text: str, words: set[str]) -> int:
     return sum(1 for t in tokens if t in words)
 
 
+
 def _refine_code(code: str, text: str) -> str:
     """Re-classify langdetect's guess for languages it can't detect (Serbian,
-    Malay). Returns ``code`` unchanged for every other case."""
-    if code in ("mk", "bg", "ru"):
-        if sum(ch in _SR_CYRL_LETTERS for ch in text) > sum(ch in _MK_CYRL_LETTERS for ch in text):
-            return "sr"
-        return code
+    Malay), and arbitrate between close supported neighbours (Czech / Slovak /
+    Polish, Slovenian / Croatian, Serbian / Macedonian / Bulgarian / Russian /
+    Ukrainian) by letters or function words only one of them uses. Returns
+    ``code`` unchanged for every other case."""
+    if code in ("cs", "sk", "pl"):
+        # Czech / Slovak / Polish each use letters the other two don't.
+        return _dominant({
+            "cs": sum(ch in _CS_LETTERS for ch in text),
+            "sk": sum(ch in _SK_LETTERS for ch in text),
+            "pl": sum(ch in _PL_LETTERS for ch in text),
+        }) or code
+    if code in ("mk", "bg", "ru", "uk"):
+        if sum(ch in _NOT_SR_MK_LETTERS for ch in text) < 3:
+            # Written in the Serbian/Macedonian alphabet: decide between those
+            # two, first by their unique letters, then by function words.
+            sr = sum(ch in _SR_CYRL_LETTERS for ch in text)
+            mk = sum(ch in _MK_CYRL_LETTERS for ch in text)
+            if sr == mk:
+                sr, mk = _word_hits(text, _SR_CYRL_WORDS), _word_hits(text, _MK_CYRL_WORDS)
+            if sr > mk:
+                return "sr"
+            if mk > sr:
+                return "mk"
+            # Neither: a short Bulgarian sentence can also look like this.
+            if code in ("mk", "bg") and _dominant({"bg": _word_hits(text, _BG_CYRL_WORDS), "mk": mk}) == "bg":
+                return "bg"
+            return code
+        # Russian / Ukrainian / Bulgarian alphabet: each has letters the other two
+        # don't (ы э ё / і ї є ґ / ъ).
+        best = _dominant({
+            "ru": sum(ch in _RU_LETTERS for ch in text),
+            "uk": sum(ch in _UK_LETTERS for ch in text),
+            "bg": sum(ch in _BG_LETTERS for ch in text),
+        })
+        if best:
+            return best
+        # No decisive letters (e.g. a Bulgarian sentence without "ъ"): function words.
+        best = _dominant({
+            "bg": _word_hits(text, _BG_CYRL_WORDS),
+            "ru": _word_hits(text, _RU_CYRL_WORDS),
+        })
+        if best:
+            return best
+        # Macedonian can't contain these letters at all; Bulgarian is its nearest.
+        return "bg" if code == "mk" else code
     if code in ("hr", "sl"):
+        hr_f = _word_hits(text, _HR_FUNCTION_WORDS) + sum(ch in _HR_LETTERS for ch in text)
+        sl_f = _word_hits(text, _SL_FUNCTION_WORDS)
+        code = _dominant({"hr": hr_f, "sl": sl_f}) or code
         sr = _word_hits(text, _SR_LATN_WORDS)
-        if sr > _word_hits(text, _HR_WORDS) and (code == "hr" or sr > _word_hits(text, _SL_WORDS)):
+        hr = _word_hits(text, _HR_WORDS)
+        if sr > hr and (code == "hr" or sr > _word_hits(text, _SL_WORDS)):
             return "sr-latn"
         return code
     if code == "id" and _word_hits(text, _MS_WORDS) > _word_hits(text, _ID_WORDS):
