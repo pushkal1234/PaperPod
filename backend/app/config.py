@@ -21,12 +21,16 @@ class Settings(BaseSettings):
     # can't fix for hours) we switch to the next model instead of dying. Tried in
     # order; the primary LLM_FALLBACK_MODEL is always tried first. Comma-separated;
     # override on Railway to match exactly the free models in your AI Studio quota.
-    # Full Flash models come first; the two Flash-Lite models are last-resort
-    # backups for when every Flash model is overloaded (503) at once.
+    # Full Flash models come first: GA 3.6 before the preview (Google gives
+    # preview models stricter limits). 3.8 is the newest and most in demand,
+    # so it is last of the Flash models. The two Flash-Lite models are
+    # last-resort backups for when every Flash model is overloaded (503).
+    # Not listed: gemini-3.5-flash. Google serves it with gemini-3.6-flash
+    # (response model_version), so it would only repeat 3.6's 503s.
     LLM_FALLBACK_MODELS: str = os.getenv(
         "LLM_FALLBACK_MODELS",
-        "gemini-2.5-flash,gemini-3-flash-preview,gemini-3.5-flash,gemini-3.6-flash,"
-        "gemini-3.8-flash,gemini-3.1-flash-lite,gemini-3.5-flash-lite",
+        "gemini-2.5-flash,gemini-3.6-flash,gemini-3-flash-preview,gemini-3.8-flash,"
+        "gemini-3.1-flash-lite,gemini-3.5-flash-lite",
     )
     WHISPER_MODEL: str = "whisper-large-v3"
     # Voice casting — BOTH en-US so the whole episode is a natural US-English
