@@ -16,6 +16,7 @@ LANGUAGE_PROFILES (name + two native voices + two outro lines).
 
 import logging
 import re
+import unicodedata
 
 from app.config import settings
 
@@ -575,6 +576,32 @@ def _dominant(scores: dict[str, int]) -> str | None:
 _CS_LETTERS = set("ěřůĚŘŮ")
 _SK_LETTERS = set("äľĺŕôÄĽĹŔÔ")
 _PL_LETTERS = set("ąęłśźżńĄĘŁŚŹŻŃ")
+# Function words for Czech / Slovak / Polish text written WITHOUT diacritics
+# (matched accent-insensitively), when the letters above are missing. Words that
+# collide once accents are dropped ("jak", "jako", "byl", "nie", "ktory", "moze",
+# "tez", "jednak") are left out.
+_CS_FUNCTION_WORDS = {"se", "jsou", "pro", "nebo", "ktery", "ktera", "ktere", "podle", "take", "neni", "ve", "jsme", "jste", "tedy"}
+_SK_FUNCTION_WORDS = {"sa", "su", "ako", "pre", "bol", "bola", "bolo", "alebo", "podla", "tiez", "vo", "sme", "ste", "teda"}
+_PL_FUNCTION_WORDS = {"jest", "sie", "oraz", "przez", "przy", "dla", "juz", "tylko", "bardzo", "gdy"}
+# Danish / Norwegian (both supported) vs Swedish: Swedish writes ä/ö where the
+# other two write æ/ø. Each word list holds words ONLY that language uses —
+# shared ones ("blir", "av", "nu", "efter", "mig", "blev"...) would flip siblings.
+_SV_LETTERS = set("äöÄÖ")
+_SV_WORDS = {"och", "att", "är", "inte", "vad", "något", "mycket", "också", "eller", "när", "från", "utan", "sjukhuset", "läkarna"}
+_DA_WORDS = {
+    "af", "hvad", "noget", "nogle", "meget", "bliver", "sådan", "hospitalet", "lægerne",
+    "frem", "næste", "siger", "penge", "høj", "indlagt", "hovedpine", "udskrev", "mere",
+}
+_NO_WORDS = {
+    "hva", "etter", "noe", "noen", "meg", "deg", "seg", "ble", "slik", "mye", "sykehuset",
+    "legene", "ikkje", "fram", "neste", "sier", "trengs", "penger", "høy", "innlagt",
+    "hodepine", "ettermiddagen", "regjeringen",
+}
+# Arabic / Persian / Urdu (all supported): Urdu-only letters, Persian letters
+# (also used by Urdu, so checked second) and Persian "ی" vs Arabic "ي", Arabic "ة".
+_UR_LETTERS = set("ٹڈڑںے")
+_FA_LETTERS = set("پچژگی")
+_AR_LETTERS = set("ةي")
 # Slovenian vs Croatian: Slovenian never uses ć/đ, and their everyday function
 # words differ ("in"/"i" = and, "so"/"su" = are, "v"/"u" = in, "ki"/"koji" = which).
 _HR_LETTERS = set("ćđĆĐ")
@@ -583,7 +610,8 @@ _SL_FUNCTION_WORDS = {
     "zaradi", "predvsem", "lahko", "zakaj", "vendar", "oziroma", "torej",
     "odstotkov", "odstotka", "odstotke",
 }
-_HR_FUNCTION_WORDS = {"i", "su", "nije", "će", "ali", "što", "koji", "koja", "koje", "u"}
+# ("će" is left out: without diacritics it reads like Slovenian "če" = if.)
+_HR_FUNCTION_WORDS = {"i", "su", "nije", "ali", "što", "koji", "koja", "koje", "u"}
 _SR_LATN_WORDS = {
     "sledeće", "sledeći", "sledećeg", "reč", "reči", "rečima", "vreme", "pre",
     "posle", "deca", "dece", "dete", "lepo", "uvek", "ceo", "cela", "celog",
@@ -711,6 +739,9 @@ def _english_share(sample: str) -> float:
     return sum(w in _ENGLISH_FUNCTION_WORDS for w in words) / total
 
 
+_MIN_DISTINCT_WORDS = 12
+
+
 def _vote(text: str) -> tuple[str | None, list[str]]:
     """Detect each window and return (majority code or None, per-window codes).
 
@@ -727,9 +758,19 @@ def _vote(text: str) -> tuple[str | None, list[str]]:
         if cjk:
             codes.append(cjk)
             continue
+        # Too little real content to tell close languages apart (a looping OCR
+        # transcript, a snippet): a statistical guess here picked neighbours like
+        # Bulgarian for Macedonian or Danish for Swedish. Fall back to English.
+        if len(set(sample.lower().split())) < _MIN_DISTINCT_WORDS:
+            codes.append("und")
+            continue
+        # langdetect misreads ALL-CAPS text (uppercase Polish/Czech/Finnish came
+        # out German). Give it lowercase; the letter checks still see the original.
+        cased = [ch for ch in sample if ch.isalpha() and ch.lower() != ch.upper()]
+        probe = sample.lower() if cased and sum(ch.isupper() for ch in cased) * 2 > len(cased) else sample
         DetectorFactory.seed = 0  # deterministic across runs
         try:
-            raw = detect(sample).lower()
+            raw = detect(probe).lower()
         except Exception:  # noqa: BLE001 — one undetectable window just doesn't vote
             continue
         code = _refine_code(raw, sample)
@@ -741,9 +782,39 @@ def _vote(text: str) -> tuple[str | None, list[str]]:
     return (best if codes.count(best) * 2 > len(codes) else None), codes
 
 
-def _word_hits(text: str, words: set[str]) -> int:
-    tokens = (t.strip(".,;:!?\"'()[]«»„“”—–-") for t in text.lower().split())
-    return sum(1 for t in tokens if t in words)
+_LETTER_RUN_RE = re.compile(r"[^\W\d_]+")
+
+
+def _letter_words(s: str) -> list[str]:
+    """Runs of letters only: numbering like "②" or "①" (Unicode "numbers" that
+    regex \w still matches) and punctuation split words instead of gluing on."""
+    return "".join(ch if ch.isalpha() else " " for ch in s).split()
+# Devanagari words include vowel signs, which aren't regex "word characters".
+_DEVANAGARI_RUN_RE = re.compile("[\u0900-\u0963\u0970-\u097f]+")
+_FOLDED_SETS: dict[int, set[str]] = {}
+
+
+def _fold(s: str) -> str:
+    """Lowercase and drop diacritics ("Rečima" -> "recima")."""
+    return "".join(c for c in unicodedata.normalize("NFD", s.lower()) if unicodedata.category(c) != "Mn")
+
+
+def _word_hits(text: str, words: set[str], fold: bool = False) -> int:
+    """How many words of ``text`` are in ``words``.
+
+    Words are runs of letters, so numbering, arrows and years around them (mind
+    maps, slides: "①Nije", "objasniti（2012）") don't hide them. ``fold`` matches
+    accent-insensitively, for lanes where text may come without diacritics
+    (Czech "vzdelavani", Serbian "recima").
+    """
+    if any("\u0900" <= ch <= "\u097f" for w in words for ch in w[:1]):
+        return sum(1 for t in _DEVANAGARI_RUN_RE.findall(text) if t in words)
+    if fold:
+        folded = _FOLDED_SETS.get(id(words))
+        if folded is None:
+            folded = _FOLDED_SETS[id(words)] = {_fold(w) for w in words}
+        return sum(1 for t in _letter_words(_fold(text)) if t in folded)
+    return sum(1 for t in _letter_words(text.lower()) if t in words)
 
 
 
@@ -768,11 +839,33 @@ def _refine_code(code: str, text: str) -> str:
     if code in ("cs", "sk", "pl"):
         # Czech / Slovak / Polish each use letters the other two don't; ő/ű
         # catches Hungarian misread as one of them.
-        return _dominant({
-            "cs": sum(ch in _CS_LETTERS for ch in text),
-            "sk": sum(ch in _SK_LETTERS for ch in text),
-            "pl": sum(ch in _PL_LETTERS for ch in text),
+        scores = {
+            "cs": sum(ch in _CS_LETTERS for ch in text) + _word_hits(text, _CS_FUNCTION_WORDS, fold=True),
+            "sk": sum(ch in _SK_LETTERS for ch in text) + _word_hits(text, _SK_FUNCTION_WORDS, fold=True),
+            "pl": sum(ch in _PL_LETTERS for ch in text) + _word_hits(text, _PL_FUNCTION_WORDS, fold=True),
             "hu": sum(ch in _HU_LETTERS for ch in text) + _word_hits(text, _HU_FUNCTION_WORDS),
+        }
+        best = _dominant(scores)
+        if best:
+            return best
+        # Czech vs Slovak with no evidence either way (e.g. text without
+        # diacritics or function words): langdetect is guessing between two
+        # supported siblings, so don't trust it.
+        if code in ("cs", "sk") and scores["cs"] == scores["sk"] == 0:
+            return "und"
+        return code
+    if code in ("da", "no", "sv"):
+        return _dominant({
+            "sv": sum(ch in _SV_LETTERS for ch in text) + _word_hits(text, _SV_WORDS),
+            "da": _word_hits(text, _DA_WORDS),
+            "no": _word_hits(text, _NO_WORDS),
+        }) or code
+    if code in ("ar", "fa", "ur"):
+        if sum(ch in _UR_LETTERS for ch in text) >= 2:
+            return "ur"  # Persian and Arabic never use these
+        return _dominant({
+            "fa": sum(ch in _FA_LETTERS for ch in text),
+            "ar": sum(ch in _AR_LETTERS for ch in text),
         }) or code
     if code in ("hu", "tr", "fi", "et", "az"):
         # Azerbaijani shares Turkish's ğ/ı, but "ə" alone is decisive: Turkish
@@ -828,12 +921,12 @@ def _refine_code(code: str, text: str) -> str:
         # Macedonian can't contain these letters at all; Bulgarian is its nearest.
         return "bg" if code == "mk" else code
     if code in ("hr", "sl"):
-        hr_f = _word_hits(text, _HR_FUNCTION_WORDS) + sum(ch in _HR_LETTERS for ch in text)
-        sl_f = _word_hits(text, _SL_FUNCTION_WORDS)
+        hr_f = _word_hits(text, _HR_FUNCTION_WORDS, fold=True) + sum(ch in _HR_LETTERS for ch in text)
+        sl_f = _word_hits(text, _SL_FUNCTION_WORDS, fold=True)
         code = _dominant({"hr": hr_f, "sl": sl_f}) or code
-        sr = _word_hits(text, _SR_LATN_WORDS)
-        hr = _word_hits(text, _HR_WORDS)
-        if sr > hr and (code == "hr" or sr > _word_hits(text, _SL_WORDS)):
+        sr = _word_hits(text, _SR_LATN_WORDS, fold=True)
+        hr = _word_hits(text, _HR_WORDS, fold=True)
+        if sr > hr and (code == "hr" or sr > _word_hits(text, _SL_WORDS, fold=True)):
             return "sr-latn"
         return code
     if code == "id" and _word_hits(text, _MS_WORDS) > _word_hits(text, _ID_WORDS):

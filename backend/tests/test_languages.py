@@ -230,6 +230,72 @@ HINDI_TEXTS = [
     "मरीज़ को तेज़ बुखार और सिरदर्द के कारण अस्पताल में भर्ती किया गया। डॉक्टरों ने उसे एंटीबायोटिक दवाएं दीं और आराम करने की सलाह दी।",
     "बुधवार को आसमान ज़्यादातर बादलों से घिरा रहेगा, दोपहर में कुछ जगहों पर बारिश होगी और तापमान लगभग पंद्रह डिग्री रहेगा।",
 ]
+# Second/third texts for lanes where several siblings are supported.
+EXTRA_TEXTS = {
+    "ar": ["يعاني المريض من حمى شديدة وصداع، وقد وصف له الأطباء مضادات حيوية ونصحوه بالراحة.",
+           "سيكون الطقس يوم الأربعاء غائما في معظمه، مع زخات متفرقة بعد الظهر ودرجات حرارة حوالي خمس عشرة درجة."],
+    "fa": ["بیمار با تب بالا و سردرد در بیمارستان بستری شد. پزشکان برای او آنتی‌بیوتیک تجویز کردند و استراحت را توصیه کردند.",
+           "روز چهارشنبه هوا بیشتر ابری خواهد بود، بعدازظهر در برخی نقاط رگبار می‌بارد و دما حدود پانزده درجه خواهد بود."],
+    "ur": ["مریض کو تیز بخار اور سر درد کی وجہ سے ہسپتال میں داخل کیا گیا۔ ڈاکٹروں نے اسے اینٹی بائیوٹکس دیں اور آرام کا مشورہ دیا۔",
+           "بدھ کو آسمان زیادہ تر ابر آلود رہے گا، دوپہر میں کچھ جگہوں پر بارش ہوگی اور درجہ حرارت تقریباً پندرہ ڈگری رہے گا۔"],
+    "da": ["Patienten blev indlagt på hospitalet med høj feber og hovedpine. Lægerne udskrev antibiotika og anbefalede hvile.",
+           "På onsdag bliver det mest overskyet, om eftermiddagen lokale byger og temperaturer omkring femten grader."],
+    "no": ["Pasienten ble innlagt på sykehuset med høy feber og hodepine. Legene skrev ut antibiotika og anbefalte hvile.",
+           "På onsdag blir det for det meste overskyet, på ettermiddagen lokale byger og temperaturer rundt femten grader."],
+}
+EXTRA_SIBLINGS = {"ar": ["fa", "ur"], "fa": ["ar", "ur"], "ur": ["fa", "ar"], "da": ["no", "sv"], "no": ["da", "sv"]}
+
+
+# Text SHAPES that real uploads come in (OCR'd mind maps, slides, tables, ALL
+# CAPS, missing diacritics, OCR noise, looping OCR output, snippets). A Chinese
+# mind map was once read as Korean; every language must survive every shape.
+def _shape_bullets(t, rng):
+    w, out, i = t.split(), [], 0
+    while i < len(w):
+        n = rng.randint(2, 4); out.append("• " + " ".join(w[i:i + n])); i += n
+    return "\n".join(out)
+
+
+def _shape_mindmap(t, rng):
+    if " " not in t.strip():  # scripts written without spaces
+        s, out, i = "".join(t.split()), [], 0
+        while i < len(s):
+            n = rng.randint(2, 4); out.append(("→" if i % 2 else "①") + s[i:i + n]); i += n
+        return "\n".join(out)
+    return "\n".join(
+        f"{'①②③④⑤'[i % 5]}{x}" if i % 3 == 0 else (f"→ {x}" if i % 3 == 1 else f"{x}（20{10 + i % 15}）")
+        for i, x in enumerate(t.split())
+    )
+
+
+def _shape_no_diacritics(t, rng):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", t) if unicodedata.category(c) != "Mn")
+
+
+def _shape_english_terms(t, rng):
+    terms = ["API", "machine learning", "CT scan", "Python", "cloud", "dashboard", "KPI", "B2B", "workflow"]
+    return " ".join(x + (" " + rng.choice(terms) if i % 3 == 0 else "") for i, x in enumerate(t.split()))
+
+
+def _shape_table(t, rng):
+    w = t.split()
+    return "\n".join(f"{w[i % len(w)]} | {2019 + i % 6} | {rng.randint(10, 999)} | {rng.randint(1, 99)}.{rng.randint(0, 9)}%" for i in range(40))
+
+
+def _shape_ocr_noise(t, rng):
+    return " ".join((x[:len(x) // 2] + " " + x[len(x) // 2:]) if len(x) > 5 and rng.random() < 0.25 else x for x in t.split())
+
+
+def _shape_loop(t, rng):  # a few short lines repeated hundreds of times
+    return "\n".join([l for l in _shape_mindmap(t, rng).split("\n") if l][:5] * 300)
+
+
+STRESS_SHAPES = {
+    "bullets": (_shape_bullets, 4), "mindmap": (_shape_mindmap, 4), "no-diacritics": (_shape_no_diacritics, 4),
+    "UPPER": (lambda t, rng: t.upper(), 4), "+English terms": (_shape_english_terms, 4), "table": (_shape_table, 1),
+    "ocr-noise": (_shape_ocr_noise, 4), "loop": (_shape_loop, 1), "tiny-60": (lambda t, rng: t[:60], 1),
+}
 FRENCH_LINE = "Le gouvernement a adopté aujourd'hui une nouvelle loi sur l'éducation. Selon le ministre, la réforme commencera l'année prochaine. "
 # Real-world script mixes, with the language each must produce.
 MIXED_SCRIPT_CASES = {
@@ -398,6 +464,55 @@ class TestSupportedLanguages(_MultilingualOn):
                 for label, doc in (("3x", text * 3), ("long", text * 60), ("letter-spaced", letter_spaced(text * 3))):
                     with self.subTest(language=key, text=text[:20], form=label):
                         self.assertEqual(detect_language(doc), "en")
+
+    def test_stress_shapes_never_pick_a_wrong_language(self):
+        """Any shape may fall back to English, but must NEVER give another language."""
+        import random
+
+        rng = random.Random(7)
+        corpus = []
+        for k, texts in SLAVIC.items():
+            corpus += [(k, t) for t in texts]
+        for k, texts in LANES.items():
+            corpus += [(LANE_EXPECTED[k], t) for t in texts]
+        for k, texts in EXTRA_TEXTS.items():
+            corpus += [(k, t) for t in texts]
+        corpus += [(k, t) for k, t in SAMPLES.items()] + [("hi", t) for t in HINDI_TEXTS]
+        corpus += [("en", t) for texts in UNSUPPORTED.values() for t in texts]
+        for want, text in corpus:
+            for name, (shape, repeat) in STRESS_SHAPES.items():
+                got = detect_language(shape(text * repeat, rng))
+                with self.subTest(language=want, shape=name, text=text[:20]):
+                    self.assertIn(got, {want, "en"})
+
+    def test_low_content_text_falls_back_to_english(self):
+        """A looping OCR transcript has too few distinct words to tell siblings apart."""
+        import random
+
+        for code in ("bg", "mk", "sr", "ru", "uk", "cs", "sk", "sv", "ms", "pt"):
+            texts = SLAVIC.get(code) or LANES.get(code) or [SAMPLES.get(code) or UNSUPPORTED[code][0]]
+            with self.subTest(language=code):
+                self.assertEqual(detect_language(_shape_loop(texts[0], random.Random(1))), "en")
+
+    def test_all_caps_documents(self):
+        for code in ("pl", "cs", "sk", "sl", "hr", "fi", "et", "tr", "nl", "lt", "es", "da", "ms", "id"):
+            text = (SLAVIC.get(code) or LANES.get(code) or [SAMPLES[code]])[0]
+            with self.subTest(language=code):
+                self.assertEqual(detect_language((text * 4).upper()), code)
+
+    def test_arabic_script_and_scandinavian_tie_breakers(self):
+        import langdetect
+
+        real = langdetect.detect
+        try:
+            for code, siblings in EXTRA_SIBLINGS.items():
+                for wrong in siblings:
+                    langdetect.detect = lambda text, wrong=wrong: wrong
+                    for text in EXTRA_TEXTS[code]:
+                        with self.subTest(language=code, forced=wrong, text=text[:20]):
+                            self.assertEqual(detect_language(text * 3), code)
+        finally:
+            langdetect.detect = real
 
     def test_chinese_simplified_vs_traditional(self):
         for key, want in (("zh", "zh"), ("zh-trad", "zh-tw")):

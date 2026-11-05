@@ -4,10 +4,10 @@ import logging
 import time
 
 from google import genai
-from google.genai import types
 from PIL import Image
 
 from app.config import settings
+from app.services.gemini_compat import generate_without_thinking
 
 logger = logging.getLogger("paperpod")
 
@@ -147,15 +147,13 @@ def _ocr_call(batch: list[tuple[int, bytes]], model: str) -> tuple[str, bool]:
                 "data": base64.b64encode(img_bytes).decode("utf-8"),
             }
         })
-    response = _vision_client.models.generate_content(
-        model=model,
-        contents=[{"role": "user", "parts": parts}],
-        config=types.GenerateContentConfig(
-            # Dense multi-page transcription needs a large output budget.
-            max_output_tokens=8192,
-            temperature=0.0,
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
-        ),
+    response = generate_without_thinking(
+        _vision_client,
+        model,
+        [{"role": "user", "parts": parts}],
+        # Dense multi-page transcription needs a large output budget.
+        max_output_tokens=8192,
+        temperature=0.0,
     )
     candidates = getattr(response, "candidates", None) or [None]
     finish = str(getattr(candidates[0], "finish_reason", "") or "")
@@ -274,15 +272,13 @@ def describe_pdf_figures(pages: list[tuple[int, bytes]]) -> str:
         })
 
     try:
-        response = _vision_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[{"role": "user", "parts": parts}],
-            config=types.GenerateContentConfig(
-                max_output_tokens=2048,
-                temperature=0.2,
-                # Disable "thinking" so the output budget isn't spent on reasoning.
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
+        # Thinking off, so the output budget isn't spent on reasoning.
+        response = generate_without_thinking(
+            _vision_client,
+            "gemini-2.5-flash",
+            [{"role": "user", "parts": parts}],
+            max_output_tokens=2048,
+            temperature=0.2,
         )
         text = (response.text or "").strip()
         logger.info(f"[Vision] Described {len(pages)} figure page(s) -> {len(text)} chars")

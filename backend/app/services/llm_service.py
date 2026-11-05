@@ -762,7 +762,7 @@ def _call_gemini(messages: list[dict], temperature: float, max_tokens: int, mode
     if client is None:
         raise RuntimeError("Gemini fallback not configured")
 
-    from google.genai import types
+    from app.services.gemini_compat import generate_without_thinking
 
     system_parts, contents = [], []
     for m in messages:
@@ -773,18 +773,15 @@ def _call_gemini(messages: list[dict], temperature: float, max_tokens: int, mode
             g_role = "model" if role == "assistant" else "user"
             contents.append({"role": g_role, "parts": [{"text": content}]})
 
-    config = types.GenerateContentConfig(
+    # Thinking is turned off (in whatever form this model accepts); otherwise
+    # reasoning tokens eat the output budget and can return empty text.
+    response = generate_without_thinking(
+        client,
+        model,
+        contents,
         system_instruction="\n\n".join(system_parts) or None,
         temperature=temperature,
         max_output_tokens=max_tokens,
-        # Disable "thinking" — otherwise reasoning tokens eat the output budget
-        # and can return empty text on 2.5-flash.
-        thinking_config=types.ThinkingConfig(thinking_budget=0),
-    )
-    response = client.models.generate_content(
-        model=model,
-        contents=contents,
-        config=config,
     )
     text = (response.text or "").strip()
     if not text:
