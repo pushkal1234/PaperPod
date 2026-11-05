@@ -110,9 +110,12 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
         })}
       </div>
 
-      {/* Content */}
+      {/* Content. Taller than the promo video below it at every width (the
+          video is ~378px tall at full width), because uploading is the main
+          action of the page. Every tab fills the same height, so the card
+          doesn't jump when switching tabs on phones either. */}
       <div
-        className="p-6"
+        className="p-6 flex flex-col min-h-[312px] sm:min-h-[372px]"
         role="tabpanel"
         id={`upload-panel-${activeTab}`}
         aria-labelledby={`upload-tab-${activeTab}`}
@@ -121,7 +124,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
           <div
             {...getRootProps()}
             className={`
-              relative border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer
+              relative flex-1 flex items-center justify-center border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer
               transition-all duration-300 group
               ${isDragActive
                 ? 'border-brand-400 bg-brand-50 scale-[1.02]'
@@ -166,7 +169,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
         )}
 
         {activeTab === 'text' && (
-          <div className="space-y-3">
+          <div className="flex-1 flex flex-col gap-3">
             <input
               type="text"
               placeholder="Title (optional)"
@@ -179,7 +182,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
               value={pastedText}
               onChange={(e) => setPastedText(e.target.value)}
               rows={6}
-              className="w-full bg-paper-50 border border-paper-300 rounded-xl px-4 py-3 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20 resize-none transition-all"
+              className="flex-1 w-full bg-paper-50 border border-paper-300 rounded-xl px-4 py-3 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20 resize-none transition-all"
             />
             <button
               onClick={handlePasteSubmit}
@@ -193,7 +196,7 @@ export default function UploadZone({ onUpload, onUploadText, onUploadImage, isUp
         )}
 
         {activeTab === 'camera' && (
-          <div className="text-center space-y-4">
+          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-4">
             <div className="w-14 h-14 rounded-2xl bg-brand-50 flex items-center justify-center mx-auto">
               <Camera className="w-7 h-7 text-brand-600" />
             </div>

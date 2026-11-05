@@ -1118,69 +1118,6 @@ function App() {
               </button>
             </div>
 
-            {/* Out of free podcasts: say what Premium adds and how to get more,
-                instead of only the small "0 of 2 left" in the header. */}
-            {quotaExhausted && (
-              <div className="rounded-3xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-accent-50/60 p-6 sm:p-7 shadow-soft">
-                <div className="flex flex-col lg:flex-row lg:items-center gap-6">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">
-                      You've used your {user?.usage?.podcasts_limit ?? 2} free podcasts
-                    </p>
-                    <h3 className="font-display text-2xl font-semibold text-stone-900 mt-1">
-                      Turn your next document into a podcast
-                    </h3>
-                    <ul className="mt-4 grid sm:grid-cols-2 gap-x-6 gap-y-2 text-sm text-stone-700">
-                      <li className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-brand-600 shrink-0" />Unlimited podcasts from PDFs, slides, docs and photos</li>
-                      <li className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-brand-600 shrink-0" />Ask questions on every podcast, by text or voice</li>
-                      <li className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-brand-600 shrink-0" />Full-length documents, in many languages</li>
-                      <li className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-brand-600 shrink-0" />Your podcasts below stay yours, with their Q&A</li>
-                    </ul>
-                  </div>
-                  <div className="lg:w-64 shrink-0 flex flex-col gap-3">
-                    {FOUNDING && (
-                      <span className="self-start inline-flex items-center gap-1.5 rounded-full bg-accent-50 border border-accent-200 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-accent-800">
-                        <Star className="w-3 h-3" />
-                        {FOUNDING_LABEL} price
-                      </span>
-                    )}
-                    <p className="text-stone-900">
-                      <span className="font-display text-3xl font-semibold">{HEADLINE_MONTHLY}</span>
-                      <span className="text-stone-500"> / month</span>
-                      {FOUNDING && <span className="ml-2 text-sm text-stone-400 line-through">{REGULAR_MONTHLY}</span>}
-                    </p>
-                    {FOUNDING && (
-                      <p className="-mt-1 text-xs text-stone-600 leading-relaxed">
-                        {/* Same promise as the payment window (FOUNDING_NOTE), so the two never disagree. */}
-                        {FOUNDING_NOTE} New members will pay {REGULAR_MONTHLY}/month after the founding period.
-                        {foundingEndsLabel() && (
-                          <span className="block mt-1 font-semibold text-accent-800">{foundingEndsLabel()}</span>
-                        )}
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setPaywall({
-                        reason: 'quota_exceeded',
-                        message: `You've used all ${user?.usage?.podcasts_limit ?? 2} free podcasts. Upgrade to Premium for unlimited podcasts.`,
-                      })}
-                      className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-full bg-brand-600 text-white font-semibold hover:bg-brand-700 shadow-glow transition-all"
-                    >
-                      <Zap className="w-4 h-4" />
-                      Upgrade to Premium
-                    </button>
-                    <p className="text-xs text-stone-500 leading-relaxed">
-                      Want to try a few more first?{' '}
-                      <a href={CONTACT_EMAIL_LINK} className="font-semibold text-brand-700 hover:underline">Email us</a>
-                      {' '}or{' '}
-                      <a href={CONTACT_WHATSAPP_LINK} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand-700 hover:underline">message us on WhatsApp</a>
-                      {' '}and tell us what you use PaperPod for. We'll add 3 more free podcasts.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* Usage/analytics dashboard — self-hides when there are 0 podcasts. */}
             <AnalyticsDashboard />
 
@@ -1192,7 +1129,7 @@ function App() {
                 <span className="text-sm font-medium">Loading your podcasts…</span>
               </div>
             ) : documents.length > 0 ? (
-              <div className="grid gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 {documents.map((doc) => (
                   <div
                     key={doc.doc_id}
@@ -1205,9 +1142,9 @@ function App() {
                       if (e.target !== e.currentTarget) return;
                       if (e.key === 'Enter' || e.key === ' ') openDoc(doc.doc_id);
                     }}
-                    className="flex items-center gap-4 bg-white border border-paper-300 rounded-2xl p-4 shadow-soft hover:border-brand-300 hover:shadow-glow hover:-translate-y-0.5 transition-all duration-200 text-left group w-full cursor-pointer"
+                    className="flex items-center gap-3 sm:gap-4 min-w-0 bg-white border border-paper-300 rounded-2xl p-3 sm:p-4 shadow-soft hover:border-brand-300 hover:shadow-glow hover:-translate-y-0.5 transition-all duration-200 text-left group w-full cursor-pointer"
                   >
-                    <div className="w-11 h-11 rounded-xl bg-brand-50 group-hover:bg-brand-100 flex items-center justify-center transition-colors">
+                    <div className="w-10 h-10 sm:w-11 sm:h-11 shrink-0 rounded-xl bg-brand-50 group-hover:bg-brand-100 flex items-center justify-center transition-colors">
                       <FileAudio className="w-5 h-5 text-brand-600 transition-colors" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -1244,7 +1181,7 @@ function App() {
                           e.stopPropagation();
                           openDoc(doc.doc_id, { jumpToQA: true });
                         }}
-                        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-brand-200 bg-brand-50 text-brand-700 text-sm font-semibold hover:bg-brand-100 hover:border-brand-300 transition-colors"
+                        className="shrink-0 inline-flex items-center gap-1.5 h-9 px-2.5 sm:px-3 rounded-xl border border-brand-200 bg-brand-50 text-brand-700 text-sm font-semibold hover:bg-brand-100 hover:border-brand-300 transition-colors"
                         aria-label={`Ask a question about ${doc.filename}`}
                       >
                         <MessageCircle className="w-4 h-4" />
@@ -1255,7 +1192,7 @@ function App() {
                       type="button"
                       onClick={(e) => handleDelete(doc, e)}
                       disabled={deletingDocIds.has(doc.doc_id)}
-                      className="ml-2 inline-flex items-center justify-center w-9 h-9 rounded-xl border border-paper-300 bg-paper-50 text-stone-400 hover:text-red-600 hover:border-red-300 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="shrink-0 sm:ml-2 inline-flex items-center justify-center w-9 h-9 rounded-xl border border-paper-300 bg-paper-50 text-stone-400 hover:text-red-600 hover:border-red-300 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Delete podcast"
                       aria-label={`Delete ${doc.filename}`}
                     >
@@ -1287,6 +1224,76 @@ function App() {
                   <Equalizer className="h-5" tone="light" />
                   Create your first podcast
                 </button>
+              </div>
+            )}
+
+            {/* Out of free podcasts: a compact card AFTER the stats and the
+                podcast list (those are what the page is for). Says what Premium
+                adds and how to get more, instead of only "0 of 2 left". */}
+            {quotaExhausted && (
+              <div className="rounded-2xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-accent-50/60 p-5 shadow-soft">
+                <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">
+                      You've used your {user?.usage?.podcasts_limit ?? 2} free podcasts
+                    </p>
+                    <h3 className="font-display text-lg font-semibold text-stone-900 mt-0.5">
+                      Turn your next document into a podcast
+                    </h3>
+                    <ul className="mt-2 grid grid-cols-2 sm:flex sm:flex-wrap gap-x-3 sm:gap-x-4 gap-y-1 text-xs sm:text-sm text-stone-600">
+                      <li className="inline-flex items-center gap-1.5"><Check className="w-4 h-4 text-brand-600 shrink-0" />Unlimited podcasts</li>
+                      <li className="inline-flex items-center gap-1.5"><Check className="w-4 h-4 text-brand-600 shrink-0" />Q&A on every podcast</li>
+                      <li className="inline-flex items-center gap-1.5"><Check className="w-4 h-4 text-brand-600 shrink-0" />Many languages</li>
+                      <li className="inline-flex items-center gap-1.5"><Check className="w-4 h-4 text-brand-600 shrink-0" />Keep your podcasts</li>
+                    </ul>
+                  </div>
+                  <div className="shrink-0 flex flex-wrap items-center justify-between md:justify-end gap-3 sm:gap-4">
+                    <div>
+                      {FOUNDING && (
+                        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-accent-50 border border-accent-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-800">
+                          <Star className="w-3 h-3" />
+                          {FOUNDING_LABEL} price
+                        </span>
+                      )}
+                      <p className="text-stone-900 mt-1 whitespace-nowrap">
+                        <span className="font-display text-2xl font-semibold">{HEADLINE_MONTHLY}</span>
+                        <span className="text-sm text-stone-500"> / month</span>
+                        {FOUNDING && <span className="ml-1.5 text-sm text-stone-400 line-through">{REGULAR_MONTHLY}</span>}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPaywall({
+                        reason: 'quota_exceeded',
+                        message: `You've used all ${user?.usage?.podcasts_limit ?? 2} free podcasts. Upgrade to Premium for unlimited podcasts.`,
+                      })}
+                      className="inline-flex shrink-0 items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-full bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700 shadow-glow transition-all"
+                      aria-label="Upgrade to Premium"
+                    >
+                      <Zap className="w-4 h-4" />
+                      <span className="sm:hidden">Upgrade</span>
+                      <span className="hidden sm:inline">Upgrade to Premium</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-4 pt-3 border-t border-brand-100 space-y-1 text-xs text-stone-500 leading-relaxed">
+                  {FOUNDING && (
+                    <p>
+                      {/* Same promise as the payment window (FOUNDING_NOTE), so the two never disagree. */}
+                      {FOUNDING_NOTE} New members will pay {REGULAR_MONTHLY}/month after the founding period.
+                      {foundingEndsLabel() && (
+                        <span className="font-semibold text-accent-800"> {foundingEndsLabel()}.</span>
+                      )}
+                    </p>
+                  )}
+                  <p>
+                    Want to try a few more first?{' '}
+                    <a href={CONTACT_EMAIL_LINK} className="font-semibold text-brand-700 hover:underline">Email us</a>
+                    {' '}or{' '}
+                    <a href={CONTACT_WHATSAPP_LINK} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand-700 hover:underline">message us on WhatsApp</a>
+                    {' '}and tell us what you use PaperPod for. We'll add 3 more free podcasts.
+                  </p>
+                </div>
               </div>
             )}
           </div>

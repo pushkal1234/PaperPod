@@ -443,7 +443,7 @@ export default function QAPanel({ docId }) {
             onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
             placeholder={isRecording ? 'Recording...' : 'Type your question...'}
             disabled={isLoading || isRecording}
-            className="flex-1 bg-paper-50 border border-paper-300 rounded-xl px-4 py-2.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20 disabled:opacity-50 transition-all"
+            className="flex-1 min-w-0 bg-paper-50 border border-paper-300 rounded-xl px-4 py-2.5 text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20 disabled:opacity-50 transition-all"
           />
 
           <button
