@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Zap, Check, Infinity as InfinityIcon, FileText, MessageCircle, Loader2, Phone, Mail } from 'lucide-react';
 import Equalizer from './Equalizer';
-import { createCheckout } from '../api';
+import { createCheckout, track } from '../api';
 import { FOUNDING, FOUNDING_LABEL, FOUNDING_NOTE, HEADLINE_MONTHLY, REGULAR_MONTHLY, FOUNDING_SPOTS, FOUNDING_SPOTS_LEFT, SHOW_FOUNDING_COUNTER } from '../pricing';
 
 const PREMIUM_PERKS = [
@@ -35,7 +35,18 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
       ? "You've used your free podcasts"
       : 'Unlock unlimited podcasts with Premium';
 
+  // Funnel: the paywall opened, and why (quota_exceeded, upgrade, ...).
+  useEffect(() => {
+    track('paywall_shown', { detail: reason || 'unknown' });
+  }, [reason]);
+
+  const handleClose = () => {
+    track('paywall_closed', { detail: reason || 'unknown' });
+    onClose();
+  };
+
   const handleUpgrade = async () => {
+    track('upgrade_clicked', { detail: reason || 'unknown' });
     setLoading(true);
     try {
       const { url } = await createCheckout();
@@ -60,14 +71,14 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
       role="dialog"
       aria-modal="true"
       aria-label="Upgrade to PaperPod Premium"
-      onClick={onClose}
+      onClick={handleClose}
     >
       <div
         className="relative w-full max-w-md rounded-3xl bg-white shadow-glow border border-paper-300 overflow-y-auto max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute top-4 right-4 text-stone-400 hover:text-stone-700 transition-colors"
           title="Close"
         >
@@ -213,7 +224,7 @@ export default function PaywallModal({ reason, message, onClose, onError, contac
           )}
 
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="mt-3 w-full text-center text-sm font-medium text-stone-400 hover:text-stone-600 transition-colors"
           >
             Maybe later

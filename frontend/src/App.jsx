@@ -14,8 +14,9 @@ import ConfirmModal from './components/ConfirmModal';
 import ToastContainer from './components/ToastContainer';
 import PaywallModal from './components/PaywallModal';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
-import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler, getBillingConfig, createCheckout, getBillingPortal } from './api';
-import { FOUNDING, HEADLINE_MONTHLY, REGULAR_MONTHLY, FOUNDING_SPOTS, FOUNDING_SPOTS_LEFT, SHOW_FOUNDING_COUNTER } from './pricing';
+import PromoVideo from './components/PromoVideo';
+import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler, getBillingConfig, createCheckout, getBillingPortal, track } from './api';
+import { FOUNDING, FOUNDING_LABEL, FOUNDING_NOTE, HEADLINE_MONTHLY, REGULAR_MONTHLY, FOUNDING_SPOTS, FOUNDING_SPOTS_LEFT, SHOW_FOUNDING_COUNTER, foundingEndsLabel } from './pricing';
 
 // Browser extension store listings — surfaced in the navbar, hero, and footer.
 const CHROME_STORE_URL = 'https://chromewebstore.google.com/detail/paperpod-%E2%80%94-ai-podcast-for/oeppbenincbmdaomedjpjfegnfphdoeo';
@@ -42,6 +43,24 @@ const CONTACT_WHATSAPP_DISPLAY = '+91 97294 61168';
 const CONTACT_WHATSAPP_LINK = 'https://wa.me/919729461168';
 const CONTACT_EMAIL_LINK = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('PaperPod — support / feedback')}`;
 
+
+// Date · length · language for a My Podcasts row, e.g. "Nov 3 · 7 min · Hindi".
+// Parts that aren't known yet (still processing, failed) are left out.
+function podcastRowDetails(doc) {
+  const parts = [];
+  if (doc.created_at) {
+    const d = new Date(doc.created_at);
+    if (!Number.isNaN(d.getTime())) {
+      const sameYear = d.getFullYear() === new Date().getFullYear();
+      parts.push(d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) }));
+    }
+  }
+  if (doc.status === 'ready' && doc.duration_seconds > 0) {
+    parts.push(`${Math.max(1, Math.round(doc.duration_seconds / 60))} min`);
+  }
+  if (doc.status === 'ready' && doc.language) parts.push(doc.language);
+  return parts;
+}
 
 function App() {
   const [view, setView] = useState(() => {
@@ -79,6 +98,26 @@ function App() {
   // paywall modal state ({ reason, message } when open, null when closed).
   const [billingConfig, setBillingConfig] = useState(null);
   const [paywall, setPaywall] = useState(null);
+  // Set by a library row's "Ask a question": once the podcast opens, scroll to
+  // the Q&A panel and put the cursor in its question box.
+  const [focusQA, setFocusQA] = useState(false);
+  // Leaving the player before the jump happens drops the request, so a later,
+  // unrelated podcast doesn't open scrolled to Q&A.
+  useEffect(() => {
+    if (view !== 'player') setFocusQA(false);
+  }, [view]);
+  useEffect(() => {
+    if (!focusQA || view !== 'player' || !currentDoc) return;
+    const t = setTimeout(() => {
+      const panel = document.getElementById('qa-panel');
+      if (panel) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        panel.querySelector('input[type="text"]')?.focus({ preventScroll: true });
+      }
+      setFocusQA(false);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [focusQA, view, currentDoc]);
   const [portalLoading, setPortalLoading] = useState(false);
   // Prefill for the text composer when opened via an extension/context-menu
   // handoff (?type=text&text=...). Empty by default.
@@ -125,6 +164,19 @@ function App() {
   };
 
   useEffect(() => {
+    // Funnel: one "visit" per browser tab session, with where it came from
+    // (utm_source, else the referring site, else "direct").
+    try {
+      if (!sessionStorage.getItem('paperpod:visited')) {
+        sessionStorage.setItem('paperpod:visited', '1');
+        const utm = new URLSearchParams(window.location.search).get('utm_source');
+        let ref = '';
+        try { ref = document.referrer ? new URL(document.referrer).hostname : ''; } catch { /* bad referrer */ }
+        if (ref === window.location.hostname) ref = '';
+        track('visit', { detail: utm || ref || 'direct' });
+      }
+    } catch { /* storage blocked — skip */ }
+
     // If a token expires mid-session, drop the user back to logged-out state.
     setUnauthorizedHandler(() => {
       setUser(null);
@@ -578,12 +630,13 @@ function App() {
     };
   }, []);
 
-  const openDoc = async (docId) => {
+  const openDoc = async (docId, { jumpToQA = false } = {}) => {
     try {
       const doc = await getDocument(docId);
       if (doc.status === 'ready') {
         setCurrentDoc(doc);
         setView('player');
+        if (jumpToQA) setFocusQA(true);
       } else if (doc.status === 'failed') {
         setErrorMsg(doc.error || 'Podcast generation failed. Please try again.');
         setView('failed');
@@ -983,6 +1036,10 @@ function App() {
               </div>
             </div>
 
+            {/* 20-second promo — right under the upload box, so it's seen on the
+                first scroll without pushing the primary action down. */}
+            <PromoVideo />
+
             {/* Stat strip — feature highlights (honest, non-fabricated) */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-4xl mx-auto">
               {[
@@ -1061,6 +1118,69 @@ function App() {
               </button>
             </div>
 
+            {/* Out of free podcasts: say what Premium adds and how to get more,
+                instead of only the small "0 of 2 left" in the header. */}
+            {quotaExhausted && (
+              <div className="rounded-3xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-accent-50/60 p-6 sm:p-7 shadow-soft">
+                <div className="flex flex-col lg:flex-row lg:items-center gap-6">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">
+                      You've used your {user?.usage?.podcasts_limit ?? 2} free podcasts
+                    </p>
+                    <h3 className="font-display text-2xl font-semibold text-stone-900 mt-1">
+                      Turn your next document into a podcast
+                    </h3>
+                    <ul className="mt-4 grid sm:grid-cols-2 gap-x-6 gap-y-2 text-sm text-stone-700">
+                      <li className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-brand-600 shrink-0" />Unlimited podcasts from PDFs, slides, docs and photos</li>
+                      <li className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-brand-600 shrink-0" />Ask questions on every podcast, by text or voice</li>
+                      <li className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-brand-600 shrink-0" />Full-length documents, in many languages</li>
+                      <li className="flex items-start gap-2"><Check className="w-4 h-4 mt-0.5 text-brand-600 shrink-0" />Your podcasts below stay yours, with their Q&A</li>
+                    </ul>
+                  </div>
+                  <div className="lg:w-64 shrink-0 flex flex-col gap-3">
+                    {FOUNDING && (
+                      <span className="self-start inline-flex items-center gap-1.5 rounded-full bg-accent-50 border border-accent-200 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-accent-800">
+                        <Star className="w-3 h-3" />
+                        {FOUNDING_LABEL} price
+                      </span>
+                    )}
+                    <p className="text-stone-900">
+                      <span className="font-display text-3xl font-semibold">{HEADLINE_MONTHLY}</span>
+                      <span className="text-stone-500"> / month</span>
+                      {FOUNDING && <span className="ml-2 text-sm text-stone-400 line-through">{REGULAR_MONTHLY}</span>}
+                    </p>
+                    {FOUNDING && (
+                      <p className="-mt-1 text-xs text-stone-600 leading-relaxed">
+                        {/* Same promise as the payment window (FOUNDING_NOTE), so the two never disagree. */}
+                        {FOUNDING_NOTE} New members will pay {REGULAR_MONTHLY}/month after the founding period.
+                        {foundingEndsLabel() && (
+                          <span className="block mt-1 font-semibold text-accent-800">{foundingEndsLabel()}</span>
+                        )}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPaywall({
+                        reason: 'quota_exceeded',
+                        message: `You've used all ${user?.usage?.podcasts_limit ?? 2} free podcasts. Upgrade to Premium for unlimited podcasts.`,
+                      })}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-full bg-brand-600 text-white font-semibold hover:bg-brand-700 shadow-glow transition-all"
+                    >
+                      <Zap className="w-4 h-4" />
+                      Upgrade to Premium
+                    </button>
+                    <p className="text-xs text-stone-500 leading-relaxed">
+                      Want to try a few more first?{' '}
+                      <a href={CONTACT_EMAIL_LINK} className="font-semibold text-brand-700 hover:underline">Email us</a>
+                      {' '}or{' '}
+                      <a href={CONTACT_WHATSAPP_LINK} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand-700 hover:underline">message us on WhatsApp</a>
+                      {' '}and tell us what you use PaperPod for. We'll add 3 more free podcasts.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Usage/analytics dashboard — self-hides when there are 0 podcasts. */}
             <AnalyticsDashboard />
 
@@ -1080,6 +1200,9 @@ function App() {
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
+                      // Only when the row itself has focus: Enter on the Ask or
+                      // Delete button inside it must not also open the podcast.
+                      if (e.target !== e.currentTarget) return;
                       if (e.key === 'Enter' || e.key === ' ') openDoc(doc.doc_id);
                     }}
                     className="flex items-center gap-4 bg-white border border-paper-300 rounded-2xl p-4 shadow-soft hover:border-brand-300 hover:shadow-glow hover:-translate-y-0.5 transition-all duration-200 text-left group w-full cursor-pointer"
@@ -1089,7 +1212,7 @@ function App() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-stone-800 truncate">{doc.filename}</p>
-                      <div className="mt-1">
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
                         {doc.status === 'ready' ? (
                           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -1106,8 +1229,28 @@ function App() {
                             Processing…
                           </span>
                         )}
+                        {podcastRowDetails(doc).map((part) => (
+                          <span key={part} className="inline-flex items-center gap-2 text-xs text-stone-500">
+                            <span className="text-stone-300" aria-hidden="true">·</span>
+                            {part}
+                          </span>
+                        ))}
                       </div>
                     </div>
+                    {doc.status === 'ready' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openDoc(doc.doc_id, { jumpToQA: true });
+                        }}
+                        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border border-brand-200 bg-brand-50 text-brand-700 text-sm font-semibold hover:bg-brand-100 hover:border-brand-300 transition-colors"
+                        aria-label={`Ask a question about ${doc.filename}`}
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span className="hidden sm:inline">Ask a question</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={(e) => handleDelete(doc, e)}
@@ -1224,6 +1367,7 @@ function App() {
                   dialogueScript={currentDoc.audio.dialogue_script}
                   transcriptSegments={currentDoc.audio.transcript_segments}
                   fallbackDuration={currentDoc.audio.duration_seconds}
+                  docId={currentDoc.doc_id}
                   onShare={() => handleShare(currentDoc.doc_id)}
                 />
                 {!user ? (
@@ -1286,7 +1430,9 @@ function App() {
               </div>
 
               {/* Q&A Panel */}
-              <QAPanel docId={currentDoc.doc_id} />
+              <div id="qa-panel" className="scroll-mt-24">
+                <QAPanel docId={currentDoc.doc_id} />
+              </div>
             </div>
           </div>
         )}

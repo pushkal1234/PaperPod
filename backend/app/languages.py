@@ -1020,6 +1020,31 @@ def detect_language_name(text: str) -> str:
     return _label(winner)
 
 
+def podcast_language_name(script: str) -> str | None:
+    """Language a FINISHED podcast script is in, e.g. "Hindi", for the library.
+
+    Reads the script itself (what was actually voiced), so unlike
+    :func:`detect_language` it doesn't depend on MULTILINGUAL_ENABLED: a podcast
+    made while the flag was on keeps its label after it's turned off.
+
+    Returns None when unsure (too short, no majority, a language we don't voice,
+    detector error) rather than guessing "English": the caller stores the label
+    for good, so a wrong guess would stick. Show nothing instead.
+    """
+    sample = (script or "").strip()
+    if len(sample) < 30:
+        return None
+    try:
+        winner, _codes = _vote(sample)
+    except Exception:  # noqa: BLE001 — a label is best-effort
+        return None
+    if winner == "en":
+        return "English"
+    if winner in LANGUAGE_PROFILES:
+        return LANGUAGE_PROFILES[winner]["name"]
+    return None
+
+
 def expected_language_label(text: str) -> str:
     """The language the podcast was SUPPOSED to be in, e.g. "Turkish (tr)".
 

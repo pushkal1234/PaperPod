@@ -640,6 +640,52 @@ def _qa_system_prompt(base: str) -> str:
 
 _LEADING_SPEAKER_LABEL = re.compile(r"^\s*\**\s*(?:guest|host)\s*\**\s*:\s*\**\s*", re.IGNORECASE)
 
+# Markdown asterisks the model sometimes writes despite the prompt: **bold**,
+# *italics* and "* " bullet points. Users see them as stray "*" characters.
+# Same patterns as frontend/src/textClean.js; keep the two in step. No
+# lookbehind, so the JS twin also parses on older Safari. "Word" below means an
+# ASCII identifier character, so Hindi/Chinese text next to "**" still counts
+# as a markdown boundary while code like a*b or **kwargs does not.
+_ASTERISK_CODE = re.compile(r"```[\s\S]*?```|`[^`\n]+`")
+_ASTERISK_BULLET = re.compile(r"^([ \t]*)\*+[ \t]+", re.MULTILINE)
+_ASTERISK_BOLD = re.compile(r"(^|[^A-Za-z0-9_*])\*\*(\S(?:[^\n]*?\S)?)\*\*(?![A-Za-z0-9_*])", re.MULTILINE)
+_ASTERISK_ITALIC = re.compile(r"(^|[^A-Za-z0-9_*])\*(\S(?:[^*\n]*?\S)?)\*(?![A-Za-z0-9_*])", re.MULTILINE)
+_ASTERISK_MULTIPLY = re.compile(r"([\d)])[ \t]*\*[ \t]*(?=[\d(])")
+_ASTERISK_STRAY = re.compile(r"(^|[^A-Za-z0-9_*])\*+(?![A-Za-z0-9_*.])", re.MULTILINE)
+_EXTRA_SPACES = re.compile(r"[ \t]{2,}")
+
+
+def remove_asterisks(text: str, keep_code: bool = False) -> str:
+    """Remove markdown "*" from LLM text shown to users.
+
+    **bold** and *italics* lose their markers, a "* " bullet at the start of a
+    line becomes "•", and "2 * 3" becomes "2 × 3". Line breaks are kept, so
+    "Host:"/"Guest:" lines stay intact.
+
+    keep_code=False (podcast scripts, which are spoken): every other "*" goes too.
+    keep_code=True (Q&A answers, which are read): a "*" that is part of code is
+    kept, i.e. inside `backticks`, or touching an identifier as in **kwargs,
+    *ptr, a*b. Only stray asterisks with no word next to them are dropped.
+    """
+    if not text or "*" not in text:
+        return text
+    code: list[str] = []
+    if keep_code:
+        def _stash(m: re.Match) -> str:
+            code.append(m.group(0))
+            return f"\x00{len(code) - 1}\x00"
+        text = _ASTERISK_CODE.sub(_stash, text)
+    text = _ASTERISK_BULLET.sub(r"\1• ", text)
+    text = _ASTERISK_BOLD.sub(r"\1\2", text)
+    text = _ASTERISK_ITALIC.sub(r"\1\2", text)
+    text = _ASTERISK_MULTIPLY.sub(r"\1 × ", text)
+    if keep_code:
+        text = _ASTERISK_STRAY.sub(r"\1", text)
+        text = re.sub(r"\x00(\d+)\x00", lambda m: code[int(m.group(1))], text)
+    else:
+        text = text.replace("*", "")
+    return _EXTRA_SPACES.sub(" ", text)
+
 
 def normalize_answer_text(text: str) -> str:
     """Collapse excessive newlines/whitespace while keeping paragraph breaks.
@@ -652,6 +698,7 @@ def normalize_answer_text(text: str) -> str:
         return text
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = remove_asterisks(text, keep_code=True)
     # In-character answers (user playing the Host) may still open with a speaker
     # label; it would be shown and read aloud, so drop it.
     text = _LEADING_SPEAKER_LABEL.sub("", text)
@@ -672,6 +719,7 @@ def strip_markdown_for_speech(text: str) -> str:
     text = re.sub(r"`([^`]+)`", r"\1", text)
     text = re.sub(r"\\[\(\[]", "", text)
     text = re.sub(r"\\[\)\]]", "", text)
+    text = text.replace("•", "")
     return text
 
 

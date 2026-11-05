@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 venv/
+.venv/
 *.egg-info/
 
 # Backend runtime data
@@ -20,6 +21,9 @@ paperPodDocs/
 # Local marketing / Cursor skill artifacts
 brag-output/
 skills-lock.json
+
+# Claude Code: personal permissions, never shared
+.claude/settings.local.json
 
 # IDE / OS
 .vscode/

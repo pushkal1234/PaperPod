@@ -1,4 +1,6 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import { track } from '../api';
+import { removeAsterisks } from '../textClean';
 import { Play, Pause, SkipBack, SkipForward, Volume2, Share2, Check, Download, FileText, Maximize2, Minimize2 } from 'lucide-react';
 
 const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2];
@@ -55,7 +57,7 @@ async function saveBlob(blob, filename, shareTitle) {
 }
 
 function buildProportionalSegments(dialogueScript, duration) {
-  const lines = dialogueScript
+  const lines = removeAsterisks(dialogueScript)
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l && (l.toLowerCase().startsWith('host:') || l.toLowerCase().startsWith('guest:')));
@@ -82,7 +84,10 @@ function buildProportionalSegments(dialogueScript, duration) {
   });
 }
 
-export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcriptSegments, fallbackDuration, onShare }) {
+// Listening milestones sent to the drop-off funnel (% of the podcast heard).
+const LISTEN_STEPS = [25, 50, 75, 100];
+
+export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcriptSegments, fallbackDuration, onShare, docId }) {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -98,6 +103,15 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
   const [isMaximized, setIsMaximized] = useState(false);
 
   const restoredRef = useRef(false);
+  // Funnel events already sent for this podcast (play + each milestone).
+  const trackedRef = useRef(new Set());
+  const heardRef = useRef(0); // seconds actually played in this visit
+  const lastTimeRef = useRef(0);
+  const trackOnce = useCallback((key, name, extra) => {
+    if (!docId || trackedRef.current.has(key)) return;
+    trackedRef.current.add(key);
+    track(name, { documentId: docId, ...extra });
+  }, [docId]);
   const positionKey = audioUrl ? `${POSITION_KEY_PREFIX}${audioUrl}` : null;
 
   // Mobile Safari/Chrome often report audio.duration as Infinity/NaN/0 for
@@ -156,6 +170,20 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
 
     const onTimeUpdate = () => {
       if (Number.isFinite(audio.currentTime)) setCurrentTime(audio.currentTime);
+      // Count only time actually played: a jump bigger than 2s is a seek or a
+      // restored position, so skipping ahead doesn't look like listening.
+      const now = audio.currentTime;
+      const delta = now - lastTimeRef.current;
+      lastTimeRef.current = now;
+      if (audio.paused || !(delta > 0 && delta < 2)) return;
+      heardRef.current += delta;
+      const dur = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : fallbackDuration;
+      if (!(dur > 0)) return;
+      const pct = (heardRef.current / dur) * 100;
+      LISTEN_STEPS.forEach((step) => {
+        // 100% counts from 95% heard: the last seconds are often just the goodbye.
+        if (pct >= (step === 100 ? 95 : step)) trackOnce(`p${step}`, 'listen_progress', { value: step });
+      });
     };
     const onDuration = () => {
       if (Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -167,13 +195,17 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
         setBuffered(audio.buffered.end(audio.buffered.length - 1));
       }
     };
-    const onPlay = () => setIsPlaying(true);
+    const onPlay = () => {
+      setIsPlaying(true);
+      trackOnce('play', 'play_started');
+    };
     const onPause = () => {
       setIsPlaying(false);
       savePosition(audio.currentTime);
     };
     const onEnded = () => {
       setIsPlaying(false);
+
       if (positionKey) localStorage.removeItem(positionKey);
     };
     // Restore saved position ONLY once the real media is loaded and seekable.
@@ -223,11 +255,14 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
       audio.removeEventListener('ended', onEnded);
       audio.removeEventListener('loadeddata', onLoadedData);
     };
-  }, [audioUrl, positionKey, savePosition]);
+  }, [audioUrl, positionKey, savePosition, fallbackDuration, trackOnce]);
 
   // Reset transient state when the source changes.
   useEffect(() => {
     restoredRef.current = false;
+    trackedRef.current = new Set();
+    heardRef.current = 0;
+    lastTimeRef.current = 0;
     setCurrentTime(0);
     setDuration(0);
     setBuffered(0);
@@ -360,6 +395,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     if (!audioUrl || downloadingAudio) return;
     const filename = `${title.replace(/[^a-z0-9]/gi, '_')}_podcast.mp3`;
     setDownloadingAudio(true);
+    if (docId) track('audio_downloaded', { documentId: docId });
     try {
       const res = await fetch(audioUrl, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -373,7 +409,7 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
     } finally {
       setDownloadingAudio(false);
     }
-  }, [audioUrl, title, downloadingAudio]);
+  }, [audioUrl, title, downloadingAudio, docId]);
 
   return (
     <>
@@ -436,7 +472,8 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
           {dialogueScript && (
             <button
               onClick={() => {
-                const blob = new Blob([dialogueScript], { type: 'text/plain' });
+                if (docId) track('transcript_downloaded', { documentId: docId });
+                const blob = new Blob([removeAsterisks(dialogueScript)], { type: 'text/plain' });
                 const filename = `${title.replace(/[^a-z0-9]/gi, '_')}_transcript.txt`;
                 // Same cross-platform saver as the audio button — fixes iOS
                 // Safari (which ignores <a download>) and the previous mobile
@@ -572,11 +609,11 @@ export default function PodcastPlayer({ audioUrl, title, dialogueScript, transcr
                           <span className={isHost ? 'text-brand-700 font-semibold' : 'text-accent-600 font-semibold'}>
                             {seg.speaker}:
                           </span>{' '}
-                          <span className="text-stone-600">{seg.text}</span>
+                          <span className="text-stone-600">{removeAsterisks(seg.text)}</span>
                         </button>
                       );
                     })
-                  : dialogueScript
+                  : removeAsterisks(dialogueScript)
                       .split('\n')
                       .filter((l) => l.trim())
                       .map((line, i) => {

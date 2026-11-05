@@ -21,6 +21,20 @@ export const FOUNDING_NOTE = 'Locked in forever — early-supporter price.';
 // The price shown as the big headline number (what they pay today).
 export const HEADLINE_MONTHLY = FOUNDING ? FOUNDING_MONTHLY : REGULAR_MONTHLY;
 
+// Last day of the founding price, as 'YYYY-MM-DD', e.g. '2026-11-30'. When set
+// (and not yet past), the My Podcasts upgrade card says "Founding price ends
+// Nov 30". Leave null until there's a real date you'll keep: a deadline that
+// keeps moving stops being believed. After it passes, the line hides itself.
+export const FOUNDING_ENDS_ON = '2026-11-30';
+
+// "Founding price ends Nov 30", or null when no future date is set.
+export function foundingEndsLabel() {
+  if (!FOUNDING || !FOUNDING_ENDS_ON) return null;
+  const end = new Date(`${FOUNDING_ENDS_ON}T23:59:59`);
+  if (Number.isNaN(end.getTime()) || end < new Date()) return null;
+  return `Founding price ends ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+}
+
 export const FOUNDING_SPOTS = 100;
 export const FOUNDING_CLAIMED = 92;
 

@@ -3,6 +3,7 @@ import { Mic, MicOff, Send, MessageCircle, Volume2, Loader2, FileText, Globe, Sq
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { askQuestion, getQAAudioUrl, getQAAudioStatus, getHealth } from '../api';
 import FormattedAnswer from './FormattedAnswer';
+import { removeAsterisks } from '../textClean';
 
 // The answer text arrives first; its audio is synthesized in the background.
 // Poll until it's ready (long answers can take a couple of minutes).
@@ -359,7 +360,7 @@ export default function QAPanel({ docId }) {
                 )}
                 {msg.type === 'answer' && (
                   <button
-                    onClick={() => handleCopy(msg.text, i)}
+                    onClick={() => handleCopy(removeAsterisks(msg.text, { keepCode: true }), i)}
                     className="absolute top-0 right-0 p-1 rounded-md text-stone-400 hover:text-stone-600 hover:bg-paper-200 transition-colors"
                     title={copiedIndex === i ? 'Copied!' : 'Copy'}
                   >

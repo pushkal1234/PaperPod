@@ -110,6 +110,9 @@ class Document(Base):
     # a non-NULL deleted_at are hidden from the library/stats/dedup but still
     # counted by the entitlement gates. See app/entitlements.py.
     deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    # Language the podcast was voiced in (e.g. "English", "Hindi"), shown in the
+    # library. Null for podcasts made before it was stored; filled on first list.
+    language = Column(String(40), nullable=True)
 
     audio_file = relationship("AudioFile", back_populates="document", uselist=False)
     qa_sessions = relationship("QASession", back_populates="document")
@@ -158,6 +161,28 @@ class Feedback(Base):
     comment = Column(Text, nullable=True)
     source = Column(String, default="signout")  # where it was collected
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
+class Event(Base):
+    """One product-usage step (e.g. "listened to 50%", "saw the paywall").
+
+    Only steps the other tables can't answer are stored here: sign-ups,
+    podcasts, Q&A and payments already live in users/documents/qa_sessions.
+    Kept in our own database; nothing goes to a third-party tracker.
+    ``scripts/funnel_report.py`` turns these rows into the drop-off report.
+    """
+    __tablename__ = "events"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(40), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    # Random per-browser id, so a visit before sign-up can be linked to the
+    # account created later. Not personal data.
+    anon_id = Column(String(64), nullable=True, index=True)
+    document_id = Column(String(64), nullable=True, index=True)
+    value = Column(Float, nullable=True)  # e.g. 50 for "listened to 50%"
+    detail = Column(String(120), nullable=True)  # e.g. paywall reason
+    created_at = Column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
 def _normalize_async_url(url: str) -> str:
@@ -285,6 +310,8 @@ async def _migrate_schema_sqlite(conn):
             sync_conn.execute(
                 text("CREATE INDEX IF NOT EXISTS ix_documents_creator_ip ON documents (creator_ip)")
             )
+        if "language" not in doc_cols:
+            sync_conn.execute(text("ALTER TABLE documents ADD COLUMN language TEXT"))
         if "deleted_at" not in doc_cols:
             sync_conn.execute(text("ALTER TABLE documents ADD COLUMN deleted_at TIMESTAMP"))
             sync_conn.execute(
@@ -425,6 +452,11 @@ async def _migrate_schema_postgres(conn):
     )
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_documents_deleted_at ON documents (deleted_at)")
+    )
+
+    # Podcast language shown in the library (see Document.language).
+    await conn.execute(
+        text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS language VARCHAR")
     )
 
     # Anti-abuse columns (email verification + multi-account controls).

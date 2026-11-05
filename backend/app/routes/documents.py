@@ -24,11 +24,11 @@ from app.entitlements import (
 )
 from app.services.document_service import save_upload, extract_text, chunk_text, clean_extracted_text, get_pdf_page_count
 from app.services.vector_service import store_chunks, delete_chunks
-from app.services.llm_service import generate_podcast_script
+from app.services.llm_service import generate_podcast_script, remove_asterisks
 from app.services.tts_service import generate_podcast_audio
 from app.languages import (
     detect_language, get_language_profile, detect_language_name, detection_confidence,
-    expected_language_label,
+    expected_language_label, podcast_language_name,
 )
 from app.services.email_service import send_upload_alert_email, send_generation_alert_email
 from app.mem_utils import trim_memory
@@ -454,6 +454,8 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
             _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
             # The Groq client is synchronous/blocking — run it off the event loop.
             script = await run_in_threadpool(generate_podcast_script, raw_text, page_count, lang_profile)
+        # No "*" in the saved transcript or the audio (markdown the model slipped in).
+        script = remove_asterisks(script)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script ready ({len(script)} chars) in {step_times['llm']:.2f}s")
 
@@ -491,6 +493,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
             doc = await session.get(Document, doc_id)
             if doc:
                 doc.status = "ready"
+                doc.language = lang_profile["name"]  # shown on the My Podcasts row
             await session.commit()
 
         total = time.perf_counter() - overall_start
@@ -792,6 +795,8 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
             _set_stage(doc_id, _STAGE_WRITING_SCRIPT)
             # The Groq client is synchronous/blocking — run it off the event loop.
             script = await run_in_threadpool(generate_podcast_script, raw_text, None, lang_profile)
+        # No "*" in the saved transcript or the audio (markdown the model slipped in).
+        script = remove_asterisks(script)
         step_times['llm'] = time.perf_counter() - t0
         logger.info(f"[{doc_id}] Script ready ({len(script)} chars) in {step_times['llm']:.2f}s")
 
@@ -829,6 +834,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
             doc = await session.get(Document, doc_id)
             if doc:
                 doc.status = "ready"
+                doc.language = lang_profile["name"]  # shown on the My Podcasts row
             await session.commit()
 
         total = time.perf_counter() - overall_start
@@ -883,6 +889,34 @@ async def list_documents(
     )
     docs = result.scalars().all()
 
+    # Podcasts made before Document.language existed: read the language off the
+    # finished script (what was actually voiced) once, then store it. When the
+    # detector isn't sure we store "" (shown as no language) instead of a guess,
+    # so it's never retried and never wrong. One threadpool hop for all of them.
+    pending = [
+        doc for doc in docs
+        if doc.language is None and doc.audio_file and doc.audio_file.dialogue_script
+    ]
+    if pending:
+        scripts = [doc.audio_file.dialogue_script for doc in pending]
+
+        def _detect_all() -> list[str]:
+            out = []
+            for script in scripts:
+                try:
+                    out.append(podcast_language_name(script) or "")
+                except Exception:  # noqa: BLE001 — the row just shows no language
+                    logger.warning("Could not detect a podcast's language", exc_info=True)
+                    out.append("")
+            return out
+        for doc, name in zip(pending, await run_in_threadpool(_detect_all)):
+            doc.language = name
+        try:
+            await db.commit()
+        except Exception:  # noqa: BLE001 — labels are cosmetic; still list the podcasts
+            await db.rollback()
+            logger.warning("Could not save backfilled podcast languages", exc_info=True)
+
     items = []
     for doc in docs:
         audio = doc.audio_file
@@ -893,6 +927,8 @@ async def list_documents(
             "created_at": doc.created_at.isoformat(),
             "status": doc.status or ("ready" if audio else "processing"),
             "audio_id": audio.id if audio else None,
+            "duration_seconds": audio.duration_seconds if audio else None,
+            "language": doc.language or None,
         })
 
     return {"documents": items}

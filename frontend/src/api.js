@@ -208,6 +208,40 @@ export async function getBillingPortal() {
   return res.data;
 }
 
+// ── Usage tracking (drop-off funnel) ──
+// Stored in PaperPod's own database (POST /api/events); no third-party tracker.
+// Fire-and-forget: tracking never throws, never blocks, never shows an error.
+const ANON_KEY = 'paperpod:anon';
+
+function anonId() {
+  try {
+    let id = localStorage.getItem(ANON_KEY);
+    if (!id) {
+      id = (crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      localStorage.setItem(ANON_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+export function track(name, { documentId, value, detail } = {}) {
+  try {
+    api
+      .post('/events', {
+        name,
+        anon_id: anonId(),
+        document_id: documentId ?? null,
+        value: value ?? null,
+        detail: detail ?? null,
+      })
+      .catch(() => {});
+  } catch {
+    /* tracking must never break the app */
+  }
+}
+
 // ── Analytics (My Podcasts dashboard) ──
 export async function getStats() {
   const res = await api.get('/documents/stats');

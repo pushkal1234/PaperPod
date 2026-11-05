@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, update
 
 from app.database import init_db, async_session, Document
-from app.routes import documents, audio, qa, share, auth, feedback, billing
+from app.routes import documents, audio, qa, share, auth, feedback, billing, events
 from app.config import settings
 
 # Startup configuration check
@@ -94,6 +94,7 @@ app.include_router(qa.router)
 app.include_router(share.router)
 app.include_router(feedback.router)
 app.include_router(billing.router)
+app.include_router(events.router)
 
 
 @app.get("/api/health")

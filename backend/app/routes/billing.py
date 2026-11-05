@@ -131,7 +131,10 @@ def _verify_signature(raw: bytes, headers) -> bool:
 
 
 @router.post("/checkout")
-async def create_checkout(user: User = Depends(get_current_user)):
+async def create_checkout(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Create a hosted Dodo Payments checkout session for the current user.
 
     We attach ``metadata.user_id`` so the webhook can map the subscription back
@@ -171,6 +174,10 @@ async def create_checkout(user: User = Depends(get_current_user)):
         logger.error(f"[billing] Checkout response missing checkout_url: {resp.text[:500]}")
         raise HTTPException(status_code=502, detail="Could not start checkout. Please try again.")
     logger.info(f"[billing] Checkout created for user {user.id}")
+    # Funnel step: reached the payment page (paying is recorded by the webhook
+    # flipping User.plan).
+    from app.routes.events import record_event
+    await record_event(db, "checkout_started", user_id=user.id)
     return {"url": url}
 
 
