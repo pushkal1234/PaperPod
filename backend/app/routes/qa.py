@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import get_db, async_session, Document, QASession, _utcnow
+from app.database import get_db, async_session, Document, QASession, User, _utcnow
 from app.languages import detect_language, get_language_profile
 from app.services.stt_service import transcribe_audio
 from app.services.vector_service import query_chunks, store_chunks
@@ -192,6 +192,9 @@ async def ask_question(
     # text now, and voice it in the background — TTS can take far longer than
     # the LLM, and the user shouldn't wait for it to read the answer.
     qa_id = str(uuid.uuid4())
+    # Who asked: the document's owner (the library is private), so the table
+    # shows an email/name instead of only ids. Anonymous documents stay blank.
+    owner = await db.get(User, doc.user_id) if doc.user_id else None
     qa_session = QASession(
         id=qa_id,
         document_id=doc_id,
@@ -199,6 +202,8 @@ async def ask_question(
         answer_text=answer_text,
         answer_audio_path=None,
         created_at=_utcnow(),
+        user_email=owner.email if owner else None,
+        user_name=owner.name if owner else None,
     )
     db.add(qa_session)
     await db.commit()

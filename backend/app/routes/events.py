@@ -15,7 +15,7 @@ from collections import defaultdict, deque
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import Event, User, _utcnow, get_db
@@ -53,6 +53,11 @@ _calls_since_sweep = 0
 # client can fake per request; without a cap that could grow memory. Past the
 # cap, events from new IPs are dropped until the next sweep frees room.
 _MAX_TRACKED_IPS = 20_000
+
+# Browsers whose signed-out events were already labelled with their email in
+# this process, so the relabel UPDATE runs once per browser, not on every event.
+_relabelled_anon_ids: set[str] = set()
+_MAX_RELABELLED = 50_000
 
 
 def _over_rate_limit(ip: str | None) -> bool:
@@ -92,12 +97,16 @@ async def record_event(
     document_id: str | None = None,
     value: float | None = None,
     detail: str | None = None,
+    user_email: str | None = None,
+    user_name: str | None = None,
 ) -> None:
     """Store one event. Never raises: tracking must not break a request."""
     try:
         db.add(Event(
             name=name[:40],
             user_id=user_id,
+            user_email=user_email,
+            user_name=user_name,
             anon_id=_clip(anon_id, 64),
             document_id=_clip(document_id, 64),
             value=value,
@@ -154,5 +163,25 @@ async def track(
     await record_event(
         db, name, user_id=user_id, anon_id=anon_id,
         document_id=document_id, value=value, detail=body.detail,
+        user_email=user.email if user else None,
+        user_name=user.name if user else None,
     )
+    if user and anon_id and anon_id not in _relabelled_anon_ids:
+        # This browser is now signed in: label its earlier signed-out steps
+        # (e.g. the visit) with the same email and name. Once per browser.
+        if len(_relabelled_anon_ids) >= _MAX_RELABELLED:
+            _relabelled_anon_ids.clear()
+        _relabelled_anon_ids.add(anon_id)
+        try:
+            await db.execute(
+                update(Event)
+                .where(Event.anon_id == anon_id, Event.user_email.is_(None))
+                .values(user_email=user.email, user_name=user.name)
+            )
+            await db.commit()
+        except Exception:  # noqa: BLE001 — best-effort, like the event itself
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
     return {"ok": True}

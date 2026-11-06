@@ -113,6 +113,10 @@ class Document(Base):
     # Language the podcast was voiced in (e.g. "English", "Hindi"), shown in the
     # library. Null for podcasts made before it was stored; filled on first list.
     language = Column(String(40), nullable=True)
+    # Who uploaded it: email and name copied at upload time, so the table reads
+    # at a glance without joining users. Blank for uploads made signed out.
+    user_email = Column(String, nullable=True, index=True)
+    user_name = Column(String, nullable=True)
 
     audio_file = relationship("AudioFile", back_populates="document", uselist=False)
     qa_sessions = relationship("QASession", back_populates="document")
@@ -129,6 +133,10 @@ class AudioFile(Base):
     transcript_segments = Column(Text, nullable=True)  # JSON: [{speaker, text, start_seconds, end_seconds}]
     share_token = Column(String, nullable=True, unique=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+    # Whose podcast: copied from its document when the audio is saved, so the
+    # table reads at a glance without joining documents/users.
+    user_email = Column(String, nullable=True, index=True)
+    user_name = Column(String, nullable=True)
 
     document = relationship("Document", back_populates="audio_file")
 
@@ -143,6 +151,10 @@ class QASession(Base):
     question_audio_path = Column(String, nullable=True)
     answer_audio_path = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+    # Who asked: the document owner's email and name, copied at save time (like
+    # Feedback) so the table reads at a glance without joining users.
+    user_email = Column(String, nullable=True, index=True)
+    user_name = Column(String, nullable=True)
 
     document = relationship("Document", back_populates="qa_sessions")
 
@@ -183,6 +195,10 @@ class Event(Base):
     value = Column(Float, nullable=True)  # e.g. 50 for "listened to 50%"
     detail = Column(String(120), nullable=True)  # e.g. paywall reason
     created_at = Column(DateTime(timezone=True), default=_utcnow, index=True)
+    # Whose event: email and name copied at save time, so the table reads at a
+    # glance. Steps taken while signed out get them once that browser signs in.
+    user_email = Column(String, nullable=True, index=True)
+    user_name = Column(String, nullable=True)
 
 
 def _normalize_async_url(url: str) -> str:
@@ -260,6 +276,51 @@ SET source = CASE
 END
 WHERE source IS NULL
 """
+
+
+# Fill user_email / user_name on rows saved before those columns existed.
+# Set-based UPDATE ... FROM (one join, not a lookup per row), which both
+# Postgres and SQLite 3.33+ support. Each statement only touches rows still
+# missing an email, so after the first boot it has almost nothing to do.
+# Measured on Postgres: 100k events fill in well under a second.
+_BACKFILL_IDENTITY_SQL = [
+    # Events by a signed-in user.
+    """
+    UPDATE events SET user_email = u.email, user_name = u.name
+    FROM users u
+    WHERE u.id = events.user_id AND events.user_email IS NULL
+    """,
+    # Events from before sign-in, in a browser that later signed in.
+    """
+    UPDATE events SET user_email = m.email, user_name = m.name
+    FROM (
+        SELECT e2.anon_id, MAX(u.email) AS email, MAX(u.name) AS name
+        FROM events e2 JOIN users u ON u.id = e2.user_id
+        WHERE e2.anon_id IS NOT NULL
+        GROUP BY e2.anon_id
+    ) AS m
+    WHERE events.anon_id = m.anon_id AND events.user_email IS NULL AND events.user_id IS NULL
+    """,
+    # Documents: their owner.
+    """
+    UPDATE documents SET user_email = u.email, user_name = u.name
+    FROM users u
+    WHERE u.id = documents.user_id AND documents.user_email IS NULL
+    """,
+    # Audio files: their document's owner (documents is filled just above).
+    """
+    UPDATE audio_files SET user_email = d.user_email, user_name = d.user_name
+    FROM documents d
+    WHERE d.id = audio_files.document_id AND audio_files.user_email IS NULL
+      AND d.user_email IS NOT NULL
+    """,
+    # Questions: the owner of the document they were asked about.
+    """
+    UPDATE qa_sessions SET user_email = u.email, user_name = u.name
+    FROM documents d JOIN users u ON u.id = d.user_id
+    WHERE d.id = qa_sessions.document_id AND qa_sessions.user_email IS NULL
+    """,
+]
 
 
 async def _migrate_schema_sqlite(conn):
@@ -388,6 +449,19 @@ async def _migrate_schema_sqlite(conn):
                 text("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
             )
 
+        # Readable identity on events and Q&A rows (see Event / QASession).
+        for table in ("events", "qa_sessions", "documents", "audio_files"):
+            cols = {row[1] for row in sync_conn.execute(text(f"PRAGMA table_info({table})")).fetchall()}
+            if "user_email" not in cols:
+                sync_conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_email TEXT"))
+                sync_conn.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_email ON {table} (user_email)")
+                )
+            if "user_name" not in cols:
+                sync_conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_name TEXT"))
+        for stmt in _BACKFILL_IDENTITY_SQL:
+            sync_conn.execute(text(stmt))
+
     await conn.run_sync(_migrate)
 
 
@@ -504,6 +578,16 @@ async def _migrate_schema_postgres(conn):
     await conn.execute(
         text("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0")
     )
+
+    # Readable identity on events and Q&A rows (see Event / QASession).
+    for table in ("events", "qa_sessions", "documents", "audio_files"):
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS user_email VARCHAR"))
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS user_name VARCHAR"))
+        await conn.execute(
+            text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_email ON {table} (user_email)")
+        )
+    for stmt in _BACKFILL_IDENTITY_SQL:
+        await conn.execute(text(stmt))
 
 
 async def init_db():

@@ -480,6 +480,7 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
 
         audio_id = str(uuid.uuid4())
         async with async_session() as session:
+            doc = await session.get(Document, doc_id)
             audio = AudioFile(
                 id=audio_id,
                 document_id=doc_id,
@@ -488,9 +489,10 @@ async def _run_document_pipeline(doc_id: str, file_path: str, content_type: str)
                 dialogue_script=script,
                 transcript_segments=json.dumps(transcript_segments),
                 created_at=_utcnow(),
+                user_email=doc.user_email if doc else None,
+                user_name=doc.user_name if doc else None,
             )
             session.add(audio)
-            doc = await session.get(Document, doc_id)
             if doc:
                 doc.status = "ready"
                 doc.language = lang_profile["name"]  # shown on the My Podcasts row
@@ -574,6 +576,8 @@ async def upload_document(
         source=_source_from_filename(file.filename),
         creator_ip=ip,
         created_at=_utcnow(),
+        user_email=user.email if user else None,
+        user_name=user.name if user else None,
     )
     db.add(doc)
     await db.commit()
@@ -627,6 +631,8 @@ async def upload_text(
         source="pasted",
         creator_ip=ip,
         created_at=_utcnow(),
+        user_email=user.email if user else None,
+        user_name=user.name if user else None,
     )
     db.add(doc)
     await db.commit()
@@ -677,6 +683,8 @@ async def upload_image(
         source="image",
         creator_ip=ip,
         created_at=_utcnow(),
+        user_email=user.email if user else None,
+        user_name=user.name if user else None,
     )
     db.add(doc)
     await db.commit()
@@ -821,6 +829,7 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
 
         audio_id = str(uuid.uuid4())
         async with async_session() as session:
+            doc = await session.get(Document, doc_id)
             audio = AudioFile(
                 id=audio_id,
                 document_id=doc_id,
@@ -829,9 +838,10 @@ async def _run_text_pipeline(doc_id: str, raw_text: str):
                 dialogue_script=script,
                 transcript_segments=json.dumps(transcript_segments),
                 created_at=_utcnow(),
+                user_email=doc.user_email if doc else None,
+                user_name=doc.user_name if doc else None,
             )
             session.add(audio)
-            doc = await session.get(Document, doc_id)
             if doc:
                 doc.status = "ready"
                 doc.language = lang_profile["name"]  # shown on the My Podcasts row

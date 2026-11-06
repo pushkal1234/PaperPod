@@ -177,7 +177,9 @@ async def create_checkout(
     # Funnel step: reached the payment page (paying is recorded by the webhook
     # flipping User.plan).
     from app.routes.events import record_event
-    await record_event(db, "checkout_started", user_id=user.id)
+    await record_event(
+        db, "checkout_started", user_id=user.id, user_email=user.email, user_name=user.name,
+    )
     return {"url": url}
 
 
