@@ -140,7 +140,8 @@ async def synthesize_speech(
                         # must NOT retry in lockstep (thundering herd), which just
                         # re-trips the same throttle. Jitter spreads them out.
                         wait = min(8.0, 1.5 * (2 ** attempt)) + random.uniform(0.0, 1.0)
-                        logger.warning(f"[TTS] Retry {attempt + 1}/{max_retries} for clip after {wait:.1f}s: {err_msg[:80]}")
+                        tag = f"[{limiter.label}] " if limiter is not None and limiter.label else ""
+                        logger.warning(f"{tag}[TTS] Retry {attempt + 1}/{max_retries} for clip after {wait:.1f}s: {err_msg[:80]}")
                         await asyncio.sleep(wait)
                 else:
                     # Non-throttle (e.g. bad voice): retrying the same voice won't
@@ -197,7 +198,11 @@ class _AdaptiveLimiter:
     def __init__(
         self, maximum: int, minimum: int = 2, recover_after: int = 3,
         burst_seconds: float = 3.0, sustained_seconds: float = 15.0, storm_hits: int = 3,
+        label: str | None = None,
     ):
+        # Shown in throttle/retry logs (the podcast's doc id), so overlapping
+        # podcasts can be told apart in the logs.
+        self.label = label
         self.maximum = maximum
         self.minimum = min(minimum, maximum)
         self.limit = maximum
@@ -241,7 +246,8 @@ class _AdaptiveLimiter:
         if new_limit < self.limit:
             self.limit = new_limit
             self.lowest = min(self.lowest, new_limit)
-            logger.warning(f"[TTS] Edge throttling — lowering podcast concurrency to {new_limit}")
+            tag = f"[{self.label}] " if self.label else ""
+            logger.warning(f"{tag}[TTS] Edge throttling — lowering podcast concurrency to {new_limit}")
 
     async def on_success(self) -> None:
         async with self._cond:
@@ -307,7 +313,7 @@ async def generate_podcast_audio(
     concurrency = TTS_CONCURRENCY
     if len(dialogue) <= TTS_SMALL_DOC_MAX_CLIPS:
         concurrency = min(TTS_CONCURRENCY, TTS_CONCURRENCY_SMALL)
-    limiter = _AdaptiveLimiter(concurrency)
+    limiter = _AdaptiveLimiter(concurrency, label=doc_id)
     jobs = []
     clip_paths = []
 
@@ -402,6 +408,8 @@ async def _retry_throttled_clips(
 
 
 _PAUSE_MS = 400
+# Clip-length probes (ffprobe processes) run this many at a time during a merge.
+_PROBE_WORKERS = 8
 
 
 def _probe_duration_ms(clip_path: str) -> int:
@@ -443,11 +451,17 @@ def _merge_clips_to_mp3(
     uncompressed episode (which previously pushed idle RSS very high).
     """
     # 1) Build transcript timings by probing each clip's duration from metadata
-    #    (exact for edge-tts CBR MP3) instead of decoding it to PCM.
+    #    (exact for edge-tts CBR MP3) instead of decoding it to PCM. Each probe
+    #    is a separate ffprobe process, so they run _PROBE_WORKERS at a time
+    #    (one after another cost ~12s of a 279-clip merge). Same probe per clip,
+    #    results kept in clip order, so the timings are identical.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max(1, min(_PROBE_WORKERS, len(clip_paths)))) as pool:
+        clip_durations_ms = list(pool.map(_probe_duration_ms, clip_paths))
     transcript_segments: list[dict] = []
     cursor_ms = 0
     for i, clip_path in enumerate(clip_paths):
-        clip_ms = _probe_duration_ms(clip_path)
+        clip_ms = clip_durations_ms[i]
         start_seconds = cursor_ms / 1000.0
         end_seconds = start_seconds + clip_ms / 1000.0
         entry = dialogue[i]
