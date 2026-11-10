@@ -4,6 +4,7 @@ import logging
 import random
 import re
 import time
+from collections import deque
 
 import edge_tts
 from fastapi.concurrency import run_in_threadpool
@@ -177,18 +178,29 @@ class _AdaptiveLimiter:
     """Concurrency cap for one podcast's edge-tts calls that backs off when Edge
     throttles ("No audio was received").
 
-    A fixed cap kept all 8 workers firing while one clip backed off, so the
-    throttle window never cleared and a clip could exhaust its retries. Halving on
-    every throttle overreacted the other way: a single blip that recovered on its
-    first retry cut a 25-clip podcast from 5 to 2 for good (~90s slower). So:
+    Since late Oct 2026 Edge also drops a few percent of requests at random when
+    several run at once (edge-tts issue #512: the socket closes ~3s in, before
+    any audio). Measured: 0/24 failed one at a time, 6% at 4 at once, 8% at 8 at
+    once, and a retry works. Treating each of those as throttling halved the cap
+    down to 2 on every podcast (a 78-clip podcast took 176s to voice instead of
+    ~30-50s), while lowering it barely changed the drop rate.
 
-    - a throttle steps the cap down by ONE; one or two more within
-      ``burst_seconds`` are the same blip and don't step it again;
-    - ``storm_hits`` throttles inside that window, or a step-down within
-      ``sustained_seconds`` of the previous one, mean real throttling, so the cap
-      HALVES instead (a storm still backs off within a fraction of a second);
-    - every ``recover_after`` consecutive successful clips raise it by one again,
-      back up to ``maximum``. It never goes below ``minimum``.
+    So the cap now follows the SHARE of recent requests that failed, not single
+    failures:
+
+    - an isolated drop is just retried; the cap stays where it is;
+    - if at least ``elevated_share`` of the last ``window`` requests (within
+      ``window_seconds``) failed, that's real pressure: step the cap down by one;
+    - at least ``storm_share`` failed: a storm, so HALVE the cap;
+    - before ``min_samples`` requests have finished, ``storm_hits`` failures
+      already count as a storm (Edge refusing from the very start);
+    - ``run_hits`` failures in a row (no success in between) step the cap down
+      by one whatever the share, so the first moments of real throttling aren't
+      written off as isolated drops while older successes still fill the window;
+    - at most one step-down per ``step_gap_seconds``, so the requests that were
+      in flight together when Edge pushed back count once, not once each;
+    - every ``recover_after`` consecutive successful clips raise the cap by one
+      again, back up to ``maximum``. It never goes below ``minimum``.
 
     A slot is held per request to Edge, not per clip, so a clip sleeping in
     backoff frees its slot. Lowering the cap never interrupts requests already in
@@ -197,8 +209,9 @@ class _AdaptiveLimiter:
 
     def __init__(
         self, maximum: int, minimum: int = 2, recover_after: int = 3,
-        burst_seconds: float = 3.0, sustained_seconds: float = 15.0, storm_hits: int = 3,
-        label: str | None = None,
+        window: int = 20, window_seconds: float = 30.0, min_samples: int = 8,
+        elevated_share: float = 0.25, storm_share: float = 0.5, storm_hits: int = 3,
+        run_hits: int = 4, step_gap_seconds: float = 3.0, label: str | None = None,
     ):
         # Shown in throttle/retry logs (the podcast's doc id), so overlapping
         # podcasts can be told apart in the logs.
@@ -209,11 +222,16 @@ class _AdaptiveLimiter:
         self.lowest = maximum
         self.throttles = 0
         self._recover_after = recover_after
-        self._burst_seconds = burst_seconds
-        self._sustained_seconds = sustained_seconds
+        self._window_seconds = window_seconds
+        self._min_samples = min_samples
+        self._elevated_share = elevated_share
+        self._storm_share = storm_share
         self._storm_hits = storm_hits
-        self._last_drop: float | None = None
-        self._burst_hits = 0
+        self._run_hits = run_hits
+        self._fail_run = 0  # failures since the last success
+        self._step_gap_seconds = step_gap_seconds
+        self._outcomes: deque = deque(maxlen=window)  # (monotonic time, ok)
+        self._last_step: float | None = None
         self._streak = 0
         self._active = 0
         self._cond = asyncio.Condition()
@@ -228,29 +246,51 @@ class _AdaptiveLimiter:
             self._active -= 1
             self._cond.notify_all()
 
+    def _recent(self, now: float) -> list[bool]:
+        return [ok for t, ok in self._outcomes if now - t <= self._window_seconds]
+
     def on_throttle(self) -> None:
         self.throttles += 1
         self._streak = 0
+        self._fail_run += 1
         now = time.monotonic()
-        since_drop = None if self._last_drop is None else now - self._last_drop
-        if since_drop is not None and since_drop < self._burst_seconds:
-            self._burst_hits += 1
-            if self._burst_hits < self._storm_hits:
-                return  # same blip as the last step-down
-            halve = True  # many throttles at once: a storm, not a blip
-        else:
-            halve = since_drop is not None and since_drop < self._sustained_seconds
-        self._last_drop = now
-        self._burst_hits = 0
+        self._outcomes.append((now, False))
+        recent = self._recent(now)
+        fails = recent.count(False)
+        halve = None  # None = leave the cap alone
+        if len(recent) >= self._min_samples:
+            share = fails / len(recent)
+            if share >= self._storm_share:
+                halve = True
+            elif share >= self._elevated_share:
+                halve = False
+        elif fails >= self._storm_hits:
+            halve = True  # failing from the start, before there's a real sample
+        by_run = halve is None and self._fail_run >= self._run_hits
+        if by_run:
+            halve = False  # several in a row: step down even though the share is low
+        if halve is None:
+            return  # isolated drop: the clip retries, the cap stays
+        if self._last_step is not None and now - self._last_step < self._step_gap_seconds:
+            return  # the same burst of in-flight requests as the last step
         new_limit = max(self.minimum, self.limit // 2 if halve else self.limit - 1)
         if new_limit < self.limit:
+            self._last_step = now
+            if by_run:
+                self._fail_run = 0  # the next step-down needs another run of failures
             self.limit = new_limit
             self.lowest = min(self.lowest, new_limit)
             tag = f"[{self.label}] " if self.label else ""
-            logger.warning(f"{tag}[TTS] Edge throttling — lowering podcast concurrency to {new_limit}")
+            why = (f"{self._run_hits} failures in a row" if by_run
+                   else f"{fails} of the last {len(recent)} requests failed")
+            logger.warning(
+                f"{tag}[TTS] Edge throttling — lowering podcast concurrency to {new_limit} ({why})"
+            )
 
     async def on_success(self) -> None:
         async with self._cond:
+            self._outcomes.append((time.monotonic(), True))
+            self._fail_run = 0
             self._streak += 1
             if self._streak >= self._recover_after and self.limit < self.maximum:
                 self.limit += 1
