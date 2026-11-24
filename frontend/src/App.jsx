@@ -13,6 +13,7 @@ import ProcessingView from './components/ProcessingView';
 import ConfirmModal from './components/ConfirmModal';
 import ToastContainer from './components/ToastContainer';
 import PaywallModal from './components/PaywallModal';
+import FoundingBanner from './components/FoundingBanner';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import PromoVideo from './components/PromoVideo';
 import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler, getBillingConfig, createCheckout, getBillingPortal, track } from './api';
@@ -698,6 +699,24 @@ function App() {
 
   return (
     <div className="min-h-screen">
+      {/* Founding-price deadline bar. Waits for auth so a Premium user never sees
+          it flash, and for billing config so it only shows when checkout exists.
+          Signed-in free users go straight to the paywall; visitors sign up first
+          (checkout needs an account). */}
+      {billingOn && authChecked && !isPremium && (
+        <FoundingBanner
+          ctaLabel={user ? `Lock in ${HEADLINE_MONTHLY}` : 'Sign up free'}
+          onCta={() => {
+            if (user) {
+              setPaywall({ reason: 'founding_banner', message: null });
+            } else {
+              setAuthMode('signup');
+              setShowAuth(true);
+            }
+          }}
+        />
+      )}
+
       {/* Navbar */}
       <nav className="border-b border-paper-300/70 bg-paper-50/80 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 flex items-center justify-between gap-2">

@@ -25,18 +25,39 @@ export const HEADLINE_MONTHLY = FOUNDING ? FOUNDING_MONTHLY : REGULAR_MONTHLY;
 // (and not yet past), the My Podcasts upgrade card says "Founding price ends
 // Nov 30". Leave null until there's a real date you'll keep: a deadline that
 // keeps moving stops being believed. After it passes, the line hides itself.
-export const FOUNDING_ENDS_ON = '2026-11-30';
+export const FOUNDING_ENDS_ON = '2026-12-25';
 
-// "Founding price ends Nov 30", or null when no future date is set.
-export function foundingEndsLabel() {
+// End of the founding window (local end-of-day), or null when unset/invalid.
+function foundingEndDate() {
   if (!FOUNDING || !FOUNDING_ENDS_ON) return null;
   const end = new Date(`${FOUNDING_ENDS_ON}T23:59:59`);
-  if (Number.isNaN(end.getTime()) || end < new Date()) return null;
-  return `Founding price ends ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+  return Number.isNaN(end.getTime()) ? null : end;
+}
+
+// "Dec 25", or null when no future date is set.
+export function foundingEndsShort() {
+  const end = foundingEndDate();
+  if (!end || end < new Date()) return null;
+  return end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// "Founding price ends Dec 25", or null when no future date is set.
+export function foundingEndsLabel() {
+  const short = foundingEndsShort();
+  return short ? `Founding price ends ${short}` : null;
+}
+
+// Whole days left until the deadline (0 on the final day), or null when past/unset.
+export function foundingDaysLeft() {
+  const end = foundingEndDate();
+  if (!end) return null;
+  const ms = end - new Date();
+  if (ms < 0) return null;
+  return Math.floor(ms / 86400000);
 }
 
 export const FOUNDING_SPOTS = 100;
-export const FOUNDING_CLAIMED = 92;
+export const FOUNDING_CLAIMED = 95;
 
 // Seats remaining (clamped to >= 0). Only meaningful when FOUNDING_CLAIMED is set.
 export const FOUNDING_SPOTS_LEFT =
