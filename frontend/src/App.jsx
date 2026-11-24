@@ -13,7 +13,7 @@ import ProcessingView from './components/ProcessingView';
 import ConfirmModal from './components/ConfirmModal';
 import ToastContainer from './components/ToastContainer';
 import PaywallModal from './components/PaywallModal';
-import FoundingBanner from './components/FoundingBanner';
+import FoundingBanner, { resetFoundingBannerDismissal } from './components/FoundingBanner';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import PromoVideo from './components/PromoVideo';
 import { uploadDocument, uploadText, uploadImage, getDocument, listDocuments, deleteDocument, getAudioUrl, createShare, getSharedPodcast, getMe, getToken, logout, setUnauthorizedHandler, getBillingConfig, createCheckout, getBillingPortal, track } from './api';
@@ -469,6 +469,7 @@ function App() {
   };
 
   const handleAuthSuccess = (loggedInUser) => {
+    resetFoundingBannerDismissal();
     setUser(loggedInUser);
     setShowAuth(false);
     setAuthMode('login');
@@ -503,6 +504,7 @@ function App() {
   const handleLogout = () => {
     setShowSignOut(false);
     logout();
+    resetFoundingBannerDismissal();
     setUser(null);
     setDocuments([]);
     setCurrentDoc(null);
@@ -705,6 +707,7 @@ function App() {
           (checkout needs an account). */}
       {billingOn && authChecked && !isPremium && (
         <FoundingBanner
+          key={user?.id || 'anon'}
           ctaLabel={user ? `Lock in ${HEADLINE_MONTHLY}` : 'Sign up free'}
           onCta={() => {
             if (user) {

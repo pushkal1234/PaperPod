@@ -2,22 +2,33 @@ import { useState } from 'react';
 import { Clock, X, ArrowRight } from 'lucide-react';
 import { FOUNDING_ENDS_ON, FOUNDING_MONTHLY, REGULAR_MONTHLY, foundingEndsShort, foundingDaysLeft } from '../pricing';
 
-// Keyed by the deadline so a dismissal sticks for THIS offer, but a future
-// deadline (new FOUNDING_ENDS_ON) shows the banner again.
+// Dismissal lasts for the CURRENT VISIT only: sessionStorage survives refreshes
+// in this tab but is gone on the next visit (new tab / reopened browser). It is
+// also cleared on sign-in and sign-out (see resetFoundingBannerDismissal), so the
+// offer shows again after every auth change. Keyed by the deadline.
 const DISMISS_KEY = `pp_founding_banner_dismissed_${FOUNDING_ENDS_ON}`;
 
 function readDismissed() {
   try {
-    return localStorage.getItem(DISMISS_KEY) === '1';
+    return sessionStorage.getItem(DISMISS_KEY) === '1';
   } catch {
     return false;
   }
 }
 
+// Bring the banner back (called on sign-in / sign-out).
+export function resetFoundingBannerDismissal() {
+  try {
+    sessionStorage.removeItem(DISMISS_KEY);
+  } catch {
+    /* storage blocked — nothing persisted anyway */
+  }
+}
+
 // Slim announcement bar above the navbar for the founding-price deadline.
 // Deliberately static (not a scrolling marquee): readable at a glance and no
-// WCAG pause control needed. Hides itself once the deadline passes and stays
-// hidden after the visitor dismisses it.
+// WCAG pause control needed. Hides itself once the deadline passes; a dismissal
+// lasts until the next visit or auth change.
 export default function FoundingBanner({ onCta, ctaLabel }) {
   const [dismissed, setDismissed] = useState(readDismissed);
   const endsOn = foundingEndsShort();
@@ -29,7 +40,7 @@ export default function FoundingBanner({ onCta, ctaLabel }) {
   const dismiss = () => {
     setDismissed(true);
     try {
-      localStorage.setItem(DISMISS_KEY, '1');
+      sessionStorage.setItem(DISMISS_KEY, '1');
     } catch {
       /* storage blocked — hidden for this page view only */
     }
