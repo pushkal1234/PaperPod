@@ -18,10 +18,12 @@ from app.config import settings
 from app.database import get_db, Document, AudioFile, QASession, User, _utcnow
 from app.security import get_current_user, get_upload_user, client_ip
 from app.entitlements import (
+    PLAN_PREMIUM,
     enforce_can_create_podcast,
     enforce_email_verified,
     enforce_ip_quota,
 )
+from app.user_messages import user_facing_error
 from app.services.document_service import save_upload, extract_text, chunk_text, clean_extracted_text, get_pdf_page_count
 from app.services.vector_service import store_chunks, delete_chunks
 from app.services.llm_service import generate_podcast_script, remove_asterisks
@@ -1058,6 +1060,16 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
 
     status = doc.status or ("ready" if audio else "processing")
 
+    # Failed docs: word the error for the owner's plan, so a paying customer is
+    # never told about a "free-tier" limit. Owner lookup only on failure, so normal
+    # status polling costs no extra query.
+    error = None
+    if status == "failed":
+        owner = await db.get(User, doc.user_id) if doc.user_id else None
+        error = user_facing_error(
+            doc.error_message, getattr(owner, "plan", None) == PLAN_PREMIUM
+        )
+
     return {
         "doc_id": doc.id,
         "filename": doc.filename,
@@ -1068,7 +1080,7 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db)):
         # synthesizing) for the processing screen; only meaningful while the job
         # is still running, so null it out once we're no longer processing.
         "stage": _doc_stages.get(doc_id) if status == "processing" else None,
-        "error": doc.error_message if status == "failed" else None,
+        "error": error,
         "audio": {
             "audio_id": audio.id,
             "duration_seconds": audio.duration_seconds,

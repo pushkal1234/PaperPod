@@ -18,6 +18,8 @@ from app.services.document_service import chunk_text
 from app.services.llm_service import answer_question, strip_markdown_for_speech
 from app.services.tts_service import synthesize_answer
 from app.services import serpapi_service
+from app.entitlements import PLAN_PREMIUM
+from app.user_messages import user_facing_error
 
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 logger = logging.getLogger("paperpod")
@@ -32,6 +34,12 @@ _AUDIO_PENDING_TIMEOUT = timedelta(minutes=15)
 
 # Provider keywords that must never leak to the user
 _PROVIDER_KEYWORDS = ["groq", "whisper", "edge-tts", "edge_tts", "google", "gemini", "gtts", "g_tts", "serpapi", "azure"]
+
+
+async def _plan_aware_error(db: AsyncSession, doc: Document, msg: str) -> str:
+    """Sanitized error worded for the doc owner's plan (no "free-tier" for Premium)."""
+    owner = await db.get(User, doc.user_id) if doc.user_id else None
+    return user_facing_error(_sanitize_error(msg), getattr(owner, "plan", None) == PLAN_PREMIUM)
 
 
 def _sanitize_error(msg: str) -> str:
@@ -120,7 +128,7 @@ async def ask_question(
         try:
             question_text = await run_in_threadpool(transcribe_audio, audio_bytes)
         except RuntimeError as e:
-            raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
+            raise HTTPException(status_code=429, detail=await _plan_aware_error(db, doc, str(e)))
         except Exception as e:
             logger.error(f"[QA][{doc_id}] STT failed: {e}", exc_info=True)
             raise HTTPException(status_code=503, detail=_sanitize_error("PaperPod's speech service is temporarily busy. Please try again shortly."))
@@ -182,7 +190,7 @@ async def ask_question(
                 mode = "document"
             answer_text = await run_in_threadpool(answer_question, question_text, context_chunks, doc.raw_text)
     except RuntimeError as e:
-        raise HTTPException(status_code=429, detail=_sanitize_error(str(e)))
+        raise HTTPException(status_code=429, detail=await _plan_aware_error(db, doc, str(e)))
     except Exception as e:
         logger.error(f"[QA][{doc_id}] LLM failed: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail=_sanitize_error("PaperPod's AI engine is temporarily busy. Please try again shortly."))
