@@ -24,7 +24,7 @@
 
 ## What PaperPod does
 
-PaperPod transforms static documents into **natural two-host podcast conversations** — the kind you'd actually want to listen to on a commute, at the gym, or while cooking.
+PaperPod transforms static documents into **natural two-host podcast conversations** — the kind you'd actually want to listen to on a commute, at the gym, while cycling, or while cooking.
 
 Upload a PDF, DOCX, PPTX, or TXT. Paste notes. Snap a photo. Or send a webpage from the browser extension. PaperPod reads the material, writes a conversational script, voices it with two distinct hosts, and gives you a **synchronized transcript** you can click through while you listen.
 
